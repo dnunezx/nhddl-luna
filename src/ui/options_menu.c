@@ -61,11 +61,18 @@ static void drawOptionsBackdrop(const OptionsBackdrop *backdrop) {
 
   gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
   for (int i = 0; i < 5; i++) {
+    // The GS can fetch outside the framebuffer when a shifted sample crosses
+    // an edge. Clip both rectangles so every texture coordinate stays valid.
+    const int left = sampleX[i] < 0 ? -sampleX[i] : 0;
+    const int top = sampleY[i] < 0 ? -sampleY[i] : 0;
+    const int right = sampleX[i] > 0 ? width - sampleX[i] : width;
+    const int bottom = sampleY[i] > 0 ? height - sampleY[i] : height;
     gsKit_set_primalpha(gsGlobal,
                         GS_SETREG_ALPHA(0, 1, 2, 1, sampleAlpha[i]), 0);
-    gsKit_prim_sprite_texture(gsGlobal, frame, 0, 0, sampleX[i], sampleY[i],
-                              width, height, width + sampleX[i],
-                              height + sampleY[i], 0,
+    gsKit_prim_sprite_texture(gsGlobal, frame, left, top,
+                              left + sampleX[i], top + sampleY[i],
+                              right, bottom, right + sampleX[i],
+                              bottom + sampleY[i], 0,
                               GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
   }
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
