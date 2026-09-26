@@ -15,10 +15,14 @@ static const char orbsViewPath[] = "/orbsView.txt";
 static const char orbsViewTempPath[] = "/orbsView.txt.tmp";
 static const char backgroundPath[] = "/background.txt";
 static const char backgroundTempPath[] = "/background.txt.tmp";
+static const char glassColorPath[] = "/glassColor.txt";
+static const char glassColorTempPath[] = "/glassColor.txt.tmp";
 static const char ambientSoundPath[] = "/ambientSound.txt";
 static const char ambientSoundTempPath[] = "/ambientSound.txt.tmp";
 static const char *const viewNames[] = {
     "classic", "collection", "grid", "orbit", "orbs"};
+static const char *const glassColorNames[GLASS_COLOR_COUNT] = {
+    "original", "white-gray", "black"};
 
 static struct DeviceMapEntry *viewDevice(Target *target) {
   if (target == NULL || target->device == NULL)
@@ -280,6 +284,64 @@ int saveOrbsBackground(Target *target, int enabled) {
   if (file == NULL)
     return -EIO;
   int writeResult = fprintf(file, "%s\n", enabled ? "orbs" : "stars");
+  int closeResult = fclose(file);
+  if (writeResult < 0 || closeResult) {
+    remove(tempPath);
+    return -EIO;
+  }
+  remove(path);
+  if (rename(tempPath, path))
+    return -EIO;
+  return 0;
+}
+
+GlassColorPreset loadGlassColorPreset(Target *target) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  const char *paths[] = {glassColorTempPath, glassColorPath};
+  char path[PATH_MAX];
+  char value[24];
+
+  if (device == NULL || device->mountpoint == NULL)
+    return GLASS_COLOR_ORIGINAL;
+  for (int i = 0; i < 2; i++) {
+    if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
+      continue;
+    FILE *file = fopen(path, "r");
+    if (file == NULL)
+      continue;
+    int readable = fgets(value, sizeof(value), file) != NULL;
+    fclose(file);
+    if (!readable)
+      continue;
+    value[strcspn(value, "\r\n")] = '\0';
+    for (int preset = 0; preset < GLASS_COLOR_COUNT; preset++)
+      if (!strcmp(value, glassColorNames[preset]))
+        return (GlassColorPreset)preset;
+  }
+  return GLASS_COLOR_ORIGINAL;
+}
+
+int saveGlassColorPreset(Target *target, GlassColorPreset preset) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  char directory[PATH_MAX];
+  char path[PATH_MAX];
+  char tempPath[PATH_MAX];
+  struct stat st;
+  FILE *file;
+
+  if (device == NULL || device->mountpoint == NULL ||
+      preset < GLASS_COLOR_ORIGINAL || preset >= GLASS_COLOR_COUNT)
+    return -EINVAL;
+  if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
+      buildConfigFilePath(path, sizeof(path), device->mountpoint, glassColorPath) ||
+      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, glassColorTempPath))
+    return -ENAMETOOLONG;
+  if (stat(directory, &st) == -1 && mkdir(directory, 0777))
+    return -EIO;
+  file = fopen(tempPath, "w");
+  if (file == NULL)
+    return -EIO;
+  int writeResult = fprintf(file, "%s\n", glassColorNames[preset]);
   int closeResult = fclose(file);
   if (writeResult < 0 || closeResult) {
     remove(tempPath);

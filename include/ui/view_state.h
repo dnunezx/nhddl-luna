@@ -3,6 +3,7 @@
 
 #include "target.h"
 #include "ui/navigation.h"
+#include "ui/view_orbs.h"
 
 // The selected view is stored with the selected title's metadata on its game drive.
 // Missing or invalid state falls back to Classic.
@@ -21,6 +22,10 @@ int saveOrbsViewEnabled(Target *target, int enabled);
 // The shared library background defaults to stars and cubes.
 int loadOrbsBackground(Target *target);
 int saveOrbsBackground(Target *target, int enabled);
+
+// Glass color is a library-wide preference; invalid or absent data uses Original.
+GlassColorPreset loadGlassColorPreset(Target *target);
+int saveGlassColorPreset(Target *target, GlassColorPreset preset);
 
 // Ambient sound is enabled when no valid preference has been saved.
 int loadAmbientSoundEnabled(Target *target);

@@ -4,7 +4,6 @@
 #include "favorites.h"
 #include "neutrino.h"
 #include "options.h"
-#include "ui/args.h"
 #include "ui/ambient.h"
 #include "ui/art_cache.h"
 #include "ui/graphics.h"
@@ -40,6 +39,7 @@ void uiSplashThread();
 GSGLOBAL *gsGlobal;
 char lineBuffer[255];
 static int orbsBackground = 0;
+static int glassColorSetting = GLASS_COLOR_ORIGINAL;
 
 const int keepoutArea = 20;
 const int headerHeight = 40;
@@ -273,6 +273,8 @@ int uiLoop(TargetList *titles) {
   orbsEnabled = loadOrbsViewEnabled(curTarget);
   orbsBackground = loadOrbsBackground(curTarget);
   setOrbsBackgroundStyle(orbsBackground);
+  glassColorSetting = loadGlassColorPreset(curTarget);
+  setGlassColorPreset((GlassColorPreset)glassColorSetting);
   ambientEnabled = loadAmbientSoundEnabled(curTarget);
   ambientSetEnabled(ambientEnabled);
   if (view == UI_VIEW_ORBS && !orbsEnabled)
@@ -1161,7 +1163,8 @@ int uiLoop(TargetList *titles) {
       prevInput = 0; // Reset previous input
       // Enter title options screen
       if ((res = uiTitleOptionsLoop(curTarget, &classicArtOverlap, &orbsEnabled,
-                                    &orbsBackground, &ambientEnabled)) < 0) {
+                                    &orbsBackground, &glassColorSetting,
+                                    &ambientEnabled)) < 0) {
         // Something went wrong, main loop must exit immediately
         ambientStop();
         freeTargetList(favoriteTitles);
@@ -1183,6 +1186,7 @@ int uiLoop(TargetList *titles) {
           DPRINTF("WARN: Could not save selected library view\n");
       }
       setOrbsBackgroundStyle(orbsBackground);
+      setGlassColorPreset((GlassColorPreset)glassColorSetting);
       optionsTriangleHeld = (pollInput() & PAD_TRIANGLE) != 0;
       input = 0;
     } else if (input & PAD_START) {

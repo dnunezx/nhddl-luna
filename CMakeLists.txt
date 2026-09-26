@@ -25,6 +25,7 @@ set(SOURCES
     # UI
     src/ui/gui.c
     src/ui/options_menu.c
+    src/ui/game_options.c
     src/ui/graphics.c
     src/ui/handoff.c
     src/ui/ambient.c
@@ -36,7 +37,6 @@ set(SOURCES
   src/ui/view_grid.c
   src/ui/view_orbit.c
   src/ui/view_orbs.c
-    src/ui/args.c
     src/ui/pad.c
 
     # Devices

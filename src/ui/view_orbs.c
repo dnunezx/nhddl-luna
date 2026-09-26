@@ -31,6 +31,53 @@
 #define ORB_SELECTION_EVENT_COUNT 12
 
 static int orbsBackgroundStyle;
+static GlassColorPreset glassColorPreset = GLASS_COLOR_ORIGINAL;
+
+void setGlassColorPreset(GlassColorPreset preset) {
+  glassColorPreset = (preset >= GLASS_COLOR_ORIGINAL && preset < GLASS_COLOR_COUNT)
+                        ? preset : GLASS_COLOR_ORIGINAL;
+}
+
+GlassColorPreset getGlassColorPreset(void) {
+  return glassColorPreset;
+}
+
+uint64_t glassPresetColor(int red, int green, int blue, int alpha) {
+  static const int palette[GLASS_COLOR_COUNT][3] = {
+      {0, 0, 0}, {0xE0, 0xE0, 0xE0}, {0x78, 0x78, 0x78}};
+  if (glassColorPreset == GLASS_COLOR_ORIGINAL)
+    return GS_SETREG_RGBA(red, green, blue, alpha);
+  int brightness = red;
+  if (green > brightness)
+    brightness = green;
+  if (blue > brightness)
+    brightness = blue;
+  return GS_SETREG_RGBA(palette[glassColorPreset][0] * brightness / 255,
+                        palette[glassColorPreset][1] * brightness / 255,
+                        palette[glassColorPreset][2] * brightness / 255, alpha);
+}
+
+uint64_t glassCoverAccentColor(int alpha) {
+  return glassPresetColor(0x18, 0x78, 0xC8, alpha);
+}
+
+uint64_t glassMissingCoverColor(int alpha) {
+  return GS_SETREG_RGBA(0x04, 0x14, 0x34, alpha);
+}
+
+uint64_t glassMissingCoverTextColor(void) {
+  if (glassColorPreset == GLASS_COLOR_ORIGINAL)
+    return HeaderTextColor;
+  if (glassColorPreset == GLASS_COLOR_BLACK)
+    return GS_SETREG_RGBA(0xC8, 0xC8, 0xC8, 0x80);
+  return glassPresetColor(0xE0, 0xF0, 0xFF, 0x80);
+}
+
+uint64_t glassMissingCoverDiamondColor(int alpha) {
+  if (glassColorPreset == GLASS_COLOR_BLACK)
+    return GS_SETREG_RGBA(0xC8, 0xC8, 0xC8, alpha);
+  return glassPresetColor(0x70, 0xD8, 0xFF, alpha);
+}
 
 static uint32_t glassStartMs = 0;
 static uint32_t orbSelectionEvents[ORB_SELECTION_EVENT_COUNT];
@@ -44,6 +91,12 @@ typedef struct {
   float y;
   int depth;
 } GlassPoint;
+
+typedef struct {
+  float yawSine, yawCosine;
+  float pitchSine, pitchCosine;
+  float rollSine, rollCosine;
+} GlassRotation;
 
 static const int glassSin[32] = {0,   25,  49,  71,  90,  106, 117, 125, 127, 125, 117, 106, 90,  71,  49,  25,
                                  0,  -25, -49, -71, -90, -106, -117, -125, -127, -125, -117, -106, -90, -71, -49, -25};
@@ -63,6 +116,7 @@ static GSTEXTURE glassStarAtlas;
 static GlassStarPixel glassStarAtlasPixels[GLASS_STAR_ATLAS_WIDTH * GLASS_STAR_ATLAS_HEIGHT] __attribute__((aligned(128)));
 
 static uint64_t glassColor(int red, int green, int blue, int alpha, int brightness);
+static float orbWave(uint32_t phase);
 void drawOrbitalDisc(int centerX, int centerY, int radius, int z, uint64_t centerColor, uint64_t edgeColor);
 
 void resetGlassVisuals(uint32_t startMs) {
@@ -81,15 +135,8 @@ static uint32_t glassPhase(uint32_t elapsedMs, uint32_t periodMs, uint32_t offse
   return (uint32_t)((((uint64_t)(elapsedMs + offsetMs)) << 16) / periodMs);
 }
 
-static int glassWave(uint32_t phase) {
-  int index = (phase >> 11) & 31;
-  int next = (index + 1) & 31;
-  int fraction = (phase >> 3) & 0xFF;
-  return glassSin[index] + ((glassSin[next] - glassSin[index]) * fraction) / 256;
-}
-
-static int glassStarEdgeAlpha(int x, int width, int fadeWidth) {
-  int distance;
+static int glassStarEdgeAlpha(float x, int width, int fadeWidth) {
+  float distance;
 
   if (x < 0)
     distance = x + fadeWidth;
@@ -105,7 +152,7 @@ static int glassStarEdgeAlpha(int x, int width, int fadeWidth) {
     return 0;
   if (distance >= fadeWidth)
     return 255;
-  return (distance * 255) / fadeWidth;
+  return (int)(distance * 255.0f / fadeWidth);
 }
 
 static int clampColor(int value) {
@@ -214,7 +261,7 @@ static void drawGlassStarSprite(int x, int y, int size, int red, int green, int 
   drawGlassStarDisc(x, y, 1, red, green, blue, alpha / 2, 32);
 }
 
-static void drawGlassBackgroundStarSprite(int x, int y, int size, int layer, int alpha) {
+static void drawGlassBackgroundStarSprite(float x, float y, int size, int layer, int alpha) {
   if (alpha <= 0)
     return;
   if (alpha > 0x80)
@@ -229,7 +276,8 @@ static void drawGlassBackgroundStarSprite(int x, int y, int size, int layer, int
 }
 
 static uint64_t glassColor(int red, int green, int blue, int alpha, int brightness) {
-  return GS_SETREG_RGBA(clampColor(red + brightness), clampColor(green + brightness), clampColor(blue + brightness), alpha);
+  return glassPresetColor(clampColor(red + brightness), clampColor(green + brightness),
+                          clampColor(blue + brightness), alpha);
 }
 
 void drawGlassDiamond(int centerX, int centerY, int radius, int z, uint64_t color) {
@@ -240,10 +288,10 @@ void drawGlassDiamond(int centerX, int centerY, int radius, int z, uint64_t colo
 }
 
 void drawGlassPanel(int x1, int y1, int x2, int y2, int z) {
-  const uint64_t glass = GS_SETREG_RGBA(0x05, 0x0D, 0x22, 0x54);
-  const uint64_t glassInner = GS_SETREG_RGBA(0x18, 0x46, 0x70, 0x14);
-  const uint64_t shine = GS_SETREG_RGBA(0x88, 0xD8, 0xFF, 0x4A);
-  const uint64_t edge = GS_SETREG_RGBA(0x24, 0x68, 0x98, 0x38);
+  const uint64_t glass = glassPresetColor(0x05, 0x0D, 0x22, 0x54);
+  const uint64_t glassInner = glassPresetColor(0x18, 0x46, 0x70, 0x14);
+  const uint64_t shine = glassPresetColor(0x88, 0xD8, 0xFF, 0x4A);
+  const uint64_t edge = glassPresetColor(0x24, 0x68, 0x98, 0x38);
 
   gsKit_prim_sprite(gsGlobal, x1, y1, x2, y2, z, glass);
   gsKit_prim_sprite(gsGlobal, x1 + 2, y1 + 2, x2 - 2, y1 + 5, z + 1, glassInner);
@@ -253,29 +301,34 @@ void drawGlassPanel(int x1, int y1, int x2, int y2, int z) {
   gsKit_prim_sprite(gsGlobal, x2 - 1, y1, x2, y2, z + 1, edge);
 }
 
-static void projectCrystalPoint(GlassPoint *point, int centerX, int centerY,
-                                int size, uint32_t yawPhase, uint32_t pitchPhase, uint32_t rollPhase,
-                                int sourceX, int sourceY, int sourceZ) {
-  const int yawSine = glassWave(yawPhase);
-  const int yawCosine = glassWave(yawPhase + (8 << 11));
-  const int pitchSine = glassWave(pitchPhase);
-  const int pitchCosine = glassWave(pitchPhase + (8 << 11));
-  const int rollSine = glassWave(rollPhase);
-  const int rollCosine = glassWave(rollPhase + (8 << 11));
-  const int yawX = (sourceX * yawCosine - sourceZ * yawSine) / 127;
-  const int yawZ = (sourceX * yawSine + sourceZ * yawCosine) / 127;
-  const int pitchY = (sourceY * pitchCosine - yawZ * pitchSine) / 127;
-  const int pitchZ = (sourceY * pitchSine + yawZ * pitchCosine) / 127;
-  const int rollX = (yawX * rollCosine - pitchY * rollSine) / 127;
-  const int rollY = (yawX * rollSine + pitchY * rollCosine) / 127;
-  const int perspective = 640 - pitchZ;
+static void projectCrystalPointRotated(GlassPoint *point, float centerX, float centerY,
+                                       int size, const GlassRotation *rotation,
+                                       int sourceX, int sourceY, int sourceZ) {
+  const float yawX = sourceX * rotation->yawCosine - sourceZ * rotation->yawSine;
+  const float yawZ = sourceX * rotation->yawSine + sourceZ * rotation->yawCosine;
+  const float pitchY = sourceY * rotation->pitchCosine - yawZ * rotation->pitchSine;
+  const float pitchZ = sourceY * rotation->pitchSine + yawZ * rotation->pitchCosine;
+  const float rollX = yawX * rotation->rollCosine - pitchY * rotation->rollSine;
+  const float rollY = yawX * rotation->rollSine + pitchY * rotation->rollCosine;
+  const float perspective = 640.0f - pitchZ;
 
-  point->x = (float)centerX + ((float)rollX * (float)size * 640.0f) / (127.0f * (float)perspective);
-  point->y = (float)centerY - ((float)rollY * (float)size * 640.0f) / (127.0f * (float)perspective);
-  point->depth = pitchZ;
+  point->x = centerX + rollX * size * 640.0f / (127.0f * perspective);
+  point->y = centerY - rollY * size * 640.0f / (127.0f * perspective);
+  point->depth = (int)pitchZ;
 }
 
-static void drawGlassCube(int centerX, int centerY, int size, uint32_t yawPhase, int red, int green, int blue,
+static void projectCrystalPoint(GlassPoint *point, float centerX, float centerY, int size,
+                                uint32_t yawPhase, uint32_t pitchPhase, uint32_t rollPhase,
+                                int sourceX, int sourceY, int sourceZ) {
+  const GlassRotation rotation = {
+      orbWave(yawPhase) / 127.0f, orbWave(yawPhase + (8 << 11)) / 127.0f,
+      orbWave(pitchPhase) / 127.0f, orbWave(pitchPhase + (8 << 11)) / 127.0f,
+      orbWave(rollPhase) / 127.0f, orbWave(rollPhase + (8 << 11)) / 127.0f};
+  projectCrystalPointRotated(point, centerX, centerY, size, &rotation,
+                             sourceX, sourceY, sourceZ);
+}
+
+static void drawGlassCube(float centerX, float centerY, int size, uint32_t yawPhase, int red, int green, int blue,
                           int stableOutline) {
   // Clean-room crystal renderer based only on observation of the stock System
   // Configuration animation: a tumbling translucent shell around a dark core.
@@ -288,16 +341,20 @@ static void drawGlassCube(int centerX, int centerY, int size, uint32_t yawPhase,
                                           {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
   const uint32_t pitchPhase = ((yawPhase * 5) / 7) + (5 << 11);
   const uint32_t rollPhase = ((yawPhase * 3) / 11) + (2 << 11);
+  const GlassRotation rotation = {
+      orbWave(yawPhase) / 127.0f, orbWave(yawPhase + (8 << 11)) / 127.0f,
+      orbWave(pitchPhase) / 127.0f, orbWave(pitchPhase + (8 << 11)) / 127.0f,
+      orbWave(rollPhase) / 127.0f, orbWave(rollPhase + (8 << 11)) / 127.0f};
   GlassPoint shell[8];
   GlassPoint core[8];
   int faceOrder[6] = {0, 1, 2, 3, 4, 5};
   int faceDepth[6];
 
   for (int i = 0; i < 8; i++) {
-    projectCrystalPoint(&shell[i], centerX, centerY, size, yawPhase, pitchPhase, rollPhase,
-                        source[i][0], source[i][1], source[i][2]);
-    projectCrystalPoint(&core[i], centerX, centerY, (size * 68) / 100,
-                        yawPhase, pitchPhase, rollPhase, source[i][0], source[i][1], source[i][2]);
+    projectCrystalPointRotated(&shell[i], centerX, centerY, size, &rotation,
+                               source[i][0], source[i][1], source[i][2]);
+    projectCrystalPointRotated(&core[i], centerX, centerY, (size * 68) / 100,
+                               &rotation, source[i][0], source[i][1], source[i][2]);
   }
 
   for (int face = 0; face < 6; face++) {
@@ -875,15 +932,15 @@ static void drawOrbTailStroke(float x1, float y1, float x2, float y2,
     drawOrbTrailSegment(ax, ay, bx, by,
                         (width + 4.0f) * fromFade,
                         (width + 4.0f) * toFade, z,
-                        GS_SETREG_RGBA(0x40, 0x78, 0xC8,
+                        glassPresetColor(0x40, 0x78, 0xC8,
                                        (int)(alpha * fromFade * 0.45f)),
-                        GS_SETREG_RGBA(0x40, 0x78, 0xC8,
+                        glassPresetColor(0x40, 0x78, 0xC8,
                                        (int)(alpha * toFade * 0.45f)));
     drawOrbTrailSegment(ax, ay, bx, by,
                         width * fromFade, width * toFade, z,
-                        GS_SETREG_RGBA(0xA0, 0xD8, 0xFF,
+                        glassPresetColor(0xA0, 0xD8, 0xFF,
                                        (int)(alpha * fromFade)),
-                        GS_SETREG_RGBA(0xA0, 0xD8, 0xFF,
+                        glassPresetColor(0xA0, 0xD8, 0xFF,
                                        (int)(alpha * toFade)));
   }
 }
@@ -898,11 +955,11 @@ static void drawOrbLogoStroke(float x1, float y1, float x2, float y2,
   const float tipX = x1 + (x2 - x1) * extent;
   const float tipY = y1 + (y2 - y1) * extent;
   drawOrbTrailSegment(x1, y1, tipX, tipY, width + 4.0f, width + 2.0f, z,
-                      GS_SETREG_RGBA(0x40, 0x78, 0xC8, alpha / 2),
-                      GS_SETREG_RGBA(0x40, 0x78, 0xC8, alpha / 3));
+                      glassPresetColor(0x40, 0x78, 0xC8, alpha / 2),
+                      glassPresetColor(0x40, 0x78, 0xC8, alpha / 3));
   drawOrbTrailSegment(x1, y1, tipX, tipY, width, width * 0.65f, z,
-                      GS_SETREG_RGBA(0xA0, 0xD8, 0xFF, alpha),
-                      GS_SETREG_RGBA(0xE0, 0xF0, 0xFF, alpha / 2));
+                      glassPresetColor(0xA0, 0xD8, 0xFF, alpha),
+                      glassPresetColor(0xE0, 0xF0, 0xFF, alpha / 2));
 }
 
 static void drawOrbFormationEdges(OrbShape shape, float extent,
@@ -1105,13 +1162,13 @@ static void drawFormationOrbs(int centerX, int centerY, int radiusX, int radiusY
       if (oldOuterAlpha || newOuterAlpha)
         drawOrbTrailSegment(oldX, oldY, newX, newY,
                             oldOuterWidth * trailScale, newOuterWidth * trailScale, trailZ,
-                            GS_SETREG_RGBA(0x40, 0x78, 0xC8, oldOuterAlpha),
-                            GS_SETREG_RGBA(0x40, 0x78, 0xC8, newOuterAlpha));
+                            glassPresetColor(0x40, 0x78, 0xC8, oldOuterAlpha),
+                            glassPresetColor(0x40, 0x78, 0xC8, newOuterAlpha));
       if (oldInnerAlpha || newInnerAlpha)
         drawOrbTrailSegment(oldX, oldY, newX, newY,
                             oldInnerWidth * trailScale, newInnerWidth * trailScale, trailZ,
-                            GS_SETREG_RGBA(0xA0, 0xD8, 0xFF, oldInnerAlpha),
-                            GS_SETREG_RGBA(0xA0, 0xD8, 0xFF, newInnerAlpha));
+                            glassPresetColor(0xA0, 0xD8, 0xFF, oldInnerAlpha),
+                            glassPresetColor(0xA0, 0xD8, 0xFF, newInnerAlpha));
       newX = oldX;
       newY = oldY;
       newOpacity = oldOpacity;
@@ -1139,11 +1196,11 @@ static void drawFormationOrbs(int centerX, int centerY, int radiusX, int radiusY
       coreAlpha = 0x80;
 
     drawOrbGlowDisc(x, y, haloRadius, trailZ + 1,
-                    GS_SETREG_RGBA(0x70, 0xA8, 0xE8, haloAlpha),
-                    GS_SETREG_RGBA(0x70, 0xA8, 0xE8, 0));
+                    glassPresetColor(0x70, 0xA8, 0xE8, haloAlpha),
+                    glassPresetColor(0x70, 0xA8, 0xE8, 0));
     drawOrbGlowDisc(x, y, coreRadius, trailZ + 1,
-                    GS_SETREG_RGBA(0xE0, 0xF0, 0xFF, coreAlpha),
-                    GS_SETREG_RGBA(0xE0, 0xF0, 0xFF, 0));
+                    glassPresetColor(0xE0, 0xF0, 0xFF, coreAlpha),
+                    glassPresetColor(0xE0, 0xF0, 0xFF, 0));
   }
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
 }
@@ -1151,16 +1208,22 @@ static void drawFormationOrbs(int centerX, int centerY, int radiusX, int radiusY
 static void drawOrbitalStars(int width, int height, uint32_t elapsedMs) {
   static const int speedPixelsPerSecond[3] = {4, 8, 13};
   const int edgeFadeWidth = 18;
+  float scroll[3];
+
+  for (int layer = 0; layer < 3; layer++)
+    scroll[layer] = (float)(((uint64_t)elapsedMs * speedPixelsPerSecond[layer]) %
+                            ((uint64_t)width * 1000)) / 1000.0f;
 
   gsKit_TexManager_bind(gsGlobal, &glassStarAtlas);
   for (int i = 0; i < 58; i++) {
     int layer = i % 3;
     int baseX = (i * 97 + i * i * 13 + 31) % width;
     int baseY = (i * 53 + i * i * 7 + 19) % height;
-    int scroll = (int)(((uint64_t)elapsedMs * speedPixelsPerSecond[layer]) / 1000ULL) % width;
-    int y = baseY + glassWave(glassPhase(elapsedMs, 7000 + layer * 1300, i * 113)) * (layer + 1) / 160;
-    int x = (baseX + scroll) % width;
-    int twinkle = glassWave(glassPhase(elapsedMs, 2600 + layer * 900, i * 173)) / 14;
+    float y = baseY + orbWave(glassPhase(elapsedMs, 7000 + layer * 1300, i * 113)) * (layer + 1) / 160.0f;
+    float x = baseX + scroll[layer];
+    if (x >= width)
+      x -= width;
+    int twinkle = (int)(orbWave(glassPhase(elapsedMs, 2600 + layer * 900, i * 173)) / 14.0f);
     int size = ((layer == 2) && ((i % 5) == 0)) ? 2 : 1;
     int alpha = 0x20 + layer * 0x12;
     int edgeAlpha = (alpha * glassStarEdgeAlpha(x, width, edgeFadeWidth)) / 255;
@@ -1202,10 +1265,10 @@ static void drawGlassBackground(uint32_t frameNowMs) {
   // their paths cannot collide even at their closest vertical alignment.
   uint32_t orbitPhase = glassPhase(elapsedMs, 36000, 0);
   uint32_t oppositePhase = orbitPhase + (16 << 11);
-  int nearX = orbitX + (glassWave(orbitPhase + (8 << 11)) * 146) / 127;
-  int nearY = orbitY + (glassWave(orbitPhase) * 56) / 127;
-  int farX = orbitX + (glassWave(oppositePhase + (8 << 11)) * 96) / 127;
-  int farY = orbitY + (glassWave(oppositePhase) * 40) / 127;
+  float nearX = orbitX + orbWave(orbitPhase + (8 << 11)) * (146.0f / 127.0f);
+  float nearY = orbitY + orbWave(orbitPhase) * (56.0f / 127.0f);
+  float farX = orbitX + orbWave(oppositePhase + (8 << 11)) * (96.0f / 127.0f);
+  float farY = orbitY + orbWave(oppositePhase) * (40.0f / 127.0f);
   drawGlassCube(nearX, nearY, 9, glassPhase(elapsedMs, 18000, 3000), 0x38, 0x98, 0xD8, 1);
   drawGlassCube(farX, farY, 7, glassPhase(elapsedMs, 26000, 12000), 0x78, 0x68, 0xC8, 1);
 }

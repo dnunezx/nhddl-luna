@@ -30,7 +30,7 @@ static int classicArtOverlap;
 static void drawClassicGlowLayer(int centerX, int centerY, int radiusX, int radiusY,
                                  int z, uint64_t centerColor) {
   int point;
-  const uint64_t transparent = GS_SETREG_RGBA(0x18, 0xA8, 0xF0, 0x00);
+  const uint64_t transparent = glassPresetColor(0x18, 0xA8, 0xF0, 0x00);
 
   for (point = 0; point < 16; point++) {
     int next = (point + 1) & 15;
@@ -68,7 +68,7 @@ void drawPSBBNFocusGlow(int left, int top, int rowRight, int textRight) {
   // Layered radial falloff keeps the selected title luminous without a bar,
   // beam, hard edge, or visible horizontal rule.
   drawClassicGlowLayer(centerX, centerY, radiusX, lineHeight, 2,
-                       GS_SETREG_RGBA(0x08, 0x54, 0xA0, 0x28));
+                       glassPresetColor(0x08, 0x54, 0xA0, 0x28));
 
   // Overlapping radial lobes carry a consistent glow beneath every visible
   // character while retaining a completely soft, non-rectilinear silhouette.
@@ -79,11 +79,11 @@ void drawPSBBNFocusGlow(int left, int top, int rowRight, int textRight) {
     lastLobeX = rowRight - 30;
   for (lobeX = left + 4; lobeX < lastLobeX; lobeX += 28)
     drawClassicGlowLayer(lobeX, centerY, 30, lineHeight * 3 / 4, 3,
-                         GS_SETREG_RGBA(0x28, 0xB8, 0xF0, 0x24));
+                         glassPresetColor(0x28, 0xB8, 0xF0, 0x24));
   drawClassicGlowLayer(lastLobeX, centerY, 30, lineHeight * 3 / 4, 3,
-                       GS_SETREG_RGBA(0x28, 0xB8, 0xF0, 0x24));
+                       glassPresetColor(0x28, 0xB8, 0xF0, 0x24));
   drawClassicGlowLayer(left + 4, centerY, 18, lineHeight / 2, 4,
-                       GS_SETREG_RGBA(0xE0, 0xFA, 0xFF, 0x40));
+                       glassPresetColor(0xE0, 0xFA, 0xFF, 0x40));
 }
 
 static void drawFavoriteDot(int centerX, int centerY, int z, uint64_t color) {
@@ -354,10 +354,10 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
   // without restoring the panel shine or any horizontal/vertical edge rules.
   gsKit_prim_sprite(gsGlobal, keepoutArea, headerHeight, coverArtX1 - 8,
                     gsGlobal->Height - footerHeight + 2, 1,
-                    GS_SETREG_RGBA(0x05, 0x0D, 0x22, 0x4C));
+                    glassPresetColor(0x05, 0x0D, 0x22, 0x4C));
   gsKit_prim_sprite(gsGlobal, coverArtX1 - 4, headerHeight, coverArtX2 + 4,
                     gsGlobal->Height - footerHeight + 2, 1,
-                    GS_SETREG_RGBA(0x05, 0x0D, 0x22, 0x4C));
+                    glassPresetColor(0x05, 0x0D, 0x22, 0x4C));
   drawTextWindow(baseX, headerHeight - getFontLineHeight(), gsGlobal->Width - baseX, 0, 3, FontMainColor, ALIGN_HCENTER, "L  U  N  A");
   const int headerY = headerHeight - getFontLineHeight();
   const int classicRight = baseX + getLineWidth("List");
@@ -457,13 +457,16 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
   // missing-art message between selections.
   const int coverTextureZ = classicArtOverlap ? 6 : 5;
   if (selectedTitleCover == NULL) {
-    gsKit_prim_sprite(gsGlobal, coverArtX1, coverArtY1, coverArtX2, coverArtY2,
-                      classicArtOverlap ? 6 : 5, GS_SETREG_RGBA(0x04, 0x0C, 0x20, 0x60));
+    if (getGlassColorPreset() == GLASS_COLOR_ORIGINAL)
+      gsKit_prim_sprite(gsGlobal, coverArtX1, coverArtY1, coverArtX2, coverArtY2,
+                        classicArtOverlap ? 6 : 5,
+                        GS_SETREG_RGBA(0x04, 0x0C, 0x20, 0x60));
     drawGlassDiamond((coverArtX1 + coverArtX2) / 2, (coverArtY1 + coverArtY2) / 2 - 12, 24,
                      classicArtOverlap ? 7 : 6,
-                     GS_SETREG_RGBA(0x70, 0xD8, 0xFF, 0x48));
+                     glassMissingCoverDiamondColor(0x48));
     drawTextWindow(coverArtX1, coverArtY1, coverArtX2, coverArtY2 + 44,
-                   classicArtOverlap ? 7 : 6, HeaderTextColor, ALIGN_CENTER,
+                   classicArtOverlap ? 7 : 6,
+                   glassMissingCoverTextColor(), ALIGN_CENTER,
                    coverPending ? "LOADING\nCOVER" : "COVER\nUNAVAILABLE");
   }
   if (previousCover != NULL && coverTransitionProgress < 1000) {

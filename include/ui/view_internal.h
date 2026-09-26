@@ -6,6 +6,7 @@
 #include "ui/navigation.h"
 #include "ui/art_cache.h"
 #include "ui/views.h"
+#include "ui/view_orbs.h"
 #include <stdint.h>
 
 extern char lineBuffer[255];

@@ -111,7 +111,7 @@ static void drawOrbitGuide(int centerX, int centerY, int radiusX, int radiusY) {
     int alpha = 0x0C + ((depth + 127) * 0x20) / 254;
 
     gsKit_prim_line(gsGlobal, x1, psbbnFieldStableY(y1), x2, psbbnFieldStableY(y2), 2,
-                    GS_SETREG_RGBA(0x38, 0xA8, 0xF0, alpha));
+                    glassPresetColor(0x38, 0xA8, 0xF0, alpha));
   }
 }
 
@@ -231,6 +231,7 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
     OrbitCover *item = &items[order[cacheIdx]];
     int brightness;
     int alpha;
+    int backplateAlpha;
     int z;
 
     if (!item->drawable)
@@ -238,25 +239,41 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
     brightness = (0x42 + (item->emphasis * 0x3E) / 1000) * item->visibility / 1000;
     alpha = (0x38 + (item->emphasis * 0x48) / 1000) * item->visibility / 1000;
     z = 4 + ((item->depth + 127) * 2) / 254;
+    backplateAlpha = getGlassColorPreset() == GLASS_COLOR_ORIGINAL
+                         ? 0x24 : item->cacheIdx == visualFocus ? 0x18 : 0x10;
 
-    drawOrbitQuadSolid(item->quad, z - 1,
-                       GS_SETREG_RGBA(0x18, 0x78, 0xC8,
-                                      (0x24 * item->visibility) / 1000));
+    // New themes reveal a faint backplate through feathered cover edges.
+    // Original retains its existing backplate and texture treatment.
+    if ((covers[item->cacheIdx] != NULL && psbbnCoverLoaded[item->cacheIdx]) ||
+        getGlassColorPreset() == GLASS_COLOR_ORIGINAL) {
+      uint64_t backplateColor = getGlassColorPreset() == GLASS_COLOR_WHITE_GRAY
+                                    ? GS_SETREG_RGBA(0x7A, 0xA6, 0xC0,
+                                        (backplateAlpha * item->visibility) / 1000)
+                                    : glassCoverAccentColor((backplateAlpha * item->visibility) / 1000);
+      drawOrbitQuadSolid(item->quad, z - 1, backplateColor);
+    }
     if (covers[item->cacheIdx] != NULL && psbbnCoverLoaded[item->cacheIdx]) {
       drawOrbitQuadTexture(covers[item->cacheIdx], item->quad, z,
                            GS_SETREG_RGBA(brightness, brightness, brightness, alpha));
     } else {
-      drawOrbitQuadSolid(item->quad, z,
-                         GS_SETREG_RGBA(0x04, 0x14, 0x34,
-                                        (0x58 * item->visibility) / 1000));
-      if (item->cacheIdx == visualFocus)
-      {
-        drawTextWindow(item->centerX - item->size / 2,
-                       item->centerY - getFontLineHeight(),
-                       item->centerX + item->size / 2,
-                       item->centerY + getFontLineHeight(), z + 1,
-                       HeaderTextColor, ALIGN_CENTER, "ART\nUNAVAILABLE");
-      }
+      int radius = (int)((item->quad.upperRightX - item->quad.upperLeftX) / 8.0f);
+      int showLabel = item->cacheIdx == visualFocus;
+      if (radius > 24)
+        radius = 24;
+      if (radius < 4)
+        radius = 4;
+      if (getGlassColorPreset() == GLASS_COLOR_ORIGINAL)
+        drawOrbitQuadSolid(item->quad, z,
+                           glassMissingCoverColor((0x58 * item->visibility) / 1000));
+      drawGlassDiamond(item->centerX,
+                       item->centerY - (showLabel ? getFontLineHeight() : 0),
+                       radius, z + 1,
+                       glassMissingCoverDiamondColor((0x48 * item->visibility) / 1000));
+      if (showLabel)
+        drawTextWindow((int)item->quad.upperLeftX, item->centerY + radius / 2,
+                       (int)item->quad.upperRightX, 0, z + 1,
+                       glassMissingCoverTextColor(), ALIGN_HCENTER,
+                       "COVER\nUNAVAILABLE");
     }
   }
 
@@ -268,9 +285,6 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
 
     formatPSBBNTitle(getTargetByIdx(titles, focusTargetIdx)->name,
                      selectedTitle, titleRight - titleLeft);
-    gsKit_prim_sprite(gsGlobal, titleLeft - 6, titleY - 3, titleRight + 6,
-                      titleY + getFontLineHeight() * 2 + 3, 7,
-                      GS_SETREG_RGBA(0x04, 0x18, 0x38, 0x42));
     drawTextWindow(titleLeft, titleY, titleRight, 0, 8,
                    FontMainColor, ALIGN_HCENTER, selectedTitle);
     snprintf(lineBuffer, sizeof(lineBuffer), "%d/%d", focusTargetIdx + 1, titles->total);

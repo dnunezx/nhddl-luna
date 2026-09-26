@@ -41,7 +41,24 @@ void drawPSBBNCover(GSTEXTURE *cover, float x1, float y1, float size, int cacheI
     gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
   } else {
     int placeholderAlpha = (0x42 + (emphasis * 0x36) / 1000) * visibility / 1000;
-    gsKit_prim_sprite(gsGlobal, x1, y1, x2, y2, z, GS_SETREG_RGBA(0x04, 0x14, 0x34, placeholderAlpha));
+    int centerX = (int)(x1 + size / 2.0f);
+    int centerY = (int)(y1 + size / 2.0f);
+    int radius = (int)(size / 8.0f);
+    int showLabel = emphasis >= 800 && size >= 140.0f;
+    if (radius > 24)
+      radius = 24;
+    if (radius < 4)
+      radius = 4;
+    if (getGlassColorPreset() == GLASS_COLOR_ORIGINAL)
+      gsKit_prim_sprite(gsGlobal, x1, y1, x2, y2, z,
+                        glassMissingCoverColor(placeholderAlpha));
+    drawGlassDiamond(centerX, centerY - (showLabel ? getFontLineHeight() : 0),
+                     radius, z + 1,
+                     glassMissingCoverDiamondColor((0x48 * visibility) / 1000));
+    if (showLabel)
+      drawTextWindow((int)x1, centerY + radius / 2, (int)x2, 0, z + 1,
+                     glassMissingCoverTextColor(), ALIGN_HCENTER,
+                     "COVER\nUNAVAILABLE");
   }
 }
 
@@ -173,8 +190,8 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
   // The original shell keeps the Collection selector on the left and lets
   // the cover stack overlap its right edge.
   panelLineY = psbbnFieldStableY(headerHeight + 42);
-  gsKit_prim_sprite(gsGlobal, 24, panelLineY, panelRight, panelLineY + panelLineHeight, 1, GS_SETREG_RGBA(0x2A, 0x74, 0xB8, 0x18));
-  gsKit_prim_line(gsGlobal, 24, panelLineY, 24, psbbnFieldStableY(bottom), 1, GS_SETREG_RGBA(0x2A, 0x8C, 0xE8, 0x14));
+  gsKit_prim_sprite(gsGlobal, 24, panelLineY, panelRight, panelLineY + panelLineHeight, 1, glassPresetColor(0x2A, 0x74, 0xB8, 0x18));
+  gsKit_prim_line(gsGlobal, 24, panelLineY, 24, psbbnFieldStableY(bottom), 1, glassPresetColor(0x2A, 0x8C, 0xE8, 0x14));
   // Dock the selector low on the left so the cover tail can recede through the
   // space it previously occupied without colliding with the words.
   int selectorCenterY = psbbnFieldStableY(gsGlobal->Height - footerHeight - getFontLineHeight() - 16);

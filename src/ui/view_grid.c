@@ -115,7 +115,10 @@ static void drawGridPage(TargetList *titles, int pageBase, int buffer, int selec
     GridQuad quad = gridFlatQuad(u1, v1, u2, v2, left, top, right, bottom);
     GridQuad frame = gridFlatQuad(u1 - 4, v1 - 4, u2 + 4, v2 + 4, left, top, right, bottom);
 
-    drawGridQuadSolid(frame, 3, GS_SETREG_RGBA(0x28, 0x68, 0xA8, (0x24 * opacity) / 0x80));
+    if (getGlassColorPreset() == GLASS_COLOR_ORIGINAL ||
+        targetIdx >= titles->total || (buffer >= 0 && gridCoverLoaded[buffer][slot]))
+      drawGridQuadSolid(frame, 3,
+                        glassPresetColor(0x28, 0x68, 0xA8, (0x24 * opacity) / 0x80));
     if (targetIdx >= titles->total) {
       drawGridQuadSolid(quad, 4, GS_SETREG_RGBA(0x02, 0x08, 0x18, (0x38 * opacity) / 0x80));
     } else if (buffer >= 0 && gridCoverLoaded[buffer][slot]) {
@@ -124,11 +127,14 @@ static void drawGridPage(TargetList *titles, int pageBase, int buffer, int selec
     } else {
       float centerX = (quad.upperLeftX + quad.upperRightX + quad.lowerLeftX + quad.lowerRightX) / 4.0f;
       float centerY = (quad.upperLeftY + quad.upperRightY + quad.lowerLeftY + quad.lowerRightY) / 4.0f;
-      drawGridQuadSolid(quad, 5, GS_SETREG_RGBA(0x04, 0x14, 0x34, (0x58 * opacity) / 0x80));
+      if (getGlassColorPreset() == GLASS_COLOR_ORIGINAL)
+        drawGridQuadSolid(quad, 5, glassMissingCoverColor((0x58 * opacity) / 0x80));
+      drawGlassDiamond((int)centerX, (int)centerY - 8, 8, 6,
+                       glassMissingCoverDiamondColor((0x48 * opacity) / 0x80));
       if (opacity >= 0x40) {
         snprintf(lineBuffer, sizeof(lineBuffer), "%d", targetIdx + 1);
-        drawTextWindow(centerX - 18, centerY - getFontLineHeight() / 2, centerX + 18,
-                       centerY + getFontLineHeight() / 2, 6, HeaderTextColor, ALIGN_CENTER, lineBuffer);
+        drawTextWindow(centerX - 18, centerY + 3, centerX + 18, 0, 6,
+                       glassMissingCoverTextColor(), ALIGN_CENTER, lineBuffer);
       }
     }
   }
@@ -209,8 +215,8 @@ static void drawGridHighlight(float cellU, float cellV, float left, float top, f
   } else {
     GridQuad highlight = gridFlatQuad(cellU, cellV, cellU + 250,
                                       cellV + 250, left, top, right, bottom);
-    drawGridQuadSolid(highlight, 6, GS_SETREG_RGBA(0x24, 0x78, 0xD8, (0x30 * opacity) / 0x80));
-    drawGridQuadOutline(highlight, 7, GS_SETREG_RGBA(0xC8, 0xF0, 0xFF, (0x78 * opacity) / 0x80));
+    drawGridQuadSolid(highlight, 6, glassPresetColor(0x24, 0x78, 0xD8, (0x30 * opacity) / 0x80));
+    drawGridQuadOutline(highlight, 7, glassPresetColor(0xC8, 0xF0, 0xFF, (0x78 * opacity) / 0x80));
   }
 }
 
@@ -230,7 +236,7 @@ static void drawGridSelectionPlate(int selectedTitleIdx, int windowBase, float l
   // Sit just outside the cover quad so the dark-blue plate remains visible
   // as a stable halo behind the selected artwork.
   GridQuad plate = gridFlatQuad(plateU + 2, plateV + 2, plateU + 248, plateV + 248, left, top, right, bottom);
-  drawGridQuadSolid(plate, 4, GS_SETREG_RGBA(0x0C, 0x38, 0x78, (0x38 * opacity) / 0x80));
+  drawGridQuadSolid(plate, 4, glassPresetColor(0x0C, 0x38, 0x78, (0x38 * opacity) / 0x80));
 }
 
 void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBase, int activeWindowBuffer,
@@ -304,14 +310,20 @@ void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBas
   drawTextWindow(rightLeft, top - 2, rightRight, 0, 6, FontMainColor, ALIGN_HCENTER, selectedTitle);
   if (selectedCoverBuffer >= 0 && gridSelectedLoaded[selectedCoverBuffer]) {
     gsKit_prim_sprite(gsGlobal, selectedX - 3, selectedY - 3, selectedX + selectedSize + 3, selectedY + selectedSize + 3, 3,
-                      GS_SETREG_RGBA(0x28, 0x88, 0xD8, 0x28));
+                      glassPresetColor(0x28, 0x88, 0xD8, 0x28));
     drawGridTexture(gridSelectedTextures[selectedCoverBuffer], selectedX, selectedY, selectedSize, 5,
                     GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
   } else {
-    gsKit_prim_sprite(gsGlobal, selectedX, selectedY, selectedX + selectedSize, selectedY + selectedSize, 4,
-                      GS_SETREG_RGBA(0x04, 0x14, 0x34, 0x58));
-    drawTextWindow(selectedX, selectedY, selectedX + selectedSize, selectedY + selectedSize, 5, HeaderTextColor, ALIGN_CENTER,
-                   (selectedCoverBuffer < 0) ? "FAST TRACK" : "ART\nUNAVAILABLE");
+    if (getGlassColorPreset() == GLASS_COLOR_ORIGINAL)
+      gsKit_prim_sprite(gsGlobal, selectedX, selectedY, selectedX + selectedSize, selectedY + selectedSize, 4,
+                        glassMissingCoverColor(0x58));
+    drawGlassDiamond(selectedX + selectedSize / 2,
+                     selectedY + selectedSize / 2 - getFontLineHeight(), 24, 5,
+                     glassMissingCoverDiamondColor(0x48));
+    drawTextWindow(selectedX, selectedY + selectedSize / 2 + 12,
+                   selectedX + selectedSize, 0, 5,
+                   glassMissingCoverTextColor(), ALIGN_HCENTER,
+                   (selectedCoverBuffer < 0) ? "LOADING\nCOVER" : "COVER\nUNAVAILABLE");
   }
   snprintf(lineBuffer, sizeof(lineBuffer), "%d/%d", selectedTitleIdx + 1, titles->total);
   drawTextWindow(rightLeft, selectedY + selectedSize + 4, rightRight, 0, 6, FontMainColor, ALIGN_RIGHT, lineBuffer);

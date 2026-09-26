@@ -8,7 +8,7 @@
 // Predefined colors
 // static const uint64_t ColorWhite = GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80);
 static const uint64_t ColorBlack = GS_SETREG_RGBA(0x04, 0x08, 0x16, 0x80);
-static const uint64_t ColorSelected = GS_SETREG_RGBA(0x22, 0xA8, 0xFF, 0x80);
+static const uint64_t ColorSelected = GS_SETREG_RGBA(0x33, 0xB5, 0xE5, 0x80);
 static const uint64_t ColorGrey = GS_SETREG_RGBA(0xC8, 0xD4, 0xE8, 0x80);
 static const uint64_t ColorPanel = GS_SETREG_RGBA(0x0A, 0x14, 0x2A, 0x80);
 static const uint64_t ColorPanelEdge = GS_SETREG_RGBA(0x29, 0x4E, 0x7A, 0x80);
