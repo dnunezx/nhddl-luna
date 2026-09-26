@@ -2,7 +2,8 @@
 #include "ui/view_internal.h"
 #include <stdio.h>
 
-#define GRID_COVER_INSET 16
+#define GRID_COVER_INSET 2
+#define GRID_CELL_SIZE (GRID_THUMBNAIL_SIZE + 2 * GRID_COVER_INSET)
 #define GRID_SELECTOR_GLIDE_MS 190
 #define GRID_SELECTOR_IDLE_RESET_MS 500
 
@@ -99,16 +100,18 @@ static void drawGridPage(TargetList *titles, int pageBase, int buffer, int selec
     firstSlot = 0;
   if (finalSlot > GRID_PAGE_SIZE)
     finalSlot = GRID_PAGE_SIZE;
+  // The grid spans the same number of pixels in each direction.
+  const float inset = GRID_COVER_INSET * 1000.0f / (right - left);
 
   for (int slot = firstSlot; slot < finalSlot; slot++) {
     int row = slot / GRID_COLUMNS;
     int column = slot % GRID_COLUMNS;
     int targetIdx = pageBase + slot;
     int selected = (targetIdx == selectedTitleIdx && targetIdx < titles->total);
-    int u1 = column * 250 + GRID_COVER_INSET;
-    int v1 = row * 250 + GRID_COVER_INSET;
-    int u2 = (column + 1) * 250 - GRID_COVER_INSET;
-    int v2 = (row + 1) * 250 - GRID_COVER_INSET;
+    float u1 = column * 250 + inset;
+    float v1 = row * 250 + inset;
+    float u2 = (column + 1) * 250 - inset;
+    float v2 = (row + 1) * 250 - inset;
     GridQuad quad = gridFlatQuad(u1, v1, u2, v2, left, top, right, bottom);
     GridQuad frame = gridFlatQuad(u1 - 4, v1 - 4, u2 + 4, v2 + 4, left, top, right, bottom);
 
@@ -121,11 +124,11 @@ static void drawGridPage(TargetList *titles, int pageBase, int buffer, int selec
     } else {
       float centerX = (quad.upperLeftX + quad.upperRightX + quad.lowerLeftX + quad.lowerRightX) / 4.0f;
       float centerY = (quad.upperLeftY + quad.upperRightY + quad.lowerLeftY + quad.lowerRightY) / 4.0f;
-      drawGridQuadSolid(quad, 4, GS_SETREG_RGBA(0x04, 0x14, 0x34, (0x58 * opacity) / 0x80));
+      drawGridQuadSolid(quad, 5, GS_SETREG_RGBA(0x04, 0x14, 0x34, (0x58 * opacity) / 0x80));
       if (opacity >= 0x40) {
         snprintf(lineBuffer, sizeof(lineBuffer), "%d", targetIdx + 1);
         drawTextWindow(centerX - 18, centerY - getFontLineHeight() / 2, centerX + 18,
-                       centerY + getFontLineHeight() / 2, 5, HeaderTextColor, ALIGN_CENTER, lineBuffer);
+                       centerY + getFontLineHeight() / 2, 6, HeaderTextColor, ALIGN_CENTER, lineBuffer);
       }
     }
   }
@@ -142,6 +145,15 @@ typedef struct {
 } GridSelectorMotion;
 
 static GridSelectorMotion gridSelectorMotion;
+
+int gridSelectorIsMoving(int selectedTitleIdx, int pageBase, uint32_t now) {
+  const GridSelectorMotion *motion = &gridSelectorMotion;
+  if (!motion->valid || now - motion->lastFrameMs > GRID_SELECTOR_IDLE_RESET_MS)
+    return 0;
+  if (motion->pageBase != pageBase || motion->targetIndex != selectedTitleIdx)
+    return 1;
+  return motion->currentU != motion->targetU || motion->currentV != motion->targetV;
+}
 
 static void gridSelectorVisualPosition(int selectedTitleIdx, int windowBase, uint32_t now,
                                        float *visualU, float *visualV) {
@@ -186,11 +198,13 @@ static void drawGridHighlight(float cellU, float cellV, float left, float top, f
   left += offsetX;
   right += offsetX;
   if (gridSelector != NULL) {
-    // The bright frame occupies only the middle of the source image. Give
-    // its glow room outside the cover while keeping the frame near its edge.
-    GridQuad highlight = gridFlatQuad(cellU - 45, cellV - 45, cellU + 295,
-                                      cellV + 295, left, top, right, bottom);
-    drawGridQuadTexture(gridSelector, highlight, 7,
+    // Place the PNG's bright frame just outside the 64-pixel cover. The cover
+    // is drawn afterward, hiding the PNG's center while the border glows.
+    const float shiftU = 2.0f * 1000.0f / (right - left);
+    GridQuad highlight = gridFlatQuad(cellU - 57 - shiftU, cellV - 57,
+                                      cellU + 307 - shiftU,
+                                      cellV + 307, left, top, right, bottom);
+    drawGridQuadTexture(gridSelector, highlight, 4,
                         GS_SETREG_RGBA(0x80, 0x80, 0x80, opacity));
   } else {
     GridQuad highlight = gridFlatQuad(cellU, cellV, cellU + 250,
@@ -226,10 +240,8 @@ void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBas
   const int bottom = gsGlobal->Height - footerHeight - 10;
   const int leftX = keepoutArea + 10;
   const int leftRight = gsGlobal->Width * 49 / 100;
-  const float gridLeft = leftX + 7;
-  const float gridTop = top + 29;
   const float gridRight = leftRight - 5;
-  const float gridBottom = bottom - 18;
+  const float gridLeft = gridRight - GRID_COLUMNS * GRID_CELL_SIZE;
   const int rightLeft = leftRight + 24;
   const int rightRight = gsGlobal->Width - keepoutArea;
   const int selectedAreaTop = top + getFontLineHeight() + 8;
@@ -245,6 +257,8 @@ void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBas
     selectedSize = selectedAreaBottom - selectedAreaTop;
   selectedX = rightLeft + (rightRight - rightLeft - selectedSize) / 2;
   selectedY = selectedAreaTop + (selectedAreaBottom - selectedAreaTop - selectedSize) / 2;
+  const float gridTop = selectedY;
+  const float gridBottom = gridTop + GRID_ROWS * GRID_CELL_SIZE;
 
   drawSharedLibraryBackground(frameNowMs);
   drawTextWindow(leftX, headerHeight - getFontLineHeight(), leftRight, 0, 5, HeaderTextColor, ALIGN_LEFT, "GRID");
@@ -265,28 +279,22 @@ void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBas
                              outgoingOffset, outgoingOpacity);
       drawGridSelectionPlate(selectedTitleIdx, incomingWindowBase, gridLeft, gridTop, gridRight, gridBottom,
                              incomingOffset, incomingOpacity);
+      // The selector extends beyond its tile, so it can appear at the screen
+      // edge before the selected row slides in. Show it once the page settles.
       drawGridPage(titles, activeWindowBase, activeWindowBuffer, selectedTitleIdx, gridLeft, gridTop, gridRight, gridBottom,
                    outgoingOffset, 0.0f, outgoingOpacity, row, 1);
       drawGridPage(titles, incomingWindowBase, incomingWindowBuffer, selectedTitleIdx, gridLeft, gridTop, gridRight, gridBottom,
                    incomingOffset, 0.0f, incomingOpacity, row, 1);
-
-      if (selectedTitleIdx >= incomingWindowBase + row * GRID_COLUMNS &&
-          selectedTitleIdx < incomingWindowBase + (row + 1) * GRID_COLUMNS) {
-        int selectedSlot = selectedTitleIdx - incomingWindowBase;
-        drawGridHighlight((selectedSlot % GRID_COLUMNS) * 250.0f,
-                          (selectedSlot / GRID_COLUMNS) * 250.0f,
-                          gridLeft, gridTop, gridRight, gridBottom, incomingOffset, incomingOpacity);
-      }
     }
   } else {
     drawGridSelectionPlate(selectedTitleIdx, activeWindowBase, gridLeft, gridTop, gridRight, gridBottom, 0.0f, 0x80);
-    drawGridPage(titles, activeWindowBase, activeWindowBuffer, selectedTitleIdx, gridLeft, gridTop, gridRight, gridBottom,
-                 0.0f, 0.0f, 0x80, 0, GRID_ROWS);
     if (selectedTitleIdx >= activeWindowBase && selectedTitleIdx < activeWindowBase + GRID_PAGE_SIZE) {
       float visualU, visualV;
       gridSelectorVisualPosition(selectedTitleIdx, activeWindowBase, frameNowMs, &visualU, &visualV);
       drawGridHighlight(visualU, visualV, gridLeft, gridTop, gridRight, gridBottom, 0.0f, 0x80);
     }
+    drawGridPage(titles, activeWindowBase, activeWindowBuffer, selectedTitleIdx, gridLeft, gridTop, gridRight, gridBottom,
+                 0.0f, 0.0f, 0x80, 0, GRID_ROWS);
   }
 
   snprintf(lineBuffer, sizeof(lineBuffer), "Page %d/%d", displayPageBase / GRID_PAGE_SIZE + 1, pageCount);

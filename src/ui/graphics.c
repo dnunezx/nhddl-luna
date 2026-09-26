@@ -42,8 +42,8 @@ static void prepareGridSelector(GSTEXTURE *texture) {
         max = pixel->b;
 
       if (x >= 14 && x <= 49 && y >= 14 && y <= 49) {
-        // Retain a light blue tint over the artwork, rather than the opaque fill.
-        pixel->a = 104;
+        // Let the cover or fallback tile show through the selector's center.
+        pixel->a = 0;
       } else {
         // Source RGB is already darkened against black; recover its hue as
         // brightness becomes alpha, including the soft outer glow.

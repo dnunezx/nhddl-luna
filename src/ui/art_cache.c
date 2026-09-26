@@ -9,7 +9,6 @@
 #include <stdio.h>
 
 #define PSBBN_THUMBNAIL_SIZE 64
-#define GRID_THUMBNAIL_SIZE 64
 
 typedef struct {
   uint8_t r, g, b, a;
@@ -26,6 +25,7 @@ static int psbbnCoverSourceWidth[PSBBN_COVER_CACHE_COUNT];
 static int psbbnCoverSourceHeight[PSBBN_COVER_CACHE_COUNT];
 GSTEXTURE *gridCoverTextures[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
 uint8_t gridCoverLoaded[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
+static uint8_t gridCoverAttempted[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
 GSTEXTURE *gridSelectedTextures[GRID_SELECTED_BUFFERS];
 uint8_t gridSelectedLoaded[GRID_SELECTED_BUFFERS];
 GSTEXTURE *orbsLogoTextures[ORBS_LOGO_CACHE_COUNT];
@@ -471,6 +471,7 @@ void releaseGridCovers(void) {
     for (int slot = 0; slot < GRID_PAGE_SIZE; slot++) {
       releaseGridTexture(gridCoverTextures[buffer][slot]);
       gridCoverLoaded[buffer][slot] = 0;
+      gridCoverAttempted[buffer][slot] = 0;
     }
   }
   for (int buffer = 0; buffer < GRID_SELECTED_BUFFERS; buffer++) {
@@ -483,17 +484,40 @@ static void resetGridPageBuffer(int buffer) {
   for (int slot = 0; slot < GRID_PAGE_SIZE; slot++) {
     releaseGridTexture(gridCoverTextures[buffer][slot]);
     gridCoverLoaded[buffer][slot] = 0;
+    gridCoverAttempted[buffer][slot] = 0;
   }
 }
 
-// Loads at most one PNG per UI frame. Page changes therefore keep input and
-// animation cadence responsive instead of decoding all sixteen covers in one
-// blocking burst.
-int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot, int *didLoadArtwork) {
+int gridPageSlotAttempted(int buffer, int slot) {
+  return buffer >= 0 && buffer < GRID_PAGE_BUFFERS &&
+         slot >= 0 && slot < GRID_PAGE_SIZE && gridCoverAttempted[buffer][slot];
+}
+
+// Decode one requested tile first, then resume the remaining slots in order.
+// A missing PNG still counts as attempted so the page can show a placeholder.
+int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot,
+                     int prioritySlot, int *didLoadArtwork) {
   *didLoadArtwork = 0;
+  if (prioritySlot >= 0 && prioritySlot < GRID_PAGE_SIZE &&
+      !gridCoverAttempted[buffer][prioritySlot]) {
+    int targetIdx = pageBase + prioritySlot;
+    gridCoverAttempted[buffer][prioritySlot] = 1;
+    if (targetIdx < titles->total) {
+      Target *target = getTargetByIdx(titles, targetIdx);
+      gridCoverLoaded[buffer][prioritySlot] =
+          (loadGridCoverArt(target->device, target->id,
+                            gridCoverTextures[buffer][prioritySlot], 1) == 0);
+      *didLoadArtwork = 1;
+    }
+    return 0;
+  }
   while (*nextSlot < GRID_PAGE_SIZE) {
     int slot = (*nextSlot)++;
     int targetIdx = pageBase + slot;
+
+    if (gridCoverAttempted[buffer][slot])
+      continue;
+    gridCoverAttempted[buffer][slot] = 1;
 
     if (targetIdx < titles->total) {
       Target *target = getTargetByIdx(titles, targetIdx);

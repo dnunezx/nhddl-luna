@@ -31,7 +31,8 @@ void releasePSBBNCovers(void);
 void releaseGridCovers(void);
 void releaseGridTexture(GSTEXTURE *texture);
 int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot,
-                     int *didLoadArtwork);
+                     int prioritySlot, int *didLoadArtwork);
+int gridPageSlotAttempted(int buffer, int slot);
 int refreshGridSelectedCover(Target *target, int buffer);
 void prepareGridPageBuffer(int buffer, int pageBase, int *pageBases,
                            int *pageComplete, int *pageNextSlot);

@@ -434,6 +434,7 @@ int uiLoop(TargetList *titles) {
       int pendingPageBuffer = -1;
       int pendingPageBase = -1;
       int loadPageBuffer = -1;
+      int loadPrioritySlot = -1;
       uint32_t now = uiNowMs();
 
       if (gridActivePageBase < 0) {
@@ -441,83 +442,97 @@ int uiLoop(TargetList *titles) {
         prepareGridPageBuffer(gridActivePageBuffer, gridActivePageBase, gridPageBases,
                               gridPageComplete, gridPageNextSlot);
       }
+      const int activeSelectedSlot = selectedTitleIdx - gridActivePageBase;
+      const int selectorMoving = gridSelectorIsMoving(selectedTitleIdx, gridActivePageBase, now);
 
       // A held shoulder deliberately performs no artwork work, including the
       // half-second decision window. Fast-track moves lightweight page shells,
       // then the normal loader prepares only the page where the user stops.
       if (!gridFastTrackActive && gridShoulderDirection == 0) {
-        if (!gridPageComplete[gridActivePageBuffer])
-          loadPageBuffer = gridActivePageBuffer;
-
-      if (!gridCascadeActive && gridPendingSelectedIdx >= 0) {
-        pendingPageBase = (gridPendingSelectedIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
-        pendingPageBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, pendingPageBase);
-        if (pendingPageBuffer < 0) {
-          pendingPageBuffer = lunaNavChooseBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridActivePageBuffer,
-                                                  gridPreviousPageBuffer, gridIncomingPageBuffer);
-          if (pendingPageBuffer >= 0)
-            prepareGridPageBuffer(pendingPageBuffer, pendingPageBase, gridPageBases,
-                                  gridPageComplete, gridPageNextSlot);
-        }
-        if (pendingPageBuffer >= 0 && !gridPageComplete[pendingPageBuffer])
-          loadPageBuffer = pendingPageBuffer;
-      }
-
-      if (loadPageBuffer >= 0) {
-        gridPageComplete[loadPageBuffer] =
-            loadGridPageStep(titles, gridPageBases[loadPageBuffer], loadPageBuffer,
-                             &gridPageNextSlot[loadPageBuffer], &didLoadArtwork);
-      }
-
-      if (!gridCascadeActive && pendingPageBuffer >= 0 && gridPageComplete[pendingPageBuffer]) {
-        if (!didLoadArtwork && gridPendingSelectedCoverIdx != gridPendingSelectedIdx) {
-          Target *pendingTarget = getTargetByIdx(titles, gridPendingSelectedIdx);
-          refreshGridSelectedCover(pendingTarget, gridSelectedIncomingBuffer);
-          gridPendingSelectedCoverIdx = gridPendingSelectedIdx;
-          didLoadArtwork = 1;
-        }
-
-        if (gridPendingSelectedCoverIdx == gridPendingSelectedIdx) {
-          int previousSelectedBuffer = gridSelectedActiveBuffer;
-          gridSelectedActiveBuffer = gridSelectedIncomingBuffer;
-          gridSelectedIncomingBuffer = previousSelectedBuffer;
-          gridSelectedActiveIdx = gridPendingSelectedIdx;
-          gridSelectedRequestedIdx = gridPendingSelectedIdx;
-          gridSelectedAttemptedIdx = gridPendingSelectedIdx;
-          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
-          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
-
-          selectedTitleIdx = gridPendingSelectedIdx;
-          curTarget = getTargetByIdx(titles, selectedTitleIdx);
-          if (gridFastTrackSettling) {
-            // Fast-track already animated the lightweight destination shell.
-            // Promote its completed artwork in place instead of replaying the
-            // normal page cascade after the last PNG finishes loading.
-            int previousActiveBuffer = gridActivePageBuffer;
-            gridActivePageBuffer = pendingPageBuffer;
-            gridActivePageBase = pendingPageBase;
-            gridPreviousPageBuffer = previousActiveBuffer;
-            gridIncomingPageBuffer = -1;
-            gridIncomingPageBase = -1;
-            gridPrefetchDirection = (gridFastTrackDirection != 0) ? gridFastTrackDirection : gridPageDirection;
-            gridPendingSelectedIdx = -1;
-            gridPendingSelectedCoverIdx = -1;
-            gridPageDirection = 0;
-            gridCascadeActive = 0;
-            gridCascadeDirection = 0;
-            gridCascadeProgress = 0;
-            gridFastTrackSettling = 0;
-          } else {
-            gridIncomingPageBuffer = pendingPageBuffer;
-            gridIncomingPageBase = pendingPageBase;
-            gridCascadeDirection = gridPageDirection;
-            if (gridCascadeDirection == 0)
-              gridCascadeDirection = (gridIncomingPageBase > gridActivePageBase) ? 1 : -1;
-            gridCascadeStart = uiNowMs();
-            gridCascadeActive = 1;
+        if (!gridCascadeActive && gridPendingSelectedIdx >= 0) {
+          pendingPageBase = (gridPendingSelectedIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
+          pendingPageBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, pendingPageBase);
+          if (pendingPageBuffer < 0) {
+            pendingPageBuffer = lunaNavChooseBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridActivePageBuffer,
+                                                    gridPreviousPageBuffer, gridIncomingPageBuffer);
+            if (pendingPageBuffer >= 0)
+              prepareGridPageBuffer(pendingPageBuffer, pendingPageBase, gridPageBases,
+                                    gridPageComplete, gridPageNextSlot);
+          }
+          int pendingSlot = gridPendingSelectedIdx - pendingPageBase;
+          if (pendingPageBuffer >= 0 && !gridPageSlotAttempted(pendingPageBuffer, pendingSlot)) {
+            loadPageBuffer = pendingPageBuffer;
+            loadPrioritySlot = pendingSlot;
           }
         }
-      }
+
+        // Finish visible placeholders only while the selector is at rest. A
+        // newly selected tile still gets priority over the rest of its page.
+        if (loadPageBuffer < 0 && gridPendingSelectedIdx < 0 && !gridCascadeActive &&
+            !gridPageComplete[gridActivePageBuffer] &&
+            (!selectorMoving || !gridPageSlotAttempted(gridActivePageBuffer, activeSelectedSlot))) {
+          loadPageBuffer = gridActivePageBuffer;
+          if (!gridPageSlotAttempted(gridActivePageBuffer, activeSelectedSlot))
+            loadPrioritySlot = activeSelectedSlot;
+        }
+
+        if (loadPageBuffer >= 0) {
+          gridPageComplete[loadPageBuffer] =
+              loadGridPageStep(titles, gridPageBases[loadPageBuffer], loadPageBuffer,
+                               &gridPageNextSlot[loadPageBuffer], loadPrioritySlot,
+                               &didLoadArtwork);
+        }
+
+        if (!gridCascadeActive && pendingPageBuffer >= 0 &&
+            gridPageSlotAttempted(pendingPageBuffer, gridPendingSelectedIdx - pendingPageBase)) {
+          if (!didLoadArtwork && gridPendingSelectedCoverIdx != gridPendingSelectedIdx) {
+            Target *pendingTarget = getTargetByIdx(titles, gridPendingSelectedIdx);
+            refreshGridSelectedCover(pendingTarget, gridSelectedIncomingBuffer);
+            gridPendingSelectedCoverIdx = gridPendingSelectedIdx;
+            didLoadArtwork = 1;
+          }
+
+          if (gridPendingSelectedCoverIdx == gridPendingSelectedIdx) {
+            int previousSelectedBuffer = gridSelectedActiveBuffer;
+            gridSelectedActiveBuffer = gridSelectedIncomingBuffer;
+            gridSelectedIncomingBuffer = previousSelectedBuffer;
+            gridSelectedActiveIdx = gridPendingSelectedIdx;
+            gridSelectedRequestedIdx = gridPendingSelectedIdx;
+            gridSelectedAttemptedIdx = gridPendingSelectedIdx;
+            releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
+            gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
+
+            selectedTitleIdx = gridPendingSelectedIdx;
+            curTarget = getTargetByIdx(titles, selectedTitleIdx);
+            if (gridFastTrackSettling) {
+              // Fast-track already animated the lightweight destination shell.
+              // Promote its completed artwork in place instead of replaying the
+              // normal page cascade after the last PNG finishes loading.
+              int previousActiveBuffer = gridActivePageBuffer;
+              gridActivePageBuffer = pendingPageBuffer;
+              gridActivePageBase = pendingPageBase;
+              gridPreviousPageBuffer = previousActiveBuffer;
+              gridIncomingPageBuffer = -1;
+              gridIncomingPageBase = -1;
+              gridPrefetchDirection = (gridFastTrackDirection != 0) ? gridFastTrackDirection : gridPageDirection;
+              gridPendingSelectedIdx = -1;
+              gridPendingSelectedCoverIdx = -1;
+              gridPageDirection = 0;
+              gridCascadeActive = 0;
+              gridCascadeDirection = 0;
+              gridCascadeProgress = 0;
+              gridFastTrackSettling = 0;
+            } else {
+              gridIncomingPageBuffer = pendingPageBuffer;
+              gridIncomingPageBase = pendingPageBase;
+              gridCascadeDirection = gridPageDirection;
+              if (gridCascadeDirection == 0)
+                gridCascadeDirection = (gridIncomingPageBase > gridActivePageBase) ? 1 : -1;
+              gridCascadeStart = uiNowMs();
+              gridCascadeActive = 1;
+            }
+          }
+        }
 
       now = uiNowMs();
       if (gridCascadeActive) {
@@ -563,9 +578,10 @@ int uiLoop(TargetList *titles) {
           gridSelectedLoaded[gridSelectedActiveBuffer] = 0;
           gridSelectedActiveIdx = gridSelectedRequestedIdx;
         }
+        didLoadArtwork = 1;
       }
 
-        if (!didLoadArtwork && !gridCascadeActive && gridPendingSelectedIdx < 0 &&
+        if (!didLoadArtwork && !selectorMoving && !gridCascadeActive && gridPendingSelectedIdx < 0 &&
             gridPageComplete[gridActivePageBuffer] && gridSelectedActiveIdx == gridSelectedRequestedIdx) {
           for (int prefetchPass = 0; prefetchPass < 2; prefetchPass++) {
             int direction = (prefetchPass == 0) ? gridPrefetchDirection : -gridPrefetchDirection;
@@ -582,7 +598,7 @@ int uiLoop(TargetList *titles) {
             if (prefetchBuffer >= 0 && !gridPageComplete[prefetchBuffer]) {
               gridPageComplete[prefetchBuffer] =
                   loadGridPageStep(titles, gridPageBases[prefetchBuffer], prefetchBuffer,
-                                   &gridPageNextSlot[prefetchBuffer], &didLoadArtwork);
+                                   &gridPageNextSlot[prefetchBuffer], -1, &didLoadArtwork);
               break;
             }
           }
