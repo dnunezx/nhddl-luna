@@ -1,4 +1,4 @@
-# LUNA modifications: Danny Nunez (dnunezx) 2026
+# LUNA 2026
 cmake_minimum_required(VERSION 3.13)
 
 include($ENV{PS2SDK}/ps2dev.cmake)

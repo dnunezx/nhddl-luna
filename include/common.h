@@ -1,4 +1,4 @@
-// LUNA modifications: Danny Nunez (dnunezx) 2026
+// LUNA 2026
 #ifndef _COMMON_H_
 #define _COMMON_H_
 

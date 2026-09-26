@@ -1,4 +1,4 @@
-// LUNA modifications: Danny Nunez (dnunezx) 2026
+// LUNA 2026
 #ifndef _NEUTRINO_H_
 #define _NEUTRINO_H_
 

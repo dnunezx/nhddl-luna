@@ -1,4 +1,4 @@
-// LUNA modifications: Danny Nunez (dnunezx) 2026
+// LUNA 2026
 #include "ui/graphics.h"
 #include "dprintf.h"
 #include "ui/dejavu_sans.h"

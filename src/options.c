@@ -1,4 +1,4 @@
-// LUNA modifications: Danny Nunez (dnunezx) 2026
+// LUNA 2026
 #include "options.h"
 #include "common.h"
 #include "devices/devices.h"

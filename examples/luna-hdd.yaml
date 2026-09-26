@@ -1,4 +1,4 @@
-# Original LUNA configuration: Danny Nunez (dnunezx) 2026
+# LUNA 2026
 # Legacy LUNA configuration with the runtime on the internal ATA/exFAT drive.
 mode: ata
 return_path: hdd

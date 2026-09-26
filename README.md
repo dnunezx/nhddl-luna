@@ -4,7 +4,7 @@
   <img src="../assets/luna-logo.svg" alt="LUNA logo" width="700">
 </p>
 
-LUNA (Lightweight Unified Neutrino Access) is a visual PlayStation 2 game loader derived from NHDDL. The most recent hardware ELF from this working tree is designated the Release Candidate.
+LUNA (Lightweight Unified Neutrino Access) is a visual PS2 loader derived from NHDDL. The most recent hardware ELF from this working tree is designated the Release Candidate.
 
 LUNA retains NHDDL's Neutrino-launching core: it scans MMCE, APA or _FAT/exFAT-formatted_ BDM devices for ISO files, lists them, and boots the selected ISO via Neutrino. It adds LUNA branding, five PS2 Glass library views, paired cover/disc artwork, PSBBN artwork, and direct in-game return.
 

@@ -1,5 +1,5 @@
 // Implements titleScanFunc for file-based devices (MMCE, BDM)
-// LUNA modifications: Danny Nunez (dnunezx) 2026
+// LUNA 2026
 #include "common.h"
 #include "devices/devices.h"
 #include "dprintf.h"

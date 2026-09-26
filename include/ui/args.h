@@ -1,4 +1,4 @@
-// LUNA modifications: Danny Nunez (dnunezx) 2026
+// LUNA 2026
 #ifndef _UI_ARGS_H_
 #define _UI_ARGS_H_
 

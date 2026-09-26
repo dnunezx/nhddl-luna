@@ -1,5 +1,5 @@
 // Implements support for known Neutrino arguments
-// LUNA modifications: Danny Nunez (dnunezx) 2026
+// LUNA 2026
 #include "ui/args.h"
 #include "options.h"
 #include "ui/graphics.h"
