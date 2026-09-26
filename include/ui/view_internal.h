@@ -24,7 +24,7 @@ void drawSharedLibraryBackground(uint32_t frameNowMs);
 void drawPSBBNFocusGlow(int left, int top, int rowRight, int textRight);
 int gridSelectorIsMoving(int selectedTitleIdx, int pageBase, uint32_t now);
 void drawPSBBNCover(GSTEXTURE *cover, float x1, float y1, float size, int cacheIdx,
-                    int emphasis, int visibility);
+                    int emphasis, int visibility, int z);
 void formatPSBBNTitle(const char *source, char *destination, int maxWidth);
 
 #endif

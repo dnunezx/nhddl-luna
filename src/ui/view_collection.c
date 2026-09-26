@@ -3,7 +3,12 @@
 #include <stdio.h>
 #include <string.h>
 
-void drawPSBBNCover(GSTEXTURE *cover, float x1, float y1, float size, int cacheIdx, int emphasis, int visibility) {
+enum {
+  PSBBN_COVER_BACKGROUND_Z = 4,
+  PSBBN_COVER_FOREGROUND_Z = 7,
+};
+
+void drawPSBBNCover(GSTEXTURE *cover, float x1, float y1, float size, int cacheIdx, int emphasis, int visibility, int z) {
   float x2 = x1 + size;
   float y2 = y1 + size;
   // GS texture modulation treats 0x80 as neutral. End the emphasis curve at
@@ -12,7 +17,6 @@ void drawPSBBNCover(GSTEXTURE *cover, float x1, float y1, float size, int cacheI
   int green = (0x64 + (emphasis * 0x1C) / 1000) * visibility / 1000;
   int blue = (0x70 + (emphasis * 0x10) / 1000) * visibility / 1000;
   int alpha = (0x40 + (emphasis * 0x40) / 1000) * visibility / 1000;
-  int z = 4 + (emphasis * 2) / 1000;
 
   if (cover != NULL && psbbnCoverLoaded[cacheIdx]) {
     int previousAlphaTest = gsGlobal->Test->ATST;
@@ -134,7 +138,7 @@ void formatPSBBNTitle(const char *source, char *destination, int maxWidth) {
 }
 
 void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int flowOffset,
-                         int favoritesOnly, uint32_t frameNowMs) {
+                         int outgoingTitleIdx, int favoritesOnly, uint32_t frameNowMs) {
   int top = headerHeight + 12;
   int bottom = gsGlobal->Height - footerHeight - 18;
   int selectedSize = (bottom - top) * 76 / 100;
@@ -151,6 +155,7 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
   uint8_t drawn[PSBBN_COVER_CACHE_COUNT] = {0};
   int visualFocus = -1;
   int visualFocusDistance = 0x7FFFFFFF;
+  int foregroundCacheIdx = -1;
   int panelLineY;
   int panelLineHeight = psbbnFieldStableHeight();
 
@@ -232,17 +237,27 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
     }
   }
 
-  // Future covers form the background stream and draw far-to-near. Covers on
-  // the outgoing side represent foreground depth: draw them after the entire
-  // stream, with the largest/closest zoom drawn last. This prevents the next
-  // cover from clipping through the old cover halfway through the handoff.
+  if (flowOffset != 0 && outgoingTitleIdx >= 0) {
+    // Forward selection keeps the old jacket in front; reverse selection
+    // brings the new jacket in from the enlarged foreground side.
+    int foregroundTitleIdx = (flowOffset > 0) ? outgoingTitleIdx : selectedTitleIdx;
+    for (int cacheIdx = 0; cacheIdx < PSBBN_COVER_CACHE_COUNT; cacheIdx++) {
+      if (drawable[cacheIdx] && targetIndex[cacheIdx] == foregroundTitleIdx) {
+        foregroundCacheIdx = cacheIdx;
+        break;
+      }
+    }
+  }
+
+  // Draw the background stream far-to-near, then the foreground cover.
+  // Its depth follows the transition direction instead of fading emphasis.
   for (int pass = 0; pass < PSBBN_COVER_CACHE_COUNT; pass++) {
     int futureToDraw = -1;
     int outgoingToDraw = -1;
     int cacheToDraw;
 
     for (int cacheIdx = 0; cacheIdx < PSBBN_COVER_CACHE_COUNT; cacheIdx++) {
-      if (!drawable[cacheIdx] || drawn[cacheIdx])
+      if (!drawable[cacheIdx] || drawn[cacheIdx] || cacheIdx == foregroundCacheIdx)
         continue;
       if (position[cacheIdx] < 0) {
         if (outgoingToDraw < 0 || distance[cacheIdx] < distance[outgoingToDraw])
@@ -253,6 +268,8 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
     }
 
     cacheToDraw = (futureToDraw >= 0) ? futureToDraw : outgoingToDraw;
+    if (cacheToDraw < 0 && foregroundCacheIdx >= 0 && !drawn[foregroundCacheIdx])
+      cacheToDraw = foregroundCacheIdx;
     if (cacheToDraw < 0)
       break;
 
@@ -284,7 +301,9 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
     }
 
     if (x1 + size > 24.0f && x1 < (float)(gsGlobal->Width - keepoutArea))
-      drawPSBBNCover(covers[cacheToDraw], x1, y1, size, cacheToDraw, emphasis, visibility);
+      drawPSBBNCover(covers[cacheToDraw], x1, y1, size, cacheToDraw, emphasis, visibility,
+                     (cacheToDraw == foregroundCacheIdx) ? PSBBN_COVER_FOREGROUND_Z
+                                                      : PSBBN_COVER_BACKGROUND_Z);
   }
   drawCollectionFooter();
 }

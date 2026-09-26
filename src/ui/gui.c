@@ -185,6 +185,7 @@ int uiLoop(TargetList *titles) {
   int maxTitlesPerPage = (gsGlobal->Height - (headerHeight + footerHeight)) / getFontLineHeight();
   int psbbnCoverBaseIdx = -1;
   int psbbnAnimationTargetIdx = -1;
+  int psbbnOutgoingTitleIdx = -1;
   int psbbnAnimationStartOffset = 0;
   uint32_t psbbnAnimationStart = 0;
   uint32_t psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
@@ -359,8 +360,9 @@ int uiLoop(TargetList *titles) {
           releasePSBBNCovers();
         psbbnCoverBaseIdx = -1;
         psbbnAnimationTargetIdx = -1;
+        psbbnOutgoingTitleIdx = -1;
         psbbnAnimationStartOffset = 0;
-        drawPSBBNCollection(flowTitles, 0, psbbnCoverTextures, 0, collectionFavoritesOnly, now);
+        drawPSBBNCollection(flowTitles, 0, psbbnCoverTextures, 0, -1, collectionFavoritesOnly, now);
         goto library_view_drawn;
       }
 
@@ -376,12 +378,14 @@ int uiLoop(TargetList *titles) {
 
       if (psbbnAnimationTargetIdx < 0) {
         psbbnAnimationTargetIdx = flowSelectedTitleIdx;
+        psbbnOutgoingTitleIdx = -1;
         psbbnAnimationStartOffset = 0;
         psbbnAnimationStart = now;
         psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
       } else if (psbbnAnimationTargetIdx != flowSelectedTitleIdx) {
         int currentOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart, psbbnAnimationDuration, now);
         int direction = lunaNavDirection(flowTitles->total, psbbnAnimationTargetIdx, flowSelectedTitleIdx);
+        psbbnOutgoingTitleIdx = psbbnAnimationTargetIdx;
         psbbnAnimationStartOffset = currentOffset + direction * 1000;
         if (view == UI_VIEW_PSBBN && collectionScan.active) {
           psbbnAnimationStartOffset = collectionScan.heldDirection * 1000;
@@ -417,7 +421,7 @@ int uiLoop(TargetList *titles) {
                                       ? lunaNavMarkedByRank(favoriteFlags, titles->total, visualRank)
                                       : visualRank;
         drawPSBBNCollection(flowTitles, flowSelectedTitleIdx, psbbnCoverTextures,
-                            flowOffset, collectionFavoritesOnly, now);
+                            flowOffset, psbbnOutgoingTitleIdx, collectionFavoritesOnly, now);
       } else if (view == UI_VIEW_ORBIT)
         drawOrbit(titles, selectedTitleIdx, psbbnCoverTextures, flowOffset,
                   orbitRandomActive, now);
@@ -864,6 +868,7 @@ int uiLoop(TargetList *titles) {
       selectedTitleIdx = orbsVisualTitleIdx;
       curTarget = getTargetByIdx(titles, selectedTitleIdx);
       psbbnAnimationTargetIdx = -1;
+      psbbnOutgoingTitleIdx = -1;
       psbbnAnimationStartOffset = 0;
     }
 
@@ -881,6 +886,7 @@ int uiLoop(TargetList *titles) {
       curTarget = getTargetByIdx(titles, selectedTitleIdx);
       collectionActionCoverIdx = collectionVisualCoverIdx;
       psbbnAnimationTargetIdx = -1;
+      psbbnOutgoingTitleIdx = -1;
       psbbnAnimationStartOffset = 0;
       psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
     }
@@ -901,6 +907,7 @@ int uiLoop(TargetList *titles) {
         releasePSBBNCovers();
         psbbnCoverBaseIdx = -1;
         psbbnAnimationTargetIdx = -1;
+        psbbnOutgoingTitleIdx = -1;
         psbbnAnimationStartOffset = 0;
       }
     } else if ((input & PAD_CROSS) &&
@@ -950,6 +957,7 @@ int uiLoop(TargetList *titles) {
 
       psbbnCoverBaseIdx = -1;
       psbbnAnimationTargetIdx = -1;
+      psbbnOutgoingTitleIdx = -1;
       psbbnAnimationStartOffset = 0;
       psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
       gridActivePageBuffer = 0;
