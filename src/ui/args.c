@@ -1,4 +1,5 @@
 // Implements support for known Neutrino arguments
+// LUNA modifications: Danny Nunez (dnunezx) 2026
 #include "ui/args.h"
 #include "options.h"
 #include "ui/graphics.h"
@@ -9,13 +10,13 @@
 #include <string.h>
 
 // Compatibility modes handlers
-int gcDraw(NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z, int maxWidth, int maxHeight);
+int gcDraw(NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z, int maxWidth, int minY, int maxY);
 ActionType gcInput(NeutrinoArgument *arg, int input);
 void gcMarshal(NeutrinoArgument *arg, ArgumentList *list);
 void gcParse(NeutrinoArgument *arg, ArgumentList *list);
 
 // GSM handlers
-int gsmDraw(NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z, int maxWidth, int maxHeight);
+int gsmDraw(NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z, int maxWidth, int minY, int maxY);
 ActionType gsmInput(NeutrinoArgument *arg, int input);
 void gsmMarshal(NeutrinoArgument *arg, ArgumentList *list);
 void gsmParse(NeutrinoArgument *arg, ArgumentList *list);
@@ -23,7 +24,7 @@ void gsmParse(NeutrinoArgument *arg, ArgumentList *list);
 // Generic handlers
 //
 // A simple one-value toggle
-int toggleDraw(NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z, int maxWidth, int maxHeight);
+int toggleDraw(NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z, int maxWidth, int minY, int maxY);
 ActionType toggleInput(NeutrinoArgument *arg, int input);
 void toggleMarshal(NeutrinoArgument *arg, ArgumentList *list);
 void toggleParse(NeutrinoArgument *arg, ArgumentList *list);
@@ -32,6 +33,8 @@ NeutrinoArgument uiArguments[] = {
     {.name = "Compatibility modes",
      .arg = "gc",
      .activeElementIdx = 0,
+     .rowCount = 6,
+     .focusRowOffset = 1,
      .state = 0,
      .draw = gcDraw,
      .handleInput = gcInput,
@@ -40,6 +43,8 @@ NeutrinoArgument uiArguments[] = {
     {.name = "Video mode",
      .arg = "gsm",
      .activeElementIdx = 0,
+     .rowCount = 9,
+     .focusRowOffset = 1,
      .state = 0,
      .draw = gsmDraw,
      .handleInput = gsmInput,
@@ -48,6 +53,8 @@ NeutrinoArgument uiArguments[] = {
     {.name = "Show PS2 logo",
      .arg = "logo",
      .activeElementIdx = 0,
+     .rowCount = 1,
+     .focusRowOffset = 0,
      .state = 0,
      .draw = toggleDraw,
      .handleInput = toggleInput,
@@ -56,6 +63,8 @@ NeutrinoArgument uiArguments[] = {
     {.name = "Enable debug colors",
      .arg = "dbc",
      .activeElementIdx = 0,
+     .rowCount = 1,
+     .focusRowOffset = 0,
      .state = 0,
      .draw = toggleDraw,
      .handleInput = toggleInput,
@@ -83,17 +92,25 @@ static const ArgValueMap gcValueMap[] = {
 //
 // Compatibility arguments
 //
-int gcDraw(NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z, int maxWidth, int maxHeight) {
+static int argumentRowVisible(int y, int minY, int maxY) {
+  return y >= minY && (!maxY || y + getFontLineHeight() <= maxY);
+}
+
+int gcDraw(NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z, int maxWidth, int minY, int maxY) {
   // Draw title
-  y = drawTextWindow(x, y, gsGlobal->Width - x, 0, 0, FontMainColor, ALIGN_HCENTER, arg->name);
+  if (argumentRowVisible(y, minY, maxY))
+    drawTextWindow(x, y, gsGlobal->Width - x, 0, 0, FontMainColor, ALIGN_HCENTER, arg->name);
+  y += getFontLineHeight();
 
   // Draw compatibility modes
   for (int idx = 0; idx < ARG_GC_NUM_MODES; idx++) {
-    if (arg->state & gcValueMap[idx].mode) {
-      drawIconWindow(x, y, 20, y + getFontLineHeight(), 0, FontMainColor, ALIGN_CENTER, ICON_ENABLED);
+    if (argumentRowVisible(y, minY, maxY)) {
+      if (arg->state & gcValueMap[idx].mode)
+        drawIconWindow(x, y, 20, y + getFontLineHeight(), 0, FontMainColor, ALIGN_CENTER, ICON_ENABLED);
+      drawText(x + getIconWidth(ICON_ENABLED), y, 0, 0, 0,
+               (((arg->activeElementIdx == idx) && isActive) ? ColorSelected : FontMainColor), gcValueMap[idx].name);
     }
-    y = drawText(x + getIconWidth(ICON_ENABLED), y, 0, 0, 0, (((arg->activeElementIdx == idx) && isActive) ? ColorSelected : FontMainColor),
-                 gcValueMap[idx].name);
+    y += getFontLineHeight();
   }
 
   return y;
@@ -194,15 +211,19 @@ static const ArgValueMap gsmValueMap[] = {
     {(1 << 6), ":2", "Field flipping type 2"},          {(1 << 7), ":3", "Field flipping type 3"},
 };
 
-int gsmDraw(NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z, int maxWidth, int maxHeight) {
+int gsmDraw(NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z, int maxWidth, int minY, int maxY) {
   // Draw title
-  y = drawTextWindow(x, y, gsGlobal->Width - x, 0, 0, FontMainColor, ALIGN_HCENTER, arg->name);
+  if (argumentRowVisible(y, minY, maxY))
+    drawTextWindow(x, y, gsGlobal->Width - x, 0, 0, FontMainColor, ALIGN_HCENTER, arg->name);
+  y += getFontLineHeight();
   for (int idx = 0; idx < sizeof(gsmValueMap) / sizeof(ArgValueMap); idx++) {
-    if (arg->state & gsmValueMap[idx].mode) {
-      drawIconWindow(x, y, 20, y + getFontLineHeight(), 0, FontMainColor, ALIGN_CENTER, ICON_ENABLED);
+    if (argumentRowVisible(y, minY, maxY)) {
+      if (arg->state & gsmValueMap[idx].mode)
+        drawIconWindow(x, y, 20, y + getFontLineHeight(), 0, FontMainColor, ALIGN_CENTER, ICON_ENABLED);
+      drawText(x + getIconWidth(ICON_ENABLED), y, 0, 0, 0,
+               (((arg->activeElementIdx == idx) && isActive) ? ColorSelected : FontMainColor), gsmValueMap[idx].name);
     }
-    y = drawText(x + getIconWidth(ICON_ENABLED), y, 0, 0, 0, (((arg->activeElementIdx == idx) && isActive) ? ColorSelected : FontMainColor),
-                 gsmValueMap[idx].name);
+    y += getFontLineHeight();
   }
 
   return y;
@@ -427,11 +448,14 @@ fail:
 //
 // Generic toggle
 //
-int toggleDraw(NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z, int maxWidth, int maxHeight) {
+int toggleDraw(NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z, int maxWidth, int minY, int maxY) {
   // Draw argument
-  if (arg->state)
-    drawIconWindow(x, y, 20, y + getFontLineHeight(), 0, FontMainColor, ALIGN_CENTER, ICON_ENABLED);
-  return drawText(x + getIconWidth(ICON_ENABLED), y, 0, 0, 0, ((isActive) ? ColorSelected : FontMainColor), arg->name);
+  if (argumentRowVisible(y, minY, maxY)) {
+    if (arg->state)
+      drawIconWindow(x, y, 20, y + getFontLineHeight(), 0, FontMainColor, ALIGN_CENTER, ICON_ENABLED);
+    drawText(x + getIconWidth(ICON_ENABLED), y, 0, 0, 0, ((isActive) ? ColorSelected : FontMainColor), arg->name);
+  }
+  return y + getFontLineHeight();
 }
 
 ActionType toggleInput(NeutrinoArgument *arg, int input) {

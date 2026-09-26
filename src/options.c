@@ -1,3 +1,4 @@
+// LUNA modifications: Danny Nunez (dnunezx) 2026
 #include "options.h"
 #include "common.h"
 #include "devices/devices.h"
@@ -16,80 +17,131 @@ int parseOptionsFile(ArgumentList *result, FILE *file, struct DeviceMapEntry *de
 void appendArgument(ArgumentList *target, Argument *arg);
 uint32_t getTimestamp();
 
-const char BASE_CONFIG_PATH[] = "/nhddl";
+const char BASE_CONFIG_PATH[] = "/LUNA";
 const size_t BASE_CONFIG_PATH_LEN = sizeof(BASE_CONFIG_PATH) / sizeof(char);
+const char LEGACY_BASE_CONFIG_PATH[] = "/nhddl";
 
 const char globalOptionsPath[] = "/global.yaml";
 const char lastTitlePath[] = "/lastTitle.bin";
+static const char lastTitleTempPath[] = "/lastTitle.bin.tmp";
+
+static int buildConfigFilePathAtBase(char *targetPath, size_t targetSize,
+                                     const char *targetMountpoint, const char *basePath,
+                                     const char *targetFileName) {
+  int length = snprintf(targetPath, targetSize, "%s%s%s%s", targetMountpoint, basePath,
+                        (targetFileName != NULL && targetFileName[0] != '/') ? "/" : "",
+                        targetFileName != NULL ? targetFileName : "");
+  if (length < 0 || (size_t)length >= targetSize) {
+    if (targetSize > 0)
+      targetPath[0] = '\0';
+    return -ENAMETOOLONG;
+  }
+  return 0;
+}
 
 // Writes full path to targetFileName into targetPath.
 // If targetFileName is NULL, will return path to config directory
-void buildConfigFilePath(char *targetPath, const char *targetMountpoint, const char *targetFileName) {
-  strcpy(targetPath, targetMountpoint);
-  strcat(targetPath, BASE_CONFIG_PATH); // Append base config path
-  if (targetFileName != NULL) {
-    // Append / to path if targetFileName doesn't have it already
-    if (targetFileName[0] != '/')
-      strcat(targetPath, "/");
+int buildConfigFilePath(char *targetPath, size_t targetSize, const char *targetMountpoint,
+                        const char *targetFileName) {
+  return buildConfigFilePathAtBase(targetPath, targetSize, targetMountpoint, BASE_CONFIG_PATH,
+                                   targetFileName);
+}
 
-    strcat(targetPath, targetFileName); // Append target file name
+int buildLegacyConfigFilePath(char *targetPath, size_t targetSize, const char *targetMountpoint,
+                              const char *targetFileName) {
+  return buildConfigFilePathAtBase(targetPath, targetSize, targetMountpoint,
+                                   LEGACY_BASE_CONFIG_PATH, targetFileName);
+}
+
+static int readAll(int fd, void *buffer, size_t length) {
+  size_t offset = 0;
+  while (offset < length) {
+    int result = read(fd, (char *)buffer + offset, length - offset);
+    if (result <= 0)
+      return -EIO;
+    offset += (size_t)result;
   }
+  return 0;
+}
+
+static int writeAll(int fd, const void *buffer, size_t length) {
+  size_t offset = 0;
+  while (offset < length) {
+    int result = write(fd, (const char *)buffer + offset, length - offset);
+    if (result <= 0)
+      return -EIO;
+    offset += (size_t)result;
+  }
+  return 0;
+}
+
+static int readLastTitleFile(const char *path, char *titlePath, size_t titlePathSize,
+                             uint32_t *timestamp) {
+  char candidate[PATH_MAX + 1];
+  int fd = open(path, O_RDONLY);
+  int fileSize;
+  size_t pathLength;
+  uint32_t candidateTimestamp;
+
+  if (fd < 0)
+    return fd;
+  fileSize = lseek(fd, 0, SEEK_END);
+  if (fileSize < (int)(sizeof(candidateTimestamp) + 1) ||
+      fileSize > (int)(sizeof(candidateTimestamp) + PATH_MAX)) {
+    close(fd);
+    return -EFBIG;
+  }
+  pathLength = (size_t)fileSize - sizeof(candidateTimestamp);
+  if (pathLength >= titlePathSize || lseek(fd, 0, SEEK_SET) < 0 ||
+      readAll(fd, &candidateTimestamp, sizeof(candidateTimestamp)) ||
+      readAll(fd, candidate, pathLength)) {
+    close(fd);
+    return -EIO;
+  }
+  close(fd);
+  candidate[pathLength] = '\0';
+  memcpy(titlePath, candidate, pathLength + 1);
+  *timestamp = candidateTimestamp;
+  return 0;
 }
 
 // Gets last launched title path into titlePath
 // Searches for the latest file across all mounted BDM devices
-int getLastLaunchedTitle(char *titlePath) {
+int getLastLaunchedTitle(char *titlePath, size_t titlePathSize) {
   DPRINTF("Reading last launched title\n");
   char targetPath[PATH_MAX];
-  targetPath[0] = '\0';
-
   uint32_t maxTimestamp = 0;
-  uint32_t timestamp = 0;
-  size_t fsize = 0;
+  int found = 0;
+
+  if (titlePath == NULL || titlePathSize == 0)
+    return -EINVAL;
+  titlePath[0] = '\0';
   for (int i = 0; i < MAX_DEVICES; i++) {
+    struct DeviceMapEntry *device;
+    const char *paths[] = {lastTitlePath, lastTitleTempPath, lastTitlePath};
     if (deviceModeMap[i].mode == MODE_NONE || deviceModeMap[i].mountpoint == NULL) {
       break;
     }
+    device = deviceModeMap[i].metadev ? deviceModeMap[i].metadev : &deviceModeMap[i];
 
-    if (deviceModeMap[i].metadev) // Fallback to metadata device if set
-      buildConfigFilePath(targetPath, deviceModeMap[i].metadev->mountpoint, lastTitlePath);
-    else
-      buildConfigFilePath(targetPath, deviceModeMap[i].mountpoint, lastTitlePath);
-
-    // Open last launched title file and read it
-    int fd = open(targetPath, O_RDONLY);
-    if (fd < 0) {
-      DPRINTF("WARN: Failed to open last launched title file on device %s: %d\n", deviceModeMap[i].mountpoint, fd);
-      continue;
+    for (int pathIndex = 0; pathIndex < 3; pathIndex++) {
+      char candidate[PATH_MAX + 1];
+      uint32_t timestamp;
+      int pathResult = (pathIndex < 2)
+                           ? buildConfigFilePath(targetPath, sizeof(targetPath), device->mountpoint,
+                                                 paths[pathIndex])
+                           : buildLegacyConfigFilePath(targetPath, sizeof(targetPath), device->mountpoint,
+                                                       paths[pathIndex]);
+      if (pathResult || readLastTitleFile(targetPath, candidate, sizeof(candidate), &timestamp))
+        continue;
+      if (!found || timestamp >= maxTimestamp) {
+        strlcpy(titlePath, candidate, titlePathSize);
+        maxTimestamp = timestamp;
+        found = 1;
+      }
     }
-
-    // Read file timestamp (first 4 bytes)
-    if (read(fd, &timestamp, sizeof(timestamp)) != sizeof(timestamp)) {
-      DPRINTF("WARN: Failed to read last launched title file on device %s\n", deviceModeMap[i].mountpoint);
-      close(fd);
-      continue;
-    }
-    // Read the rest of the file only if it's newer
-    if (timestamp < maxTimestamp) {
-      close(fd);
-      continue;
-    }
-    maxTimestamp = timestamp;
-
-    // Get title path size
-    fsize = lseek(fd, 0, SEEK_END) - sizeof(timestamp);
-    lseek(fd, sizeof(timestamp), SEEK_SET);
-    // Read file contents into titlePath
-    if (read(fd, titlePath, fsize) <= 0) {
-      close(fd);
-      DPRINTF("WARN: Failed to read last launched title\n");
-      continue;
-    }
-    close(fd);
   }
-  if (targetPath[0] == '\0')
-    return -ENOENT;
-  return 0;
+  return found ? 0 : -ENOENT;
 }
 
 // Writes last launched title path into lastTitle file on title mountpoint
@@ -100,7 +152,9 @@ int updateLastLaunchedTitle(struct DeviceMapEntry *device, char *titlePath) {
 
   DPRINTF("Writing last launched title as %s\n", titlePath);
   char targetPath[PATH_MAX];
-  buildConfigFilePath(targetPath, device->mountpoint, NULL);
+  char tempPath[PATH_MAX];
+  if (buildConfigFilePath(targetPath, sizeof(targetPath), device->mountpoint, NULL))
+    return -ENAMETOOLONG;
 
   // Make sure config directory exists
   struct stat st;
@@ -110,10 +164,12 @@ int updateLastLaunchedTitle(struct DeviceMapEntry *device, char *titlePath) {
   }
 
   // Append last title file path
-  strcat(targetPath, lastTitlePath);
+  if (buildConfigFilePath(targetPath, sizeof(targetPath), device->mountpoint, lastTitlePath) ||
+      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, lastTitleTempPath))
+    return -ENAMETOOLONG;
 
-  // Open last launched title file and write the full title path into it
-  int fd = open(targetPath, O_WRONLY | O_CREAT | O_TRUNC);
+  // Stage the complete record before replacing the prior known-good file.
+  int fd = open(tempPath, O_WRONLY | O_CREAT | O_TRUNC, 0666);
   if (fd < 0) {
     DPRINTF("ERROR: Failed to open last launched title file: %d\n", fd);
     return -ENOENT;
@@ -121,9 +177,10 @@ int updateLastLaunchedTitle(struct DeviceMapEntry *device, char *titlePath) {
 
   // Write timestamp
   uint32_t timestamp = getTimestamp();
-  if (write(fd, &timestamp, sizeof(timestamp)) != sizeof(timestamp)) {
+  if (writeAll(fd, &timestamp, sizeof(timestamp))) {
     DPRINTF("ERROR: Failed to write last launched title timestamp\n");
     close(fd);
+    remove(tempPath);
     return -EIO;
   }
 
@@ -133,12 +190,21 @@ int updateLastLaunchedTitle(struct DeviceMapEntry *device, char *titlePath) {
     mountpointLen = 0; // Write path as-is
 
   size_t writeLen = strlen(titlePath) + 1 - mountpointLen;
-  if (write(fd, titlePath + mountpointLen, writeLen) != writeLen) {
+  if (writeLen > PATH_MAX || writeAll(fd, titlePath + mountpointLen, writeLen)) {
     DPRINTF("ERROR: Failed to write last launched title\n");
     close(fd);
+    remove(tempPath);
     return -EIO;
   }
   close(fd);
+
+  // Readers also accept the temporary path, so interrupted replacement cannot
+  // discard the newly completed record even on filesystems without overwrite-rename.
+  remove(targetPath);
+  if (rename(tempPath, targetPath)) {
+    DPRINTF("ERROR: Failed to commit last launched title: %d\n", errno);
+    return -EIO;
+  }
   return 0;
 }
 
@@ -149,8 +215,13 @@ int getGlobalLaunchArguments(ArgumentList *result, struct DeviceMapEntry *device
   }
 
   char targetPath[PATH_MAX];
-  buildConfigFilePath(targetPath, device->mountpoint, globalOptionsPath);
+  if (buildConfigFilePath(targetPath, sizeof(targetPath), device->mountpoint, globalOptionsPath))
+    return -ENAMETOOLONG;
   int ret = loadArgumentList(result, device, targetPath);
+  if (ret == -ENOENT &&
+      !buildLegacyConfigFilePath(targetPath, sizeof(targetPath), device->mountpoint,
+                                 globalOptionsPath))
+    ret = loadArgumentList(result, device, targetPath);
   Argument *curArg = result->first;
   while (curArg != NULL) {
     curArg->isGlobal = 1;
@@ -167,41 +238,50 @@ int getTitleLaunchArguments(ArgumentList *result, Target *target) {
   }
 
   DPRINTF("Looking for title-specific config for %s (%s)\n", target->name, target->id);
+  char directoryPath[PATH_MAX + 1];
   char targetPath[PATH_MAX + 1];
-  buildConfigFilePath(targetPath, device->mountpoint, NULL);
-  // Determine actual title options file from config directory contents
-  DIR *directory = opendir(targetPath);
-  if (directory == NULL) {
-    DPRINTF("ERROR: Can't open %s\n", targetPath);
-    return -ENOENT;
-  }
-  targetPath[0] = '\0';
+  // Prefer the current config directory, then older installations. Keep the
+  // directory in the path: a bare "/<game>.yaml" cannot be loaded from the device.
+  for (int base = 0; base < 2; base++) {
+    int pathResult = base == 0
+                         ? buildConfigFilePath(directoryPath, sizeof(directoryPath), device->mountpoint, NULL)
+                         : buildLegacyConfigFilePath(directoryPath, sizeof(directoryPath), device->mountpoint, NULL);
+    if (pathResult)
+      return pathResult;
+    DIR *directory = opendir(directoryPath);
+    if (directory == NULL)
+      continue;
 
-  // Find title config in config directory
-  struct dirent *entry;
-  while ((entry = readdir(directory)) != NULL) {
-    if (entry->d_type != DT_DIR) {
-      // Find file that starts with ISO name (without the extension)
-      if (!strncmp(entry->d_name, target->name, strlen(target->name))) {
-        buildConfigFilePath(targetPath, device->mountpoint, entry->d_name);
+    // Older configs may use a longer prefix than the displayed ISO name.
+    // Prefer the exact filename written by the Save action when both exist.
+    char filename[PATH_MAX + 1] = "";
+    struct dirent *entry;
+    size_t nameLength = strlen(target->name);
+    while ((entry = readdir(directory)) != NULL) {
+      size_t entryLength = strlen(entry->d_name);
+      if (entry->d_type == DT_DIR || entryLength < nameLength + 5 ||
+          strncmp(entry->d_name, target->name, nameLength) ||
+          strcmp(entry->d_name + entryLength - 5, ".yaml"))
+        continue;
+      if (filename[0] == '\0' ||
+          (entryLength == nameLength + 5 && entry->d_name[nameLength] == '.'))
+        strlcpy(filename, entry->d_name, sizeof(filename));
+      if (entryLength == nameLength + 5 && entry->d_name[nameLength] == '.')
         break;
-      }
     }
-  }
-  closedir(directory);
+    closedir(directory);
+    if (filename[0] == '\0')
+      continue;
+    if (snprintf(targetPath, sizeof(targetPath), "%s/%s", directoryPath, filename) >= sizeof(targetPath))
+      return -ENAMETOOLONG;
 
-  if (targetPath[0] == '\0') {
-    DPRINTF("Title-specific config not found\n");
-    return 0;
+    DPRINTF("Loading title-specific config from %s\n", targetPath);
+    int ret = loadArgumentList(result, device, targetPath);
+    if (ret)
+      DPRINTF("ERROR: Failed to load argument list: %d\n", ret);
+    return ret;
   }
-
-  // Load arguments
-  DPRINTF("Loading title-specific config from %s\n", targetPath);
-  int ret = loadArgumentList(result, device, targetPath);
-  if (ret) {
-    DPRINTF("ERROR: Failed to load argument list: %d\n", ret);
-  }
-
+  DPRINTF("Title-specific config not found\n");
   return 0;
 }
 
@@ -216,15 +296,23 @@ int updateTitleLaunchArguments(Target *target, ArgumentList *options) {
 
   // Build file path
   char lineBuffer[PATH_MAX + 1];
-  buildConfigFilePath(lineBuffer, device->mountpoint, target->name);
-  strcat(lineBuffer, ".yaml");
+  if (buildConfigFilePath(lineBuffer, sizeof(lineBuffer), device->mountpoint, NULL))
+    return -ENAMETOOLONG;
+  struct stat st;
+  if (stat(lineBuffer, &st) == -1 && mkdir(lineBuffer, 0777))
+    return -EIO;
+  char filename[PATH_MAX + 1];
+  if (snprintf(filename, sizeof(filename), "%s.yaml", target->name) >= sizeof(filename))
+    return -ENAMETOOLONG;
+  if (buildConfigFilePath(lineBuffer, sizeof(lineBuffer), device->mountpoint, filename))
+    return -ENAMETOOLONG;
   DPRINTF("Saving title-specific config to %s\n", lineBuffer);
 
   // Open file, truncating it
-  int fd = open(lineBuffer, O_WRONLY | O_CREAT | O_TRUNC);
+  int fd = open(lineBuffer, O_WRONLY | O_CREAT | O_TRUNC, 0666);
   if (fd < 0) {
     DPRINTF("ERROR: Failed to open file\n");
-    return fd;
+    return -EIO;
   }
 
   // Write each argument into the file
@@ -239,23 +327,27 @@ int updateTitleLaunchArguments(Target *target, ArgumentList *options) {
     if (!tArg->isGlobal) {
       // Check if arg is a file path and trim mountpoint
       len = getRelativePathIdx(tArg->value);
-      if (len > 0)
-        len = sprintf(lineBuffer, "%s%s: %s\n", (tArg->isDisabled) ? "$" : "", tArg->arg, &tArg->value[len]);
-      else
-        len = sprintf(lineBuffer, "%s%s: %s\n", (tArg->isDisabled) ? "$" : "", tArg->arg, tArg->value);
+      len = snprintf(lineBuffer, sizeof(lineBuffer), "%s%s: %s\n", (tArg->isDisabled) ? "$" : "", tArg->arg,
+                     len > 0 ? &tArg->value[len] : tArg->value);
     } else if (tArg->isDisabled) {
-      len = sprintf(lineBuffer, "$%s:\n", tArg->arg);
+      len = snprintf(lineBuffer, sizeof(lineBuffer), "$%s:\n", tArg->arg);
     }
     if (len > 0) {
-      if ((ret = write(fd, lineBuffer, len)) != len) {
+      if ((size_t)len >= sizeof(lineBuffer)) {
+        ret = -ENAMETOOLONG;
+        goto out;
+      }
+      if (writeAll(fd, lineBuffer, len)) {
         DPRINTF("ERROR: Failed to write to file\n");
+        ret = -EIO;
         goto out;
       }
     }
     tArg = tArg->next;
   }
 out:
-  close(fd);
+  if (close(fd) && !ret)
+    ret = -EIO;
   return ret;
 }
 

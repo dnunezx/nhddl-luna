@@ -1,5 +1,7 @@
+# LUNA modifications: Danny Nunez (dnunezx) 2026
 TODO
 build/
+build-*/
 neutrino/
 .vscode/settings.json
 *.elf

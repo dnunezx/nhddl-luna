@@ -1,3 +1,4 @@
+// LUNA modifications: Danny Nunez (dnunezx) 2026
 #ifndef _COMMON_H_
 #define _COMMON_H_
 
@@ -32,6 +33,7 @@ typedef struct {
   VModeType vmode;
   ModeType mode;
   char udpfsIp[16];
+  char returnPath[PATH_MAX + 1]; // Neutrino IGR target: "hdd" boot chain or a direct memory-card ELF
   char *image; // Used along with the mode argument to turn NHDDL into a simple Neutrino forwarder
   int noInit;
 } LauncherOptions;
@@ -43,12 +45,8 @@ extern LauncherOptions LAUNCHER_OPTIONS;
 
 // Logs to debug screen and debug console
 void logString(const char *str, ...);
-// Maps ModeType to string
-char *modeToString(ModeType mode);
 // Returns the start index of relative file path without device mountpoint or -1 if path is not supported/invalid
 int getRelativePathIdx(char *path);
-// Returns device number index in path or -1 if path doesn't contain a device number
-int getDeviceNumberIdx(char *path);
 // Tests if file exists by opening it
 int tryFile(char *filepath);
 

@@ -1,7 +1,7 @@
 #ifndef _UI_ICONS_H_
 #define _UI_ICONS_H_
 
-// All icons except "Enabled" taken from OPL and modified to fit NHDDL
+// Face buttons use assets/playstation-buttons; other icons retain the OPL artwork.
 
 #include <stdint.h>
 
@@ -26,10 +26,10 @@ typedef enum {
 } IconType;
 
 const Icon ICONS[] = {
-    {0, 0, 25, 25},   // Circle
-    {25, 0, 25, 25},  // Cross
-    {50, 0, 25, 25},  // Square
-    {75, 0, 25, 25},  // Triangle
+    {0, 0, 26, 26},   // Circle
+    {27, 0, 26, 26},  // Cross
+    {54, 0, 26, 26},  // Square
+    {81, 0, 26, 26},  // Triangle
     {0, 28, 25, 17},  // L1
     {25, 28, 25, 17}, // R1
     {0, 46, 22, 12},  // Select

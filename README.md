@@ -1,11 +1,14 @@
-# NHDDL — a PS2 launcher for Neutrino
+# LUNA — Release Candidate
 
 <p align="center">
-  <img src="img/logo/logo.png">
+  <img src="../assets/luna-logo.svg" alt="LUNA logo" width="700">
 </p>
 
-NHDDL is a Neutrino launcher that scans MMCE, APA or _FAT/exFAT-formatted_ BDM devices for ISO files,
-lists them and boots selected ISO via Neutrino.  
+LUNA (Lightweight Unified Neutrino Access) is a visual PlayStation 2 game loader derived from NHDDL. The most recent hardware ELF from this working tree is designated the Release Candidate.
+
+LUNA retains NHDDL's Neutrino-launching core: it scans MMCE, APA or _FAT/exFAT-formatted_ BDM devices for ISO files, lists them, and boots the selected ISO via Neutrino. It adds LUNA branding, five PS2 Glass library views, paired cover/disc artwork, PSBBN artwork, and direct in-game return.
+
+This designation does not replace the physical-console safety gates documented in [`../PROJECT.md`](../PROJECT.md). No Git tag or hosted release is implied by the local RC label.
 
 It displays visual Game ID to trigger per-title settings on the Pixel FX line of products and triggers per-title memory cards on SD2PSX and MemCard PRO2.
 
@@ -14,12 +17,29 @@ Since NHDDL only launches Neutrino, PADEMU, IGR, IGS, cheats and other features 
 
 ## Usage
 
-### Title list controls
+### Classic title list controls
 
  - Press **Up** on the d-pad to select the **previous title** in the list
  - Press **Down** on the d-pad to select the **next title** in the list
- - Press **L1** to switch to the **previous page** or go to the **start of the list**
- - Press **R1** to switch to the **next page** or go to the **end of the list**
+ - Press **L1** or **L2** to switch to the **previous page** or go to the **start of the list**
+ - Press **R1** or **R2** to switch to the **next page** or go to the **end of the list**
+
+Press **Triangle** to open the options menu. **Per-game settings** opens the
+selected game's launch controls; **Global settings** contains **Classic art
+layout**. Press **Cross** or **Circle** to switch between **Separate** (cover
+above the disc) and **Overlap** (cover in front of the disc's lower half), then
+press **Start** to save. The layout applies to Classic for the whole library on
+that drive. **Triangle** cancels an unsaved change and returns to the menu.
+
+In Luna's Collection view, Left/Up and Right/Down move between covers; holding
+a direction repeats. L1/R1 jump backward or forward by a list page. Hold L2/R2
+to fast scan; quick L2/R2 taps do nothing.
+
+In Luna's Grid view, release a shoulder before half a second for one page. Hold
+L1/L2 or R1/R2 for at least half a second to fast-track through lightweight
+page shells without loading artwork; releasing loads only the page where the
+fast-track stops. That final artwork fills the shell in place without replaying
+the page transition.
 
 ### Important notes
 
@@ -155,6 +175,11 @@ NHDDL uses the same file naming convention and file format used by OPL.
 Just put **140x200 PNG** files named `<title ID>_COV.png` (e.g. `SLUS_200.02_COV.png`) into the `ART` directory on the root of your device.  
 If unsure where to get your cover art from, check out the latest version of [OPL Manager](https://oplmanager.com).
 
+LUNA's Collection, Grid, and Orbit views use optional **256x256
+PNG** artwork named `<title ID>.png` under `ART/PSBBN/`. Use
+[OrbitPS2 Manager — LUNA Edition](https://github.com/dnunezx/OrbitPS2-Manager-LUNA-edition)
+to obtain and prepare this PSBBN artwork.
+
 ### Passing arguments
 
 Similar to Neutrino, NHDDL supports receiving launcher options from `argv` in the `-<arg>=<value>` format.  
@@ -217,7 +242,9 @@ See [this file](examples/nhddl.yaml) for an example of a valid `nhddl.yaml` file
 
 ### Additional configuration files on storage device
 
-NHDDL stores and looks for ISO-related config files in `nhddl` directory in the root of your BDM drive.  
+LUNA writes ISO-related state and argument files to the `/LUNA` directory in
+the root of the BDM drive. Existing files under `/nhddl` remain readable as a
+legacy fallback and are not modified during migration.
 
 #### `lastTitle.bin`
 
@@ -259,13 +286,22 @@ NHDDL supports two kinds of argument files:
 
 #### global.yaml
 
-Arguments stored in `nhddl/global.yaml` are applied to every ISO by default.
+Arguments stored in `LUNA/global.yaml` are applied to every ISO by default.
 
 #### ISO-specific files
 
-Arguments stored in `nhddl/<ISO name>.yaml` are applied to every ISO that starts with `<ISO name>`.  
+Arguments stored in `LUNA/<ISO name>.yaml` are applied to every ISO that starts with `<ISO name>`.
 
 NHDDL can create this file automatically when title compatibility modes are modified and saved in UI.
+
+#### Favorites
+
+In the Classic view, press Square to add or remove the selected game from Favorites and
+press Select to switch between the List and Favorites tabs. Favorite games
+are marked with a cyan glass star. The selection is stored as `LUNA/favorites.txt` on the
+game's metadata device, so it survives a restart without changing the ISO library.
+Collection also exposes a Collection/Favorites selector: press Select there to filter
+the cover flow to the same saved favorites.
 
 #### Example of directory sturcture on BDM device
 
@@ -273,9 +309,9 @@ NHDDL can create this file automatically when title compatibility modes are modi
 ART/ # cover art, optional
   |
   - SLUS_200.02_COV.png
-nhddl/
+LUNA/
   |
-   - lastTitle.txt # created automatically
+   - lastTitle.bin # created automatically
    - cache.bin # created automatically
    - global.yaml # optional argument file, applies to all ISOs
    - nhddl.yaml # NHDDL options, applied after initialization is complete

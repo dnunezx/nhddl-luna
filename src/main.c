@@ -1,3 +1,4 @@
+// LUNA modifications: Danny Nunez (dnunezx) 2026
 #include "common.h"
 #include "devices/devices.h"
 #include "devices/init.h"
@@ -8,6 +9,8 @@
 #include "options.h"
 #include "target.h"
 #include "ui/ui.h"
+#include "ui/ambient.h"
+#include "ui/view_state.h"
 #include <ctype.h>
 #include <debug.h>
 #include <fcntl.h>
@@ -18,10 +21,12 @@
 #include <unistd.h>
 
 // Launcher options
-LauncherOptions LAUNCHER_OPTIONS = {0};
+LauncherOptions LAUNCHER_OPTIONS = {.returnPath = "hdd"};
 // Options file name relative to CWD
-static const char optionsFile[] = "nhddl.yaml";
-static const char rootFallbackPath[] = "/nhddl/nhddl.yaml";
+static const char optionsFile[] = "luna.yaml";
+static const char legacyOptionsFile[] = "nhddl.yaml";
+static const char rootFallbackPath[] = "/luna/luna.yaml";
+static const char legacyRootFallbackPath[] = "/nhddl/nhddl.yaml";
 
 // Supported options
 #define OPTION_VMODE "video"
@@ -29,6 +34,13 @@ static const char rootFallbackPath[] = "/nhddl/nhddl.yaml";
 #define OPTION_UDPFS_IP "udpfs_ip"
 #define OPTION_IMAGE "dvd"
 #define OPTION_NO_INIT "noinit"
+#define OPTION_RETURN_PATH "return_path"
+
+// ATA and HDL retain their existing scan behavior. Other library sources
+// require an explicit mode entry in the options file.
+#define LUNA_LIBRARY_DEFAULT_MODES (MODE_ATA | MODE_HDL)
+#define LUNA_LIBRARY_OPT_IN_MODES (MODE_USB | MODE_MX4SIO | MODE_MMCE | MODE_ILINK | MODE_UDPFS)
+static ModeType configuredLibraryModes = MODE_NONE;
 
 #ifndef GIT_VERSION
 #define GIT_VERSION "v-0.0.0-unknown"
@@ -49,7 +61,7 @@ ModeType parseFilename(const char *path);
 void parseIPConfig();
 
 int main(int argc, char *argv[]) {
-  DPRINTF("*************\nNHDDL %s\nA Neutrino launcher by pcm720\n*************\n", GIT_VERSION);
+  DPRINTF("*************\nLUNA %s\nLightweight Unified Neutrino Access\nBased on NHDDL by pcm720\n*************\n", GIT_VERSION);
 
   for (int i = 0; i < argc; i++)
     DPRINTF("argv[%d] = %s\n", i, argv[i]);
@@ -80,6 +92,7 @@ int main(int argc, char *argv[]) {
     goto fail;
   }
 
+  TargetList *titles;
   if ((argc > 0 && argv[0][0] == '-') || (argc > 1 && argv[1][0] == '-'))
     // If argv contains arguments, use them for init
     res = argInit();
@@ -93,10 +106,9 @@ int main(int argc, char *argv[]) {
 
   uiSplashLogString(LEVEL_INFO_NODELAY, "Building target list...\n");
 
-  TargetList *titles = malloc(sizeof(TargetList));
-  titles->total = 0;
-  titles->first = NULL;
-  titles->last = NULL;
+  titles = calloc(1, sizeof(TargetList));
+  if (titles == NULL)
+    goto fail;
 
   // Scan every initialized device for entries
   for (int i = 0; i < MAX_DEVICES; i++) {
@@ -106,6 +118,13 @@ int main(int argc, char *argv[]) {
     // Ignore devices without a scan function
     if (deviceModeMap[i].scan == NULL)
       continue;
+
+    // Only scan optional storage modes selected in the options file. The
+    // runtime mode can also include drivers loaded to access the boot path.
+    if (!(deviceModeMap[i].mode & (LUNA_LIBRARY_DEFAULT_MODES | configuredLibraryModes))) {
+      DPRINTF("Skipping unconfigured library device %s\n", deviceModeMap[i].mountpoint);
+      continue;
+    }
 
     res = deviceModeMap[i].scan(titles, &deviceModeMap[i]);
     if (res != 0) {
@@ -119,6 +138,28 @@ int main(int argc, char *argv[]) {
     goto fail;
   }
 
+  // Let the audio worker preempt long cover decodes in the UI thread.
+  if (ChangeThreadPriority(GetThreadId(), 0x20) < 0)
+    DPRINTF("WARN: Could not lower UI thread priority for ambient audio\n");
+
+  // Start the soundtrack as soon as the library drive is ready, while the
+  // splash is still visible. Use the restored title for its audio preference.
+  Target *audioTarget = titles->first;
+  char lastAudioTitle[PATH_MAX + 1];
+  if (!getLastLaunchedTitle(lastAudioTitle, sizeof(lastAudioTitle))) {
+    for (Target *candidate = titles->first; candidate != NULL;
+         candidate = candidate->next) {
+      int relative = getRelativePathIdx(candidate->fullPath);
+      if (relative < 0)
+        relative = 0;
+      if (!strcmp(lastAudioTitle, candidate->fullPath + relative)) {
+        audioTarget = candidate;
+        break;
+      }
+    }
+  }
+  ambientStart(loadAmbientSoundEnabled(audioTarget));
+
   stopUISplashThread();
   if ((res = uiLoop(titles))) {
     init_scr();
@@ -130,13 +171,16 @@ int main(int argc, char *argv[]) {
   return 0;
 
 fail:
+  ambientStop();
   sleep(10);
   return 1;
 }
 
 // Initializes device map while logging errors
 int initDevices() {
-  uiSplashLogString(LEVEL_INFO, "Waiting for storage devices...\n");
+  // Device backends already perform bounded readiness probes. Do not add a
+  // second, unconditional one-second splash delay before those probes begin.
+  uiSplashLogString(LEVEL_INFO_NODELAY, "Waiting for storage devices...\n");
   int res = initDeviceMap();
   if ((res < 0)) {
     uiSplashLogString(LEVEL_ERROR, "Failed to initialize devices\n");
@@ -154,7 +198,9 @@ void showNeutrinoSplash() {
   // Get Neturino version
   char *neutrinoVersion = getNeutrinoVersion();
   uiSplashSetNeutrinoVersion(neutrinoVersion);
-  uiSplashLogString(LEVEL_INFO, "Found Neutrino at\n%s\n", NEUTRINO_ELF_PATH);
+  // Successful boot messages are hidden by LUNA's minimal splash, so waiting
+  // a full second here only makes the library appear later.
+  uiSplashLogString(LEVEL_INFO_NODELAY, "Found Neutrino at\n%s\n", NEUTRINO_ELF_PATH);
   free(neutrinoVersion);
 }
 
@@ -315,6 +361,9 @@ void parseArgv(int argc, char *argv[]) {
     } else if (val && !strcmp(OPTION_IMAGE, arg)) {
       DPRINTF("Using image %s\n", val);
       LAUNCHER_OPTIONS.image = strdup(val);
+    } else if (val && !strcmp(OPTION_RETURN_PATH, arg)) {
+      DPRINTF("Using in-game return path %s\n", val);
+      strlcpy(LAUNCHER_OPTIONS.returnPath, val, sizeof(LAUNCHER_OPTIONS.returnPath));
     } else if (!strcmp(OPTION_NO_INIT, arg)) {
       DPRINTF("Skipping IOP init\n");
       LAUNCHER_OPTIONS.noInit = 1;
@@ -327,19 +376,27 @@ void parseArgv(int argc, char *argv[]) {
 
 // Loads NHDDL options from optionsFile
 int loadOptions(char *cwdPath) {
-  char lineBuffer[PATH_MAX + sizeof(optionsFile) + 1];
+  char lineBuffer[PATH_MAX + sizeof(legacyRootFallbackPath) + 1];
   if (cwdPath[0] != '\0') {
     // If path is valid, try it
     strcpy(lineBuffer, cwdPath);
     strcat(lineBuffer, optionsFile);
+    if (tryFile(lineBuffer)) {
+      strcpy(lineBuffer, cwdPath);
+      strcat(lineBuffer, legacyOptionsFile);
+    }
     if (tryFile(lineBuffer)) {
       DPRINTF("Trying device fallback path\n");
       char *mountpoint = strchr(lineBuffer, '/');
       if (mountpoint) {
         *mountpoint = '\0';
         strcat(lineBuffer, rootFallbackPath);
-        if (tryFile(lineBuffer))
-          return -ENOENT;
+        if (tryFile(lineBuffer)) {
+          *strchr(lineBuffer, '/') = '\0';
+          strcat(lineBuffer, legacyRootFallbackPath);
+          if (tryFile(lineBuffer))
+            return -ENOENT;
+        }
       } else
         return -ENOENT;
     }
@@ -364,10 +421,15 @@ int loadOptions(char *cwdPath) {
         LAUNCHER_OPTIONS.vmode = parseVMode(arg->value);
       } else if (strcmp(OPTION_MODE, arg->arg) == 0) {
         printf("Using mode %s\n", arg->value);
-        LAUNCHER_OPTIONS.mode |= parseMode(arg->value);
+        ModeType mode = parseMode(arg->value);
+        LAUNCHER_OPTIONS.mode |= mode;
+        configuredLibraryModes |= mode & LUNA_LIBRARY_OPT_IN_MODES;
       } else if (strcmp(OPTION_UDPFS_IP, arg->arg) == 0) {
         printf("Using UDPFS IP %s\n", arg->value);
         strlcpy(LAUNCHER_OPTIONS.udpfsIp, arg->value, sizeof(LAUNCHER_OPTIONS.udpfsIp));
+      } else if (strcmp(OPTION_RETURN_PATH, arg->arg) == 0) {
+        printf("Using in-game return path %s\n", arg->value);
+        strlcpy(LAUNCHER_OPTIONS.returnPath, arg->value, sizeof(LAUNCHER_OPTIONS.returnPath));
       }
     }
     arg = arg->next;
@@ -420,6 +482,20 @@ char *resolveRootDevice(char *argv0) {
   char *result = strdup(argv0);
   // Load device drivers for boot path
   printf("Resolve root: argv[0] is %s, guessing device type\n", argv0);
+
+#ifdef LUNA_EMULATOR_BUILD
+  // PCSX2's direct-ELF launcher maps the ELF directory to host:, but on
+  // Windows it presents argv[0] without usable path separators. Treat the
+  // host device root as the current directory so adjacent config/runtime
+  // files remain discoverable.
+  if (!strncmp(argv0, "host:", 5)) {
+    printf("Resolve root: using PCSX2 host device root\n");
+    free(result);
+    initModules(MODE_BASIC);
+    return strdup("host:/");
+  }
+#endif
+
   ModeType device = guessDeviceType(argv0);
   if (device == MODE_BASIC) {
     printf("Resolve root: loading basic drivers\n");

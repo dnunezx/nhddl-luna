@@ -1,3 +1,4 @@
+// LUNA modifications: Danny Nunez (dnunezx) 2026
 #ifndef _OPTIONS_H_
 #define _OPTIONS_H_
 
@@ -8,6 +9,7 @@
 // Location of configuration directory relative to storage mountpoint
 extern const char BASE_CONFIG_PATH[];
 extern const size_t BASE_CONFIG_PATH_LEN;
+extern const char LEGACY_BASE_CONFIG_PATH[];
 
 // An entry in ArgumentList
 typedef struct Argument {
@@ -29,11 +31,14 @@ typedef struct {
 
 // Writes full path to targetFileName into targetPath.
 // If targetFileName is NULL, will return path to config directory
-void buildConfigFilePath(char *targetPath, const char *targetMountpoint, const char *targetFileName);
+int buildConfigFilePath(char *targetPath, size_t targetSize, const char *targetMountpoint,
+                        const char *targetFileName);
+int buildLegacyConfigFilePath(char *targetPath, size_t targetSize, const char *targetMountpoint,
+                              const char *targetFileName);
 
 // Gets last launched title path into titlePath
 // Searches for the latest file across all mounted BDM devices
-int getLastLaunchedTitle(char *titlePath);
+int getLastLaunchedTitle(char *titlePath, size_t titlePathSize);
 
 // Writes last launched title path into lastTitle file on title mountpoint
 int updateLastLaunchedTitle(struct DeviceMapEntry *device, char *titlePath);

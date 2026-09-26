@@ -1,27 +1,41 @@
+# LUNA modifications: Danny Nunez (dnunezx) 2026
 cmake_minimum_required(VERSION 3.13)
 
 include($ENV{PS2SDK}/ps2dev.cmake)
 
-project(nhddl)
+project(luna)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Executable name
-set(EE_BIN "nhddl_unc.elf")
-set(EE_BIN_PKD "nhddl.elf")
+set(EE_BIN "luna_unc.elf")
+set(EE_BIN_PKD "luna.elf")
 # Enable debug output if requested
 option(ENABLE_PRINTF "Enable printf debugging output" ON)
+option(LUNA_EMULATOR_BUILD "Enable behavior used only by emulator test builds" OFF)
 
 # Source files
 set(SOURCES
     src/main.c
     src/common.c
     src/options.c
+    src/favorites.c
     src/neutrino.c
     src/target.c
     src/forwarder.c
 
     # UI
     src/ui/gui.c
+    src/ui/options_menu.c
     src/ui/graphics.c
+    src/ui/handoff.c
+    src/ui/ambient.c
+  src/ui/navigation.c
+  src/ui/view_state.c
+  src/ui/art_cache.c
+    src/ui/view_classic.c
+    src/ui/view_collection.c
+  src/ui/view_grid.c
+  src/ui/view_orbit.c
+  src/ui/view_orbs.c
     src/ui/args.c
     src/ui/pad.c
 
@@ -39,7 +53,9 @@ include(irx.cmake)
 
 # Get git version for build info
 find_package(Git QUIET)
-if(GIT_FOUND)
+if(DEFINED LUNA_RELEASE_VERSION AND NOT LUNA_RELEASE_VERSION STREQUAL "")
+  set(GIT_VERSION "${LUNA_RELEASE_VERSION}")
+elseif(GIT_FOUND)
   execute_process(
         COMMAND ${GIT_EXECUTABLE} describe --always --dirty --tags --exclude nightly
         OUTPUT_VARIABLE GIT_VERSION
@@ -56,6 +72,12 @@ add_definitions(-DGIT_VERSION=\"${GIT_VERSION}\")
 
 if(ENABLE_PRINTF)
   add_definitions(-DENABLE_PRINTF)
+endif()
+
+if(LUNA_EMULATOR_BUILD)
+  add_definitions(-DLUNA_EMULATOR_BUILD)
+  configure_file(${CMAKE_CURRENT_SOURCE_DIR}/assets/ambient.wav
+                 ${CMAKE_CURRENT_BINARY_DIR}/ambient.wav COPYONLY)
 endif()
 
 # Create the main executable
@@ -88,6 +110,7 @@ target_link_libraries(${EE_BIN}
     png
     z
     tiff
+    audsrv
 )
 
 # Set link flags for PS2

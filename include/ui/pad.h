@@ -11,6 +11,9 @@ void closePad();
 // To capture press of any button, pass -1.
 int waitForInput(int button);
 
+// Returns newly pressed buttons on either gamepad without blocking.
+int readInput(void);
+
 // Returns inputs on both gamepads
 int pollInput();
 

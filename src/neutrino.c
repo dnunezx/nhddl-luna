@@ -1,7 +1,10 @@
+// LUNA modifications: Danny Nunez (dnunezx) 2026
 #include "common.h"
 #include "devices/devices.h"
 #include "devices/init.h"
 #include "dprintf.h"
+#include "neutrino.h"
+#include "ui/ambient.h"
 #include "options.h"
 #include <debug.h>
 #include <kernel.h>
@@ -29,6 +32,7 @@ static char neutrinoStorageFallbackPath[] = "/neutrino/neutrino.elf";
 static char isoArgument[] = "dvd";
 static char bsdArgument[] = "bsd";
 static char bsdfsArgument[] = "bsdfs";
+static char igrArgument[] = "igr";
 
 // Neutrino bsd values
 #define BSD_ATA "ata"
@@ -76,7 +80,8 @@ int assembleArgv(ArgumentList *arguments, char **argv[]) {
 
 // Launches target, passing arguments to Neutrino.
 // Expects arguments to be initialized
-void launchTitle(Target *target, ArgumentList *arguments) {
+void launchTitleWithProgress(Target *target, ArgumentList *arguments,
+                             LaunchProgressCallback progress, void *userdata) {
   // Append arguments
   char *bsdValue;
   // Map target device index to Neutrino bsd argument
@@ -108,6 +113,9 @@ void launchTitle(Target *target, ArgumentList *arguments) {
     return;
   }
 
+  if (progress != NULL)
+    progress(LAUNCH_STAGE_SYNCING, userdata);
+
   DPRINTF("Updating last launched title\n");
   if (updateLastLaunchedTitle(target->device, target->fullPath)) {
     DPRINTF("ERROR: Failed to update last launched title\n");
@@ -123,6 +131,8 @@ void launchTitle(Target *target, ArgumentList *arguments) {
   // Append bsd and ISO path
   appendArgument(arguments, newArgument(bsdArgument, bsdValue));
   appendArgument(arguments, newArgument(isoArgument, target->fullPath));
+  if (LAUNCHER_OPTIONS.returnPath[0] != '\0')
+    appendArgument(arguments, newArgument(igrArgument, LAUNCHER_OPTIONS.returnPath));
   // Use quickboot to reduce load times (except for HDL mode because it requires hdlfs module)
   if (target->device->mode != MODE_HDL)
     appendArgument(arguments, newArgument("qb", ""));
@@ -136,7 +146,16 @@ void launchTitle(Target *target, ArgumentList *arguments) {
     DPRINTF("%d: %s\n", i + 1, argv[i]);
   }
 
+  if (progress != NULL)
+    progress(LAUNCH_STAGE_STARTING, userdata);
+
+  // The launcher is about to replace its own memory with Neutrino.
+  ambientStop();
   launchELF(argCount, argv);
+}
+
+void launchTitle(Target *target, ArgumentList *arguments) {
+  launchTitleWithProgress(target, arguments, NULL, NULL);
 }
 
 // Attempts to find neutrino.elf at current path or one of fallback paths

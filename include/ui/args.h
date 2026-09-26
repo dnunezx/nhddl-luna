@@ -1,3 +1,4 @@
+// LUNA modifications: Danny Nunez (dnunezx) 2026
 #ifndef _UI_ARGS_H_
 #define _UI_ARGS_H_
 
@@ -14,7 +15,8 @@ struct NeutrinoArgument;
 
 // Must draw within specified limits and
 // return the bottom Y coordinate of the last line.
-typedef int (*drawFunc)(struct NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z, int maxWidth, int maxHeight);
+typedef int (*drawFunc)(struct NeutrinoArgument *arg, uint8_t isActive, int x, int y, int z,
+                        int maxWidth, int minY, int maxY);
 
 // Must process given input and return one of ActionType
 typedef ActionType (*handleInputFunc)(struct NeutrinoArgument *arg, int input);
@@ -34,6 +36,8 @@ typedef struct NeutrinoArgument {
   marshalFunc marshal;
   uint8_t state;            // Internal argument state
   uint8_t activeElementIdx; // Active element index
+  uint8_t rowCount;         // Total rows drawn, including a group heading
+  uint8_t focusRowOffset;   // First selectable row within the drawn block
 } NeutrinoArgument;
 
 // Defined in gui_args.c

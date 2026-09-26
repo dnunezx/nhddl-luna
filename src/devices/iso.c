@@ -1,4 +1,5 @@
 // Implements titleScanFunc for file-based devices (MMCE, BDM)
+// LUNA modifications: Danny Nunez (dnunezx) 2026
 #include "common.h"
 #include "devices/devices.h"
 #include "dprintf.h"
@@ -253,6 +254,7 @@ void processTitleID(TargetList *result, struct DeviceMapEntry *device) {
 #define CACHE_VERSION 2
 
 const char titleIDCacheFile[] = "/cache.bin";
+static const char titleIDCacheTempFile[] = "/cache.bin.tmp";
 
 // Structs used to read and write cache file contents
 typedef struct {
@@ -292,12 +294,15 @@ int storeTitleIDCache(TargetList *list, struct DeviceMapEntry *device) {
 
   // Prepare paths and header
   char cachePath[PATH_MAX];
+  char tempPath[PATH_MAX];
   char dirPath[PATH_MAX];
   CacheEntryHeader header;
   CacheMetadata meta = {.magic = CACHE_MAGIC, .version = CACHE_VERSION, .total = total};
 
-  buildConfigFilePath(dirPath, device->mountpoint, NULL);
-  buildConfigFilePath(cachePath, device->mountpoint, titleIDCacheFile);
+  if (buildConfigFilePath(dirPath, sizeof(dirPath), device->mountpoint, NULL) ||
+      buildConfigFilePath(cachePath, sizeof(cachePath), device->mountpoint, titleIDCacheFile) ||
+      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, titleIDCacheTempFile))
+    return -ENAMETOOLONG;
 
   // Get path to config directory and make sure it exists
   struct stat st;
@@ -310,7 +315,7 @@ int storeTitleIDCache(TargetList *list, struct DeviceMapEntry *device) {
   }
 
   // Open cache file for writing
-  FILE *file = fopen(cachePath, "wb");
+  FILE *file = fopen(tempPath, "wb");
   if (file == NULL) {
     DPRINTF("ERROR: Failed to open cache file for writing\n");
     return -EIO;
@@ -322,7 +327,7 @@ int storeTitleIDCache(TargetList *list, struct DeviceMapEntry *device) {
   if (!result) {
     DPRINTF("ERROR: Failed to write metadata: %d\n", errno);
     fclose(file);
-    remove(cachePath);
+    remove(tempPath);
     return result;
   }
 
@@ -352,7 +357,7 @@ int storeTitleIDCache(TargetList *list, struct DeviceMapEntry *device) {
     if (!result) {
       DPRINTF("ERROR: %s: Failed to write header: %d\n", curTitle->name, errno);
       fclose(file);
-      remove(cachePath);
+      remove(tempPath);
       return result;
     }
     // Write full ISO path without the mountpoint
@@ -360,12 +365,18 @@ int storeTitleIDCache(TargetList *list, struct DeviceMapEntry *device) {
     if (!result) {
       DPRINTF("ERROR: %s: Failed to write full path: %d\n", curTitle->name, errno);
       fclose(file);
-      remove(cachePath);
+      remove(tempPath);
       return result;
     }
     curTitle = curTitle->next;
   }
   fclose(file);
+
+  remove(cachePath);
+  if (rename(tempPath, cachePath)) {
+    DPRINTF("ERROR: Failed to commit title ID cache: %d\n", errno);
+    return -EIO;
+  }
 
   return 0;
 }
@@ -381,9 +392,20 @@ int loadTitleIDCache(TitleIDCache *cache, struct DeviceMapEntry *device) {
 
   // Open cache file for reading
   char cachePath[PATH_MAX];
-  buildConfigFilePath(cachePath, device->mountpoint, titleIDCacheFile);
+  if (buildConfigFilePath(cachePath, sizeof(cachePath), device->mountpoint, titleIDCacheFile))
+    return -ENAMETOOLONG;
 
   FILE *file = fopen(cachePath, "rb");
+  if (file == NULL) {
+    if (!buildConfigFilePath(cachePath, sizeof(cachePath), device->mountpoint,
+                             titleIDCacheTempFile))
+      file = fopen(cachePath, "rb");
+  }
+  if (file == NULL) {
+    if (!buildLegacyConfigFilePath(cachePath, sizeof(cachePath), device->mountpoint,
+                                   titleIDCacheFile))
+      file = fopen(cachePath, "rb");
+  }
   if (file == NULL)
     return -ENOENT;
 
@@ -399,13 +421,27 @@ int loadTitleIDCache(TitleIDCache *cache, struct DeviceMapEntry *device) {
   }
 
   // Make sure header is valid
-  if (!strcmp(meta.magic, CACHE_MAGIC)) {
+  if (memcmp(meta.magic, CACHE_MAGIC, sizeof(meta.magic)) != 0) {
     DPRINTF("ERROR: Cache magic doesn't match, refusing to load\n");
     fclose(file);
     return -EINVAL;
   }
   if (meta.version != CACHE_VERSION) {
     DPRINTF("ERROR: Unsupported cache version %d\n", meta.version);
+    fclose(file);
+    return -EINVAL;
+  }
+
+  long entriesStart = ftell(file);
+  if (meta.total < 0 || fseek(file, 0, SEEK_END) != 0) {
+    fclose(file);
+    return -EINVAL;
+  }
+  long fileSize = ftell(file);
+  if (entriesStart < 0 || fileSize < entriesStart ||
+      meta.total > (fileSize - entriesStart) / (long)sizeof(CacheEntryHeader) ||
+      fseek(file, entriesStart, SEEK_SET) != 0) {
+    DPRINTF("ERROR: Invalid cache entry count %d\n", meta.total);
     fclose(file);
     return -EINVAL;
   }
@@ -431,18 +467,23 @@ int loadTitleIDCache(TitleIDCache *cache, struct DeviceMapEntry *device) {
         DPRINTF("WARN: Read less than expected, title ID cache might be incomplete\n");
       break;
     }
+    if (header.pathLength == 0 || header.pathLength > PATH_MAX) {
+      DPRINTF("WARN: Invalid cached path length\n");
+      break;
+    }
     // Read ISO path
-    result = fread(&pathBuf, header.pathLength, 1, file);
+    result = fread(pathBuf, header.pathLength, 1, file);
     if (result != 1) {
       DPRINTF("WARN: Read less than expected, title ID cache might be incomplete\n");
       break;
     }
     pathBuf[header.pathLength] = '\0';
+    pathBuf[header.pathLength - 1] = '\0';
 
     // Store entry in cache
     CacheEntry entry;
     memcpy(entry.titleID, header.titleID, sizeof(entry.titleID));
-    header.titleID[11] = '\0';
+    entry.titleID[11] = '\0';
     entry.fullPath = strdup(pathBuf);
     cache->entries[readIndex] = entry;
     readIndex++;

@@ -1,4 +1,5 @@
 // Implements support for BDM devices
+// LUNA modifications: Danny Nunez (dnunezx) 2026
 #include "common.h"
 #include "devices/devices.h"
 #include "dprintf.h"
@@ -125,6 +126,11 @@ int initBDMDevices(int deviceIdx) {
 
     deviceIdx++;
     deviceCount++;
+
+    // A PS2 has one internal ATA drive. In ATA-only mode there cannot be a
+    // second HDD library device, so do not spend two seconds probing mass1:.
+    if ((LAUNCHER_OPTIONS.mode & MODE_BDM) == MODE_ATA && deviceModeMap[deviceIdx - 1].mode == MODE_ATA)
+      break;
   }
 
   return deviceCount;

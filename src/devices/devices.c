@@ -29,7 +29,6 @@ int initBDMDevices();
 int initMMCEDevices();
 int initUDPFSDevices();
 int initHDL();
-void delay(int count);
 
 // List of modules to load
 static SupportedBackends backends[] = {

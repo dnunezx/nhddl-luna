@@ -1,12 +1,23 @@
+// LUNA modifications: Danny Nunez (dnunezx) 2026
 #include "common.h"
 #include "dprintf.h"
+#include "favorites.h"
 #include "neutrino.h"
 #include "options.h"
 #include "ui/args.h"
+#include "ui/ambient.h"
+#include "ui/art_cache.h"
 #include "ui/graphics.h"
+#include "ui/handoff.h"
+#include "ui/navigation.h"
+#include "ui/options_menu.h"
+#include "ui/view_orbs.h"
 #include "ui/pad.h"
 #include "ui/ui.h"
+#include "ui/view_internal.h"
+#include "ui/view_state.h"
 #include <dmaKit.h>
+#include <errno.h>
 #include <gsKit.h>
 #include <gsToolkit.h>
 #include <kernel.h>
@@ -15,43 +26,46 @@
 #include <ps2sdkapi.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <timer.h>
 
-#define DIV_ROUND(n, d) (n + (d - 1)) / d
-
-// Assuming 140x200 cover art
-#define COVER_ART_RES_W 140
-#define COVER_ART_RES_H 200
+#define PSBBN_TIMER_TICKS_PER_MS 576ULL
+#define GRID_LEFT_SHOULDERS (PAD_L1 | PAD_L2)
+#define GRID_RIGHT_SHOULDERS (PAD_R1 | PAD_R2)
 
 void closeUI();
 int uiLoop(TargetList *titles);
-int uiTitleOptionsLoop(Target *title);
-int uiArgumentListLoop(Target *target, ArgumentList *titleArguments);
-void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPage, GSTEXTURE *selectedTitleCover);
-void uiLaunchTitle(Target *target, ArgumentList *arguments);
 void drawGameID(const char *game_id);
-int createSplashThread();
 void uiSplashThread();
-void closeUISplashThread();
 
 GSGLOBAL *gsGlobal;
-static GSTEXTURE *coverTexture;
-static char lineBuffer[255];
+char lineBuffer[255];
+static int orbsBackground = 0;
 
-// Path relative to storage device mountpoint.
-// Used to load cover art
-static const char artPath[] = "/ART";
+const int keepoutArea = 20;
+const int headerHeight = 40;
+const int footerHeight = 60;
 
-// Cover art sprite coordinates
-// Initialized during uiInit from screen width and height
-static int coverArtX2;
-static int coverArtY2;
-static int coverArtX1;
-static int coverArtY1;
+uint32_t uiNowMs(void) {
+  return (uint32_t)((GetTimerSystemTime() >> 8) / PSBBN_TIMER_TICKS_PER_MS);
+}
 
-static const int keepoutArea = 20;
-static const int headerHeight = 20 + keepoutArea;
-static const int footerHeight = 40 + keepoutArea;
+static const int discSin[32] = {0,   25,  49,  71,  90,  106, 117, 125, 127, 125, 117, 106, 90,  71,  49,  25,
+                                0,  -25, -49, -71, -90, -106, -117, -125, -127, -125, -117, -106, -90, -71, -49, -25};
 
+int discWave(uint32_t phase) {
+  int index = (phase >> 11) & 31;
+  int next = (index + 1) & 31;
+  int fraction = (phase >> 3) & 0xFF;
+  return discSin[index] + ((discSin[next] - discSin[index]) * fraction) / 256;
+}
+
+int psbbnFieldStableY(int y) {
+  return (gsGlobal->Interlace == GS_INTERLACED) ? (y & ~1) : y;
+}
+
+int psbbnFieldStableHeight(void) {
+  return (gsGlobal->Interlace == GS_INTERLACED) ? 2 : 1;
+}
 void initVMode(GSGLOBAL *gsGlobal) {
   switch (LAUNCHER_OPTIONS.vmode) {
   case GS_MODE_NTSC:
@@ -87,6 +101,8 @@ int uiInit() {
     DPRINTF("Reinitializing UI\n");
     closeUI();
   }
+  StartTimerSystemTime();
+  resetGlassVisuals(uiNowMs());
   gsGlobal = gsKit_init_global();
   initVMode(gsGlobal);
   gsGlobal->PSM = GS_PSM_CT24; // Set color depth to avoid PAL VRAM issues
@@ -112,6 +128,7 @@ int uiInit() {
   gsKit_init_screen(gsGlobal);
   gsKit_display_buffer(gsGlobal); // Switch display buffer to avoid garbage appearing on screen
   gsKit_TexManager_init(gsGlobal);
+  initGlassStarAtlas();
   // Set alpha and mode, clear active buffer
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
@@ -124,42 +141,20 @@ int uiInit() {
     return -1;
   };
 
-  // Init cover texture
-  coverTexture = calloc(sizeof(GSTEXTURE), 1);
-  coverArtX2 = (gsGlobal->Width - keepoutArea - 10);
-  coverArtY2 = (gsGlobal->Height / 2) + (COVER_ART_RES_H / 2);
-  coverArtX1 = coverArtX2 - COVER_ART_RES_W;
-  coverArtY1 = coverArtY2 - COVER_ART_RES_H;
-  coverTexture->Delayed = 1;
+  // Init cover geometry and artwork caches.
+  calculateCoverArtGeometry();
+  if (artCacheInit())
+    return -1;
 
   return 0;
 }
 
 // Invalidates currently loaded texture and loads a new one
-int loadCoverArt(struct DeviceMapEntry *device, char *titleID) {
-  if (device->metadev) { // Fallback to metadata device
-    device = device->metadev;
-  }
-  // Reuse line buffer for building texture path
-  // Append cover art path to the mountpoint
-  snprintf(lineBuffer, 255, "%s%s/%s_COV.png", device->mountpoint, artPath, titleID);
-  // Upload new texture
-  gsKit_TexManager_invalidate(gsGlobal, coverTexture);
-  if (gsKit_texture_png(gsGlobal, coverTexture, lineBuffer)) {
-    return -1;
-  }
-  gsKit_TexManager_bind(gsGlobal, coverTexture);
-  // Free memory after the texture has been uploaded
-  free(coverTexture->Mem);
-  coverTexture->Mem = NULL;
-  return 0;
-}
-
 // Frees textures and deinits gsKit
 void closeUI() {
   gsKit_vram_clear(gsGlobal);
   closeFont();
-  free(coverTexture);
+  artCacheShutdown();
   gsKit_deinit_global(gsGlobal);
 }
 
@@ -171,21 +166,89 @@ int uiLoop(TargetList *titles) {
   }
 
   int res = 0;
+  uint8_t *favoriteFlags = NULL;
+  TargetList *favoriteTitles = NULL;
   if ((gsGlobal == NULL) && (res = uiInit())) {
     DPRINTF("ERROR: Failed to init UI: %d\n", res);
     goto exit;
   }
+
+  // The splash logo is never drawn in either library view. Releasing its large
+  // texture leaves stable VRAM for Classic's cover and disc pair.
+  releaseBootLogo();
   // Init gamepad inputs
   initPad();
 
   int isCoverUninitialized = 1;
+  int isDiscUninitialized = 1;
   int selectedTitleIdx = 0;
   int maxTitlesPerPage = (gsGlobal->Height - (headerHeight + footerHeight)) / getFontLineHeight();
+  int psbbnCoverBaseIdx = -1;
+  int psbbnAnimationTargetIdx = -1;
+  int psbbnAnimationStartOffset = 0;
+  uint32_t psbbnAnimationStart = 0;
+  uint32_t psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
+  LunaCollectionScan collectionScan = {0};
+  int collectionVisualTitleIdx = -1;
+  int collectionVisualCoverIdx = PSBBN_COVER_CACHE_FOCUS;
+  int collectionActionCoverIdx = PSBBN_COVER_CACHE_FOCUS;
+  int gridActivePageBuffer = 0;
+  int gridIncomingPageBuffer = -1;
+  int gridPreviousPageBuffer = -1;
+  int gridActivePageBase = -1;
+  int gridIncomingPageBase = -1;
+  int gridPageBases[GRID_PAGE_BUFFERS] = {-1, -1, -1};
+  int gridPageComplete[GRID_PAGE_BUFFERS] = {0, 0, 0};
+  int gridPageNextSlot[GRID_PAGE_BUFFERS] = {0, 0, 0};
+  int gridSelectedActiveBuffer = 0;
+  int gridSelectedIncomingBuffer = 1;
+  int gridSelectedActiveIdx = -1;
+  int gridSelectedRequestedIdx = -1;
+  int gridSelectedAttemptedIdx = -1;
+  int gridPendingSelectedIdx = -1;
+  int gridPendingSelectedCoverIdx = -1;
+  int gridPageDirection = 0;
+  int gridPrefetchDirection = 1;
+  int gridCascadeActive = 0;
+  int gridCascadeDirection = 0;
+  uint32_t gridCascadeStart = 0;
+  int gridShoulderDirection = 0;
+  uint32_t gridShoulderHoldStart = 0;
+  int gridFastTrackActive = 0;
+  int gridFastTrackSettling = 0;
+  int gridFastTrackDirection = 0;
+  int gridFastTrackSelectedIdx = -1;
+  int gridFastTrackPreviousPageBase = -1;
+  int gridFastTrackPageBase = -1;
+  uint32_t gridFastTrackSlideStart = 0;
+  uint32_t gridFastTrackNextStep = 0;
+  int orbitRandomActive = 0;
+  int orbitRandomTargetIdx = -1;
+  int orbitRandomDirection = 1;
+  uint32_t orbitRandomNextStep = 0;
+  int orbitRandomButtonHeld = 0;
+  int orbsVisualTitleIdx = -1;
+  int favoriteButtonHeld = 0;
+  int favoritesTabButtonHeld = 0;
+  int favoritesOnly = 0;
+  int collectionFavoritesOnly = 0;
+  int classicArtRequestedIdx = -1;
+  int classicNavHeld = 0;
+  int classicDisplayedCoverAvailable = 0;
+  int classicDisplayedDiscAvailable = 0;
+  int classicPreviousCoverAvailable = 0;
+  int classicArtOverlap = 0;
+  int orbsEnabled = 0;
+  int ambientEnabled = 1;
+  uint32_t classicArtDueMs = 0;
+  uint32_t classicCoverFadeStartMs = 0;
+  LunaNavRepeatState classicRepeat = {0};
+  UILibraryView view = UI_VIEW_CLASSIC;
   Target *curTarget = titles->first;
 
   // Get last launched title and find it in the target list
   char *lastTitle = calloc(sizeof(char), PATH_MAX + 1);
-  if (!getLastLaunchedTitle(lastTitle)) {
+  if (!getLastLaunchedTitle(lastTitle, PATH_MAX + 1)) {
     int mountpointLen;
     while (curTarget != NULL) {
       // Compare paths without the mountpoint
@@ -205,90 +268,898 @@ int uiLoop(TargetList *titles) {
     }
   }
   free(lastTitle);
+  view = loadLastLibraryView(curTarget);
+  orbsEnabled = loadOrbsViewEnabled(curTarget);
+  orbsBackground = loadOrbsBackground(curTarget);
+  setOrbsBackgroundStyle(orbsBackground);
+  ambientEnabled = loadAmbientSoundEnabled(curTarget);
+  ambientSetEnabled(ambientEnabled);
+  if (view == UI_VIEW_ORBS && !orbsEnabled)
+    view = UI_VIEW_CLASSIC;
+  classicArtOverlap = loadClassicArtOverlap(curTarget);
+  setClassicArtOverlap(classicArtOverlap);
 
-  // Load cover art
-  isCoverUninitialized = loadCoverArt(curTarget->device, curTarget->id);
+  favoriteFlags = calloc((size_t)titles->total, sizeof(*favoriteFlags));
+  if (favoriteFlags == NULL) {
+    res = -ENOMEM;
+    goto exit;
+  }
+  loadFavoriteFlags(titles, favoriteFlags, (size_t)titles->total);
+  favoriteTitles = buildFavoriteTargetList(titles, favoriteFlags, (size_t)titles->total);
+  if (favoriteTitles == NULL) {
+    res = -ENOMEM;
+    goto exit;
+  }
+
+  // Classic textures are unnecessary when restoring another view.
+  if (view == UI_VIEW_CLASSIC) {
+    isCoverUninitialized = loadCoverArt(curTarget->device, curTarget->id);
+    isDiscUninitialized = loadDiscArt(curTarget->device, curTarget->id);
+    classicDisplayedCoverAvailable = !isCoverUninitialized;
+    classicDisplayedDiscAvailable = !isDiscUninitialized;
+  }
 
   // Main UI loop
   int frameCount = 0;
   int prevInput = 0;
   int input = 0;
+  int optionsTriangleHeld = 0;
   while (1) {
     gsKit_clear(gsGlobal, BGColor);
     gsKit_TexManager_nextFrame(gsGlobal);
 
+    // A random destination may be far from the current title. Move toward it
+    // one adjacent cache position at a time so refreshPSBBNCovers() recycles
+    // nine entries and loads only one new PNG per step instead of ten at once.
+    if (view == UI_VIEW_ORBIT && orbitRandomActive && uiNowMs() >= orbitRandomNextStep) {
+      selectedTitleIdx = lunaNavWrap(titles->total, selectedTitleIdx + orbitRandomDirection);
+      if (selectedTitleIdx == orbitRandomTargetIdx) {
+        orbitRandomActive = 0;
+        orbitRandomTargetIdx = -1;
+      } else {
+        orbitRandomNextStep = uiNowMs() + ORBIT_RANDOM_STEP_MS;
+      }
+    }
+    observeOrbSelection(selectedTitleIdx, uiNowMs());
+
     // Reload target if index has changed
     if (curTarget->idx != selectedTitleIdx) {
       curTarget = getTargetByIdx(titles, selectedTitleIdx);
-      isCoverUninitialized = loadCoverArt(curTarget->device, curTarget->id);
+      if (view == UI_VIEW_CLASSIC) {
+        // Keep input polling light while moving through the list. The old art
+        // remains visible, but is not eligible for a launch handoff.
+        isCoverUninitialized = 1;
+        isDiscUninitialized = 1;
+        classicArtRequestedIdx = selectedTitleIdx;
+        classicArtDueMs = uiNowMs() + CLASSIC_ART_SETTLE_MS;
+      }
     }
 
-    // Draw title list
-    if (!isCoverUninitialized)
-      drawTitleList(titles, selectedTitleIdx, maxTitlesPerPage, coverTexture);
-    else
-      drawTitleList(titles, selectedTitleIdx, maxTitlesPerPage, NULL);
+    if (view == UI_VIEW_CLASSIC && classicArtRequestedIdx == selectedTitleIdx &&
+        !classicNavHeld && (int32_t)(uiNowMs() - classicArtDueMs) >= 0) {
+      classicPreviousCoverAvailable = classicDisplayedCoverAvailable;
+      isCoverUninitialized = loadNextClassicCoverArt(curTarget->device, curTarget->id);
+      isDiscUninitialized = loadDiscArt(curTarget->device, curTarget->id);
+      classicDisplayedCoverAvailable = !isCoverUninitialized;
+      classicDisplayedDiscAvailable = !isDiscUninitialized;
+      classicCoverFadeStartMs = uiNowMs();
+      classicArtRequestedIdx = -1;
+    }
 
+    if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT || view == UI_VIEW_ORBS) {
+      TargetList *flowTitles = (view == UI_VIEW_PSBBN && collectionFavoritesOnly) ? favoriteTitles : titles;
+      int flowSelectedTitleIdx = (view == UI_VIEW_PSBBN && collectionFavoritesOnly)
+                                     ? lunaNavMarkedRank(favoriteFlags, titles->total, selectedTitleIdx)
+                                     : selectedTitleIdx;
+      uint32_t now = uiNowMs();
+      int flowOffset;
+
+      if (view == UI_VIEW_PSBBN && flowTitles->total <= 0) {
+        if (psbbnCoverBaseIdx >= 0)
+          releasePSBBNCovers();
+        psbbnCoverBaseIdx = -1;
+        psbbnAnimationTargetIdx = -1;
+        psbbnAnimationStartOffset = 0;
+        drawPSBBNCollection(flowTitles, 0, psbbnCoverTextures, 0, collectionFavoritesOnly, now);
+        goto library_view_drawn;
+      }
+
+      // Finish synchronous artwork loading before sampling the glide clock.
+      if (view != UI_VIEW_ORBS) {
+        if (psbbnCoverBaseIdx != flowSelectedTitleIdx)
+          refreshPSBBNCovers(flowTitles, flowSelectedTitleIdx, psbbnCoverBaseIdx);
+        psbbnCoverBaseIdx = flowSelectedTitleIdx;
+      } else {
+        refreshOrbsLogos(flowTitles, flowSelectedTitleIdx);
+      }
+      now = uiNowMs();
+
+      if (psbbnAnimationTargetIdx < 0) {
+        psbbnAnimationTargetIdx = flowSelectedTitleIdx;
+        psbbnAnimationStartOffset = 0;
+        psbbnAnimationStart = now;
+        psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
+      } else if (psbbnAnimationTargetIdx != flowSelectedTitleIdx) {
+        int currentOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart, psbbnAnimationDuration, now);
+        int direction = lunaNavDirection(flowTitles->total, psbbnAnimationTargetIdx, flowSelectedTitleIdx);
+        psbbnAnimationStartOffset = currentOffset + direction * 1000;
+        if (view == UI_VIEW_PSBBN && collectionScan.active) {
+          psbbnAnimationStartOffset = collectionScan.heldDirection * 1000;
+          psbbnAnimationDuration = COLLECTION_SCAN_STEP_MS;
+        } else if (currentOffset * direction < 0) {
+          int reversalDistance = (psbbnAnimationStartOffset < 0) ? -psbbnAnimationStartOffset : psbbnAnimationStartOffset;
+          if (reversalDistance > 1000)
+            reversalDistance = 1000;
+          // Opposite input clears the remaining travel promptly instead of
+          // letting two depth directions linger for a full new glide.
+          psbbnAnimationDuration = 180 + (reversalDistance * 240) / 1000;
+        } else {
+          psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
+        }
+        psbbnAnimationTargetIdx = flowSelectedTitleIdx;
+        psbbnAnimationStart = now;
+      }
+
+      flowOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart, psbbnAnimationDuration, now);
+      if (view != UI_VIEW_ORBS)
+        updatePSBBNCoverResidency(flowOffset);
+      now = uiNowMs();
+      flowOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart, psbbnAnimationDuration, now);
+      if (view == UI_VIEW_PSBBN) {
+        collectionVisualCoverIdx = PSBBN_COVER_CACHE_FOCUS;
+        if (flowOffset >= 500)
+          collectionVisualCoverIdx--;
+        else if (flowOffset < -500)
+          collectionVisualCoverIdx++;
+        int visualRank = lunaNavWrap(flowTitles->total, flowSelectedTitleIdx +
+                                    collectionVisualCoverIdx - PSBBN_COVER_CACHE_FOCUS);
+        collectionVisualTitleIdx = collectionFavoritesOnly
+                                      ? lunaNavMarkedByRank(favoriteFlags, titles->total, visualRank)
+                                      : visualRank;
+        drawPSBBNCollection(flowTitles, flowSelectedTitleIdx, psbbnCoverTextures,
+                            flowOffset, collectionFavoritesOnly, now);
+      } else if (view == UI_VIEW_ORBIT)
+        drawOrbit(titles, selectedTitleIdx, psbbnCoverTextures, flowOffset,
+                  orbitRandomActive, now);
+      else {
+        int visualFocus = orbsVisualCacheIndex(flowOffset);
+        orbsVisualTitleIdx = lunaNavWrap(titles->total,
+            selectedTitleIdx + visualFocus - ORBS_LOGO_CACHE_FOCUS);
+        refreshOrbsBackground(getTargetByIdx(titles, orbsVisualTitleIdx));
+        drawOrbsView(titles, selectedTitleIdx, flowOffset, visualFocus, now);
+      }
+    } else if (view == UI_VIEW_GRID) {
+      int didLoadArtwork = 0;
+      int gridCascadeProgress = 0;
+      int pendingPageBuffer = -1;
+      int pendingPageBase = -1;
+      int loadPageBuffer = -1;
+      uint32_t now = uiNowMs();
+
+      if (gridActivePageBase < 0) {
+        gridActivePageBase = (selectedTitleIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
+        prepareGridPageBuffer(gridActivePageBuffer, gridActivePageBase, gridPageBases,
+                              gridPageComplete, gridPageNextSlot);
+      }
+
+      // A held shoulder deliberately performs no artwork work, including the
+      // half-second decision window. Fast-track moves lightweight page shells,
+      // then the normal loader prepares only the page where the user stops.
+      if (!gridFastTrackActive && gridShoulderDirection == 0) {
+        if (!gridPageComplete[gridActivePageBuffer])
+          loadPageBuffer = gridActivePageBuffer;
+
+      if (!gridCascadeActive && gridPendingSelectedIdx >= 0) {
+        pendingPageBase = (gridPendingSelectedIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
+        pendingPageBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, pendingPageBase);
+        if (pendingPageBuffer < 0) {
+          pendingPageBuffer = lunaNavChooseBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridActivePageBuffer,
+                                                  gridPreviousPageBuffer, gridIncomingPageBuffer);
+          if (pendingPageBuffer >= 0)
+            prepareGridPageBuffer(pendingPageBuffer, pendingPageBase, gridPageBases,
+                                  gridPageComplete, gridPageNextSlot);
+        }
+        if (pendingPageBuffer >= 0 && !gridPageComplete[pendingPageBuffer])
+          loadPageBuffer = pendingPageBuffer;
+      }
+
+      if (loadPageBuffer >= 0) {
+        gridPageComplete[loadPageBuffer] =
+            loadGridPageStep(titles, gridPageBases[loadPageBuffer], loadPageBuffer,
+                             &gridPageNextSlot[loadPageBuffer], &didLoadArtwork);
+      }
+
+      if (!gridCascadeActive && pendingPageBuffer >= 0 && gridPageComplete[pendingPageBuffer]) {
+        if (!didLoadArtwork && gridPendingSelectedCoverIdx != gridPendingSelectedIdx) {
+          Target *pendingTarget = getTargetByIdx(titles, gridPendingSelectedIdx);
+          refreshGridSelectedCover(pendingTarget, gridSelectedIncomingBuffer);
+          gridPendingSelectedCoverIdx = gridPendingSelectedIdx;
+          didLoadArtwork = 1;
+        }
+
+        if (gridPendingSelectedCoverIdx == gridPendingSelectedIdx) {
+          int previousSelectedBuffer = gridSelectedActiveBuffer;
+          gridSelectedActiveBuffer = gridSelectedIncomingBuffer;
+          gridSelectedIncomingBuffer = previousSelectedBuffer;
+          gridSelectedActiveIdx = gridPendingSelectedIdx;
+          gridSelectedRequestedIdx = gridPendingSelectedIdx;
+          gridSelectedAttemptedIdx = gridPendingSelectedIdx;
+          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
+          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
+
+          selectedTitleIdx = gridPendingSelectedIdx;
+          curTarget = getTargetByIdx(titles, selectedTitleIdx);
+          if (gridFastTrackSettling) {
+            // Fast-track already animated the lightweight destination shell.
+            // Promote its completed artwork in place instead of replaying the
+            // normal page cascade after the last PNG finishes loading.
+            int previousActiveBuffer = gridActivePageBuffer;
+            gridActivePageBuffer = pendingPageBuffer;
+            gridActivePageBase = pendingPageBase;
+            gridPreviousPageBuffer = previousActiveBuffer;
+            gridIncomingPageBuffer = -1;
+            gridIncomingPageBase = -1;
+            gridPrefetchDirection = (gridFastTrackDirection != 0) ? gridFastTrackDirection : gridPageDirection;
+            gridPendingSelectedIdx = -1;
+            gridPendingSelectedCoverIdx = -1;
+            gridPageDirection = 0;
+            gridCascadeActive = 0;
+            gridCascadeDirection = 0;
+            gridCascadeProgress = 0;
+            gridFastTrackSettling = 0;
+          } else {
+            gridIncomingPageBuffer = pendingPageBuffer;
+            gridIncomingPageBase = pendingPageBase;
+            gridCascadeDirection = gridPageDirection;
+            if (gridCascadeDirection == 0)
+              gridCascadeDirection = (gridIncomingPageBase > gridActivePageBase) ? 1 : -1;
+            gridCascadeStart = uiNowMs();
+            gridCascadeActive = 1;
+          }
+        }
+      }
+
+      now = uiNowMs();
+      if (gridCascadeActive) {
+        uint32_t elapsed = now - gridCascadeStart;
+        gridCascadeProgress = (elapsed >= GRID_CASCADE_DURATION_MS)
+                                  ? 1000
+                                  : (int)((elapsed * 1000ULL) / GRID_CASCADE_DURATION_MS);
+        if (gridCascadeProgress >= 1000) {
+          int previousActiveBuffer = gridActivePageBuffer;
+          gridActivePageBuffer = gridIncomingPageBuffer;
+          gridActivePageBase = gridIncomingPageBase;
+          gridPreviousPageBuffer = previousActiveBuffer;
+          gridIncomingPageBuffer = -1;
+          gridIncomingPageBase = -1;
+          gridPrefetchDirection = gridCascadeDirection;
+          gridPendingSelectedIdx = -1;
+          gridPendingSelectedCoverIdx = -1;
+          gridPageDirection = 0;
+          gridCascadeActive = 0;
+          gridCascadeDirection = 0;
+          gridCascadeProgress = 0;
+        }
+      }
+
+      if (gridSelectedRequestedIdx != selectedTitleIdx) {
+        gridSelectedRequestedIdx = selectedTitleIdx;
+        gridSelectedAttemptedIdx = -1;
+      }
+
+      if (!didLoadArtwork && gridSelectedActiveIdx != gridSelectedRequestedIdx &&
+          gridSelectedAttemptedIdx != gridSelectedRequestedIdx) {
+        Target *selectedTarget = getTargetByIdx(titles, gridSelectedRequestedIdx);
+        gridSelectedAttemptedIdx = gridSelectedRequestedIdx;
+        if (refreshGridSelectedCover(selectedTarget, gridSelectedIncomingBuffer)) {
+          int previousActiveBuffer = gridSelectedActiveBuffer;
+          gridSelectedActiveBuffer = gridSelectedIncomingBuffer;
+          gridSelectedActiveIdx = gridSelectedRequestedIdx;
+          gridSelectedIncomingBuffer = previousActiveBuffer;
+          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
+          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
+        } else {
+          releaseGridTexture(gridSelectedTextures[gridSelectedActiveBuffer]);
+          gridSelectedLoaded[gridSelectedActiveBuffer] = 0;
+          gridSelectedActiveIdx = gridSelectedRequestedIdx;
+        }
+      }
+
+        if (!didLoadArtwork && !gridCascadeActive && gridPendingSelectedIdx < 0 &&
+            gridPageComplete[gridActivePageBuffer] && gridSelectedActiveIdx == gridSelectedRequestedIdx) {
+          for (int prefetchPass = 0; prefetchPass < 2; prefetchPass++) {
+            int direction = (prefetchPass == 0) ? gridPrefetchDirection : -gridPrefetchDirection;
+            int prefetchPageBase = lunaNavPageBase(titles->total, gridActivePageBase, direction);
+            int prefetchBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, prefetchPageBase);
+
+            if (prefetchBuffer < 0) {
+              prefetchBuffer = lunaNavChooseBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridActivePageBuffer,
+                                                   gridPreviousPageBuffer, gridIncomingPageBuffer);
+              if (prefetchBuffer >= 0)
+                prepareGridPageBuffer(prefetchBuffer, prefetchPageBase, gridPageBases,
+                                      gridPageComplete, gridPageNextSlot);
+            }
+            if (prefetchBuffer >= 0 && !gridPageComplete[prefetchBuffer]) {
+              gridPageComplete[prefetchBuffer] =
+                  loadGridPageStep(titles, gridPageBases[prefetchBuffer], prefetchBuffer,
+                                   &gridPageNextSlot[prefetchBuffer], &didLoadArtwork);
+              break;
+            }
+          }
+        }
+      }
+
+      // All artwork work for this frame is complete. From here onward every
+      // moving element uses this one timestamp.
+      now = uiNowMs();
+      if (gridCascadeActive) {
+        uint32_t elapsed = now - gridCascadeStart;
+        gridCascadeProgress = (elapsed >= GRID_CASCADE_DURATION_MS)
+                                  ? 1000
+                                  : (int)((elapsed * 1000ULL) / GRID_CASCADE_DURATION_MS);
+      }
+
+      if (gridFastTrackActive) {
+        uint32_t elapsed = now - gridFastTrackSlideStart;
+        int fastTrackProgress = (elapsed >= GRID_FAST_TRACK_STEP_MS)
+                                    ? 1000
+                                    : (int)((elapsed * 1000ULL) / GRID_FAST_TRACK_STEP_MS);
+        int previousBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridFastTrackPreviousPageBase);
+        int destinationBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridFastTrackPageBase);
+
+        if (previousBuffer < 0 || !gridPageComplete[previousBuffer])
+          previousBuffer = -1;
+        if (destinationBuffer < 0 || !gridPageComplete[destinationBuffer])
+          destinationBuffer = -1;
+        drawPSBBNGrid(titles, gridFastTrackSelectedIdx, gridFastTrackPreviousPageBase, previousBuffer,
+                      gridFastTrackPageBase, destinationBuffer, -1,
+                      gridFastTrackDirection, fastTrackProgress, now);
+      } else if (gridFastTrackSettling && !gridCascadeActive) {
+        int destinationBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridFastTrackPageBase);
+        if (destinationBuffer < 0)
+          destinationBuffer = -1;
+        drawPSBBNGrid(titles, gridFastTrackSelectedIdx, gridFastTrackPageBase, destinationBuffer,
+                      -1, -1, -1, gridFastTrackDirection, 0, now);
+      } else {
+        drawPSBBNGrid(titles, selectedTitleIdx, gridActivePageBase, gridActivePageBuffer,
+                      gridIncomingPageBase, gridIncomingPageBuffer, gridSelectedActiveBuffer,
+                      gridCascadeDirection, gridCascadeProgress, now);
+      }
+    } else {
+      int favoritesEmpty = favoritesOnly && lunaNavMarkedCount(favoriteFlags, titles->total) == 0;
+      const uint32_t frameNowMs = uiNowMs();
+      const int coverPending = classicArtRequestedIdx == selectedTitleIdx;
+      uint32_t fadeElapsed = frameNowMs - classicCoverFadeStartMs;
+      int coverFadeProgress = (classicPreviousCoverAvailable && !coverPending &&
+                               fadeElapsed < CLASSIC_COVER_FADE_DURATION_MS)
+                                  ? (int)(fadeElapsed * 1000U / CLASSIC_COVER_FADE_DURATION_MS)
+                                  : 1000;
+      drawTitleList(titles, selectedTitleIdx, maxTitlesPerPage,
+                    (classicDisplayedCoverAvailable && !favoritesEmpty) ? coverTexture : NULL,
+                    (classicPreviousCoverAvailable && !favoritesEmpty && !coverPending &&
+                     coverFadeProgress < 1000) ? classicPreviousCoverTexture : NULL,
+                    (classicDisplayedDiscAvailable && !favoritesEmpty) ? discTexture : NULL,
+                    favoriteFlags, favoritesOnly, coverPending && !favoritesEmpty,
+                    coverFadeProgress, frameNowMs);
+    }
+
+  library_view_drawn:
     gsKit_queue_exec(gsGlobal);
     gsKit_finish();
     gsKit_sync_flip(gsGlobal);
+    usleep(1000);
 
-    // Process user inputs:
-    if (input == -1)            // If input is -1, block until input changes
-      input = waitForInput(-1); // Used to ignore held inputs after returning from title options
-    else
-      input = pollInput();
+    // Keep rendering after options close, while ignoring the Triangle press
+    // that closed them until the button is released.
+    input = pollInput();
+    if (optionsTriangleHeld) {
+      if (input & PAD_TRIANGLE)
+        input &= ~PAD_TRIANGLE;
+      else
+        optionsTriangleHeld = 0;
+    }
 
-    if (gsGlobal->Mode == GS_MODE_PAL)
-      frameCount = (frameCount + 1) % 8; // Handle input only every 8th frame unless it changes
-    else
-      frameCount = (frameCount + 1) % 10; // Handle input only every 10th frame unless it changes
+    if ((input & PAD_SQUARE) == 0) {
+      orbitRandomButtonHeld = 0;
+      favoriteButtonHeld = 0;
+    }
+    if ((input & PAD_SELECT) == 0)
+      favoritesTabButtonHeld = 0;
 
-    if (frameCount && (input == prevInput))
+    if (view == UI_VIEW_GRID) {
+      uint32_t now = uiNowMs();
+      int leftHeld = (input & GRID_LEFT_SHOULDERS) != 0;
+      int rightHeld = (input & GRID_RIGHT_SHOULDERS) != 0;
+      int shoulderDirection = (rightHeld && !leftHeld) ? 1 : ((leftHeld && !rightHeld) ? -1 : 0);
+
+      if (shoulderDirection == 0) {
+        if (gridFastTrackActive) {
+          int destinationPageBase = (gridFastTrackSelectedIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
+
+          gridFastTrackActive = 0;
+          gridPageDirection = gridFastTrackDirection;
+          if (destinationPageBase == gridActivePageBase) {
+            gridPendingSelectedIdx = -1;
+            gridPendingSelectedCoverIdx = -1;
+            selectedTitleIdx = gridFastTrackSelectedIdx;
+            curTarget = getTargetByIdx(titles, selectedTitleIdx);
+            gridFastTrackSettling = 0;
+          } else {
+            gridPendingSelectedIdx = gridFastTrackSelectedIdx;
+            gridPendingSelectedCoverIdx = -1;
+            gridFastTrackSettling = 1;
+          }
+          input = 0;
+        } else if (gridShoulderDirection != 0) {
+          // A shoulder released before the hold threshold is a normal
+          // one-page tap. Deferring this decision prevents any art decode
+          // from starting while the user may still enter fast-track.
+          int navigationIdx = (gridPendingSelectedIdx >= 0) ? gridPendingSelectedIdx : selectedTitleIdx;
+          int candidate = lunaNavGridPage(titles->total, navigationIdx, gridShoulderDirection);
+
+          if ((candidate / GRID_PAGE_SIZE) * GRID_PAGE_SIZE == gridActivePageBase) {
+            gridPendingSelectedIdx = -1;
+            selectedTitleIdx = candidate;
+          } else {
+            gridPendingSelectedIdx = candidate;
+          }
+          if (gridPendingSelectedCoverIdx >= 0 && gridPendingSelectedCoverIdx != gridPendingSelectedIdx) {
+            releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
+            gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
+            gridPendingSelectedCoverIdx = -1;
+          }
+          gridPageDirection = gridShoulderDirection;
+          input = 0;
+        }
+        gridShoulderDirection = 0;
+        gridShoulderHoldStart = 0;
+      } else if (shoulderDirection != gridShoulderDirection) {
+        gridShoulderDirection = shoulderDirection;
+        gridShoulderHoldStart = now;
+
+        // Once fast-track is active, reversing direction remains immediate;
+        // the user has already satisfied the hold threshold.
+        if (gridFastTrackActive) {
+          gridFastTrackDirection = shoulderDirection;
+          gridFastTrackPreviousPageBase = gridFastTrackPageBase;
+          gridFastTrackSelectedIdx = lunaNavGridPage(titles->total, gridFastTrackSelectedIdx, shoulderDirection);
+          gridFastTrackPageBase = (gridFastTrackSelectedIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
+          gridFastTrackSlideStart = now;
+          gridFastTrackNextStep = now + GRID_FAST_TRACK_STEP_MS;
+        }
+      } else if (!gridFastTrackActive && now - gridShoulderHoldStart >= GRID_FAST_TRACK_HOLD_MS) {
+        int navigationIdx = (gridPendingSelectedIdx >= 0) ? gridPendingSelectedIdx : selectedTitleIdx;
+
+        // If the normal first page change already reached its cascade, accept
+        // that prepared page immediately before entering lightweight tracking.
+        if (gridCascadeActive && gridIncomingPageBuffer >= 0) {
+          int previousActiveBuffer = gridActivePageBuffer;
+          gridActivePageBuffer = gridIncomingPageBuffer;
+          gridActivePageBase = gridIncomingPageBase;
+          gridPreviousPageBuffer = previousActiveBuffer;
+          gridIncomingPageBuffer = -1;
+          gridIncomingPageBase = -1;
+          gridPrefetchDirection = gridCascadeDirection;
+          gridCascadeActive = 0;
+          gridCascadeDirection = 0;
+          gridCascadeStart = 0;
+          navigationIdx = selectedTitleIdx;
+        } else if (gridPendingSelectedCoverIdx >= 0) {
+          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
+          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
+        }
+
+        gridPendingSelectedIdx = -1;
+        gridPendingSelectedCoverIdx = -1;
+        gridFastTrackActive = 1;
+        gridFastTrackSettling = 0;
+        gridFastTrackDirection = shoulderDirection;
+        gridFastTrackPreviousPageBase = (navigationIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
+        gridFastTrackSelectedIdx = lunaNavGridPage(titles->total, navigationIdx, shoulderDirection);
+        gridFastTrackPageBase = (gridFastTrackSelectedIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
+        gridFastTrackSlideStart = now;
+        gridFastTrackNextStep = now + GRID_FAST_TRACK_STEP_MS;
+      } else if (gridFastTrackActive && now >= gridFastTrackNextStep) {
+        gridFastTrackPreviousPageBase = gridFastTrackPageBase;
+        gridFastTrackSelectedIdx = lunaNavGridPage(titles->total, gridFastTrackSelectedIdx, shoulderDirection);
+        gridFastTrackPageBase = (gridFastTrackSelectedIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
+        gridFastTrackSlideStart = now;
+        gridFastTrackNextStep = now + GRID_FAST_TRACK_STEP_MS;
+      }
+    }
+
+    if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT || view == UI_VIEW_ORBS) {
+      // Held navigation starts a new step roughly every 180 ms while each
+      // glide lasts 420 ms. The accumulated fractional offset keeps the whole
+      // stream continuous while several cover transitions overlap.
+      frameCount = (frameCount + 1) % ((gsGlobal->Mode == GS_MODE_PAL) ? PSBBN_REPEAT_FRAMES_PAL : PSBBN_REPEAT_FRAMES_NTSC);
+    } else if (gsGlobal->Mode == GS_MODE_PAL) {
+      frameCount = (frameCount + 1) % 8; // Preserve Classic's established repeat cadence.
+    } else {
+      frameCount = (frameCount + 1) % 10;
+    }
+
+    if (view == UI_VIEW_PSBBN) {
+      const int rawInput = input;
+      const int actionButtons = PAD_CROSS | PAD_TRIANGLE | PAD_CIRCLE | PAD_SELECT | PAD_START;
+      int scanDirection = 0;
+      if (!(rawInput & actionButtons)) {
+        int left = (rawInput & PAD_L2) != 0;
+        int right = (rawInput & PAD_R2) != 0;
+        scanDirection = right == left ? 0 : (right ? 1 : -1);
+      }
+      int scanStep = lunaCollectionScanUpdate(&collectionScan, scanDirection, uiNowMs());
+      input = rawInput & ~(PAD_L2 | PAD_R2);
+      if (scanDirection)
+        input &= ~(PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN | PAD_L1 | PAD_R1);
+      if (scanStep) {
+        if (collectionFavoritesOnly) {
+          int next = lunaNavMarkedStep(favoriteFlags, titles->total, selectedTitleIdx, scanStep);
+          if (next >= 0)
+            selectedTitleIdx = next;
+        } else if (titles->total > 1) {
+          selectedTitleIdx = lunaNavWrap(titles->total, selectedTitleIdx + scanStep);
+        }
+      }
+    }
+
+    if (view == UI_VIEW_CLASSIC) {
+      const int rawInput = input;
+      const int navButtons = PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN;
+      int direction = 0;
+      int navInput = 0;
+      if (rawInput & (PAD_LEFT | PAD_UP)) {
+        direction = -1;
+        navInput = (rawInput & PAD_UP) ? PAD_UP : PAD_LEFT;
+      } else if (rawInput & (PAD_RIGHT | PAD_DOWN)) {
+        direction = 1;
+        navInput = (rawInput & PAD_DOWN) ? PAD_DOWN : PAD_RIGHT;
+      }
+      classicNavHeld = direction != 0;
+      input = rawInput & ~prevInput & ~navButtons;
+      if (lunaNavRepeatStep(&classicRepeat, direction, uiNowMs(),
+                            CLASSIC_REPEAT_DELAY_MS, CLASSIC_REPEAT_INTERVAL_MS))
+        input |= navInput;
+      prevInput = rawInput;
+      if (!input)
+        continue;
+    } else {
+      if (frameCount && (input == prevInput))
+        continue;
+      frameCount = 0;
+      prevInput = input;
+    }
+
+    // Grid shoulders are handled by the tap/hold state machine above.
+    if (view == UI_VIEW_GRID && (input & (GRID_LEFT_SHOULDERS | GRID_RIGHT_SHOULDERS)))
       continue;
 
-    frameCount = 0;
-    prevInput = input;
+    // Page preparation is background work. Only the visible cascade gates
+    // interaction so page loading never feels like a frozen UI.
+    if (view == UI_VIEW_GRID && gridCascadeActive)
+      continue;
+    if (view == UI_VIEW_GRID && gridFastTrackActive)
+      continue;
 
-    if (input & (PAD_CROSS | PAD_CIRCLE)) {
+    // Actions use the logo at the fixed Orbs marker even when the next
+    // queued selection has not finished gliding into place.
+    if (view == UI_VIEW_ORBS && orbsVisualTitleIdx >= 0 &&
+        (input & (PAD_CROSS | PAD_TRIANGLE | PAD_CIRCLE | PAD_START))) {
+      selectedTitleIdx = orbsVisualTitleIdx;
+      curTarget = getTargetByIdx(titles, selectedTitleIdx);
+      psbbnAnimationTargetIdx = -1;
+      psbbnAnimationStartOffset = 0;
+    }
+
+    // Any deliberate input interrupts an in-progress random scan and resumes
+    // normal manual control immediately. Square below starts a fresh scan.
+    if (view == UI_VIEW_ORBIT && orbitRandomActive && (input & ~PAD_SQUARE) != 0)
+      orbitRandomActive = 0;
+
+    collectionActionCoverIdx = PSBBN_COVER_CACHE_FOCUS;
+    if (view == UI_VIEW_PSBBN &&
+        psbbnAnimationDuration == COLLECTION_SCAN_STEP_MS &&
+        (input & (PAD_CROSS | PAD_TRIANGLE | PAD_CIRCLE | PAD_SELECT | PAD_START)) &&
+        collectionVisualTitleIdx >= 0) {
+      selectedTitleIdx = collectionVisualTitleIdx;
+      curTarget = getTargetByIdx(titles, selectedTitleIdx);
+      collectionActionCoverIdx = collectionVisualCoverIdx;
+      psbbnAnimationTargetIdx = -1;
+      psbbnAnimationStartOffset = 0;
+      psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
+    }
+
+    if ((view == UI_VIEW_CLASSIC || view == UI_VIEW_PSBBN) &&
+        (input & PAD_SELECT) && !favoritesTabButtonHeld) {
+      favoritesTabButtonHeld = 1;
+      if (view == UI_VIEW_CLASSIC)
+        favoritesOnly = !favoritesOnly;
+      else
+        collectionFavoritesOnly = !collectionFavoritesOnly;
+      if ((favoritesOnly || collectionFavoritesOnly) && !favoriteFlags[selectedTitleIdx]) {
+        int firstFavorite = lunaNavMarkedByRank(favoriteFlags, titles->total, 0);
+        if (firstFavorite >= 0)
+          selectedTitleIdx = firstFavorite;
+      }
+      if (view == UI_VIEW_PSBBN) {
+        releasePSBBNCovers();
+        psbbnCoverBaseIdx = -1;
+        psbbnAnimationTargetIdx = -1;
+        psbbnAnimationStartOffset = 0;
+      }
+    } else if ((input & PAD_CROSS) &&
+               (!(favoritesOnly || collectionFavoritesOnly) ||
+                lunaNavMarkedCount(favoriteFlags, titles->total) > 0)) {
       // Copy target, free title list and launch
       Target *target = copyTarget(curTarget);
+      freeTargetList(favoriteTitles);
+      favoriteTitles = NULL;
+      free(favoriteFlags);
+      favoriteFlags = NULL;
       freeTargetList(titles);
-      uiLaunchTitle(target, NULL);
+      GSTEXTURE *handoffCover = NULL;
+      if (view == UI_VIEW_CLASSIC && !isCoverUninitialized) {
+        handoffCover = coverTexture;
+      } else if (view == UI_VIEW_GRID && gridSelectedActiveBuffer >= 0 &&
+                 gridSelectedLoaded[gridSelectedActiveBuffer]) {
+        handoffCover = gridSelectedTextures[gridSelectedActiveBuffer];
+      } else if ((view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT) &&
+                 psbbnCoverLoaded[collectionActionCoverIdx]) {
+        handoffCover = psbbnCoverTextures[collectionActionCoverIdx];
+      }
+      uiLaunchTitle(target, NULL, handoffCover);
       // Something went wrong, main loop must exit immediately
       return -1;
-    } else if (input & PAD_UP) {
+    } else if (input & PAD_CIRCLE) {
+      UILibraryView previousView = view;
+      view = lunaNavNextView(view, orbsEnabled);
+      collectionScan = (LunaCollectionScan){0};
+      favoritesOnly = 0;
+      collectionFavoritesOnly = 0;
+
+      if (previousView == UI_VIEW_CLASSIC) {
+        releaseClassicArtVRAM();
+        isCoverUninitialized = 1;
+        isDiscUninitialized = 1;
+        classicDisplayedCoverAvailable = 0;
+        classicDisplayedDiscAvailable = 0;
+        classicPreviousCoverAvailable = 0;
+      } else if (previousView == UI_VIEW_PSBBN || previousView == UI_VIEW_ORBIT) {
+        releasePSBBNCovers();
+      } else if (previousView == UI_VIEW_ORBS) {
+        releaseOrbsArt();
+      } else if (previousView == UI_VIEW_GRID) {
+        releaseGridCovers();
+      }
+
+      psbbnCoverBaseIdx = -1;
+      psbbnAnimationTargetIdx = -1;
+      psbbnAnimationStartOffset = 0;
+      psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
+      gridActivePageBuffer = 0;
+      gridIncomingPageBuffer = -1;
+      gridPreviousPageBuffer = -1;
+      gridActivePageBase = -1;
+      gridIncomingPageBase = -1;
+      for (int buffer = 0; buffer < GRID_PAGE_BUFFERS; buffer++) {
+        gridPageBases[buffer] = -1;
+        gridPageComplete[buffer] = 0;
+        gridPageNextSlot[buffer] = 0;
+      }
+      gridSelectedActiveBuffer = 0;
+      gridSelectedIncomingBuffer = 1;
+      gridSelectedActiveIdx = -1;
+      gridSelectedRequestedIdx = -1;
+      gridSelectedAttemptedIdx = -1;
+      gridPendingSelectedIdx = -1;
+      gridPendingSelectedCoverIdx = -1;
+      gridPageDirection = 0;
+      gridPrefetchDirection = 1;
+      gridCascadeActive = 0;
+      gridCascadeDirection = 0;
+      gridCascadeStart = 0;
+      gridShoulderDirection = 0;
+      gridShoulderHoldStart = 0;
+      gridFastTrackActive = 0;
+      gridFastTrackSettling = 0;
+      gridFastTrackDirection = 0;
+      gridFastTrackSelectedIdx = -1;
+      gridFastTrackPreviousPageBase = -1;
+      gridFastTrackPageBase = -1;
+      gridFastTrackSlideStart = 0;
+      gridFastTrackNextStep = 0;
+      orbitRandomActive = 0;
+      orbitRandomTargetIdx = -1;
+      orbitRandomButtonHeld = 0;
+      if (view == UI_VIEW_CLASSIC) {
+        isCoverUninitialized = loadCoverArt(curTarget->device, curTarget->id);
+        isDiscUninitialized = loadDiscArt(curTarget->device, curTarget->id);
+        classicDisplayedCoverAvailable = !isCoverUninitialized;
+        classicDisplayedDiscAvailable = !isDiscUninitialized;
+        classicPreviousCoverAvailable = 0;
+        classicArtRequestedIdx = -1;
+        classicNavHeld = 0;
+        classicRepeat.direction = 0;
+      }
+      if (saveLastLibraryView(curTarget, view))
+        DPRINTF("WARN: Could not save selected library view\n");
+    } else if (view == UI_VIEW_CLASSIC && (input & PAD_SQUARE) && !favoriteButtonHeld &&
+               (!favoritesOnly || lunaNavMarkedCount(favoriteFlags, titles->total) > 0)) {
+      int wasFavorite = favoriteFlags[selectedTitleIdx] != 0;
+      int previousRank = lunaNavMarkedRank(favoriteFlags, titles->total, selectedTitleIdx);
+      favoriteButtonHeld = 1;
+      favoriteFlags[selectedTitleIdx] = !wasFavorite;
+      if (saveFavoriteFlags(titles, favoriteFlags, (size_t)titles->total, curTarget)) {
+        favoriteFlags[selectedTitleIdx] = wasFavorite;
+      } else {
+        TargetList *updatedFavorites = buildFavoriteTargetList(titles, favoriteFlags,
+                                                                (size_t)titles->total);
+        if (updatedFavorites != NULL) {
+          freeTargetList(favoriteTitles);
+          favoriteTitles = updatedFavorites;
+        }
+      }
+      if (favoritesOnly && wasFavorite && favoriteFlags[selectedTitleIdx] == 0) {
+        int remaining = lunaNavMarkedCount(favoriteFlags, titles->total);
+        if (remaining > 0) {
+          selectedTitleIdx = lunaNavMarkedByRank(favoriteFlags, titles->total,
+                                                (previousRank < remaining) ? previousRank : 0);
+          curTarget = getTargetByIdx(titles, selectedTitleIdx);
+          isCoverUninitialized = 1;
+          isDiscUninitialized = 1;
+          classicArtRequestedIdx = selectedTitleIdx;
+          classicArtDueMs = uiNowMs() + CLASSIC_ART_SETTLE_MS;
+        }
+      }
+    } else if (view == UI_VIEW_ORBIT && (input & PAD_SQUARE) && !orbitRandomButtonHeld) {
+      // Pick a different destination every time, then let the adjacent-step
+      // scanner reach it without forcing a ten-PNG cache rebuild in one frame.
+      if (titles->total > 1) {
+        uint32_t randomSeed = uiNowMs() ^ ((uint32_t)(selectedTitleIdx + 1) * 2654435761U);
+        orbitRandomTargetIdx = lunaNavRandomTarget(titles->total, selectedTitleIdx, randomSeed);
+        orbitRandomDirection = lunaNavDirection(titles->total, selectedTitleIdx, orbitRandomTargetIdx);
+        orbitRandomActive = 1;
+        orbitRandomNextStep = uiNowMs();
+      }
+      orbitRandomButtonHeld = 1;
+    } else if (view == UI_VIEW_GRID && (input & (PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN))) {
+      int navigationIdx = (gridPendingSelectedIdx >= 0) ? gridPendingSelectedIdx : selectedTitleIdx;
+      int candidate = navigationIdx;
+      int direction;
+
+      if (input & PAD_LEFT)
+        candidate = ((navigationIdx - 1) + titles->total) % titles->total;
+      else if (input & PAD_RIGHT)
+        candidate = (navigationIdx + 1) % titles->total;
+      else if (input & PAD_UP)
+        candidate = lunaNavGridVertical(titles->total, navigationIdx, -1);
+      else if (input & PAD_DOWN)
+        candidate = lunaNavGridVertical(titles->total, navigationIdx, 1);
+
+      direction = lunaNavDirection(titles->total, navigationIdx, candidate);
+      if ((candidate / GRID_PAGE_SIZE) * GRID_PAGE_SIZE == gridActivePageBase) {
+        if (gridPendingSelectedCoverIdx >= 0) {
+          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
+          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
+        }
+        gridPendingSelectedIdx = -1;
+        gridPendingSelectedCoverIdx = -1;
+        selectedTitleIdx = candidate;
+      } else {
+        if (gridPendingSelectedCoverIdx >= 0 && gridPendingSelectedCoverIdx != candidate) {
+          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
+          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
+          gridPendingSelectedCoverIdx = -1;
+        }
+        gridPendingSelectedIdx = candidate;
+      }
+      gridPageDirection = direction;
+    } else if (input & (PAD_LEFT | PAD_UP)) {
       // Point to the previous title
-      selectedTitleIdx = ((selectedTitleIdx - 1) + titles->total) % titles->total;
-    } else if (input & PAD_DOWN) {
+      if (favoritesOnly || collectionFavoritesOnly) {
+        int favoriteIdx = lunaNavMarkedStep(favoriteFlags, titles->total, selectedTitleIdx, -1);
+        if (favoriteIdx >= 0)
+          selectedTitleIdx = favoriteIdx;
+      } else {
+        selectedTitleIdx = ((selectedTitleIdx - 1) + titles->total) % titles->total;
+      }
+    } else if (input & (PAD_RIGHT | PAD_DOWN)) {
       // Advance to the next title
-      selectedTitleIdx = (selectedTitleIdx + 1) % titles->total;
-    } else if (input & PAD_R1) {
-      // Switch to the next page
-      if (selectedTitleIdx == titles->total - 1) {
+      if (favoritesOnly || collectionFavoritesOnly) {
+        int favoriteIdx = lunaNavMarkedStep(favoriteFlags, titles->total, selectedTitleIdx, 1);
+        if (favoriteIdx >= 0)
+          selectedTitleIdx = favoriteIdx;
+      } else {
+        selectedTitleIdx = (selectedTitleIdx + 1) % titles->total;
+      }
+    } else if (input & GRID_RIGHT_SHOULDERS) {
+      // Switch to the next page.
+      if (view == UI_VIEW_GRID) {
+        int navigationIdx = (gridPendingSelectedIdx >= 0) ? gridPendingSelectedIdx : selectedTitleIdx;
+        int candidate = lunaNavGridPage(titles->total, navigationIdx, 1);
+        if ((candidate / GRID_PAGE_SIZE) * GRID_PAGE_SIZE == gridActivePageBase) {
+          gridPendingSelectedIdx = -1;
+          selectedTitleIdx = candidate;
+        } else {
+          gridPendingSelectedIdx = candidate;
+        }
+        if (gridPendingSelectedCoverIdx >= 0 && gridPendingSelectedCoverIdx != gridPendingSelectedIdx) {
+          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
+          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
+          gridPendingSelectedCoverIdx = -1;
+        }
+        gridPageDirection = 1;
+      } else if (favoritesOnly || collectionFavoritesOnly) {
+        int favoriteIdx = lunaNavMarkedPage(favoriteFlags, titles->total, selectedTitleIdx,
+                                            maxTitlesPerPage, 1);
+        if (favoriteIdx >= 0)
+          selectedTitleIdx = favoriteIdx;
+      } else if (selectedTitleIdx == titles->total - 1) {
         selectedTitleIdx = 0; // Wrap around if the last title is selected
       } else {
         selectedTitleIdx += maxTitlesPerPage;
         if (selectedTitleIdx >= titles->total)
           selectedTitleIdx = titles->total - 1;
       }
-    } else if (input & PAD_L1) {
-      // Switch to the previous page
-      if (selectedTitleIdx == 0) {
+    } else if (input & GRID_LEFT_SHOULDERS) {
+      // Switch to the previous page.
+      if (view == UI_VIEW_GRID) {
+        int navigationIdx = (gridPendingSelectedIdx >= 0) ? gridPendingSelectedIdx : selectedTitleIdx;
+        int candidate = lunaNavGridPage(titles->total, navigationIdx, -1);
+        if ((candidate / GRID_PAGE_SIZE) * GRID_PAGE_SIZE == gridActivePageBase) {
+          gridPendingSelectedIdx = -1;
+          selectedTitleIdx = candidate;
+        } else {
+          gridPendingSelectedIdx = candidate;
+        }
+        if (gridPendingSelectedCoverIdx >= 0 && gridPendingSelectedCoverIdx != gridPendingSelectedIdx) {
+          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
+          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
+          gridPendingSelectedCoverIdx = -1;
+        }
+        gridPageDirection = -1;
+      } else if (favoritesOnly || collectionFavoritesOnly) {
+        int favoriteIdx = lunaNavMarkedPage(favoriteFlags, titles->total, selectedTitleIdx,
+                                            maxTitlesPerPage, -1);
+        if (favoriteIdx >= 0)
+          selectedTitleIdx = favoriteIdx;
+      } else if (selectedTitleIdx == 0) {
         selectedTitleIdx = titles->total - 1; // Wrap around if the first title is selected
       } else {
         selectedTitleIdx -= maxTitlesPerPage;
         if (selectedTitleIdx < 0)
           selectedTitleIdx = 0;
       }
-    } else if (input & PAD_TRIANGLE) {
-      input = -1;    // Force UI loop to wait once uiTitleOptionsLoop returns
+    } else if ((input & PAD_TRIANGLE) &&
+               (!(favoritesOnly || collectionFavoritesOnly) ||
+                lunaNavMarkedCount(favoriteFlags, titles->total) > 0)) {
       prevInput = 0; // Reset previous input
       // Enter title options screen
-      if ((res = uiTitleOptionsLoop(curTarget)) < 0) {
+      if ((res = uiTitleOptionsLoop(curTarget, &classicArtOverlap, &orbsEnabled,
+                                    &orbsBackground, &ambientEnabled)) < 0) {
         // Something went wrong, main loop must exit immediately
+        ambientStop();
+        freeTargetList(favoriteTitles);
+        free(favoriteFlags);
         return -1;
       }
+      if (view == UI_VIEW_ORBS && !orbsEnabled) {
+        releaseOrbsArt();
+        view = UI_VIEW_CLASSIC;
+        isCoverUninitialized = loadCoverArt(curTarget->device, curTarget->id);
+        isDiscUninitialized = loadDiscArt(curTarget->device, curTarget->id);
+        classicDisplayedCoverAvailable = !isCoverUninitialized;
+        classicDisplayedDiscAvailable = !isDiscUninitialized;
+        classicPreviousCoverAvailable = 0;
+        classicArtRequestedIdx = -1;
+        classicNavHeld = 0;
+        classicRepeat.direction = 0;
+        if (saveLastLibraryView(curTarget, view))
+          DPRINTF("WARN: Could not save selected library view\n");
+      }
+      setOrbsBackgroundStyle(orbsBackground);
+      optionsTriangleHeld = (pollInput() & PAD_TRIANGLE) != 0;
+      input = 0;
     } else if (input & PAD_START) {
       // Quit
       break;
@@ -296,313 +1167,33 @@ int uiLoop(TargetList *titles) {
   }
 
 exit:
+  ambientStop();
+  if (favoriteTitles != NULL)
+    freeTargetList(favoriteTitles);
+  free(favoriteFlags);
   closePad();
   closeUI();
   return res;
 }
-
-void drawTitleListFooter(int baseX) {
-  int baseY = gsGlobal->Height - footerHeight;
-  drawIconWindow(baseX, baseY, 0, gsGlobal->Height, 0, FontMainColor, ALIGN_CENTER, ICON_CIRCLE);
-  drawIconWindow(baseX + getIconWidth(ICON_CIRCLE), baseY, 0, gsGlobal->Height, 0, FontMainColor, ALIGN_CENTER, ICON_CROSS);
-  drawTextWindow(baseX + 5 + getIconWidth(ICON_CIRCLE) + getIconWidth(ICON_CROSS), baseY, 0, gsGlobal->Height - 1, 0, HeaderTextColor, ALIGN_VCENTER,
-                 "Launch title");
-
-  drawIconWindow(0, baseY, gsGlobal->Width - getLineWidth("Exit") - 5, gsGlobal->Height, 0, FontMainColor, ALIGN_CENTER, ICON_START);
-  drawTextWindow(5 + getIconWidth(ICON_START), baseY, gsGlobal->Width, gsGlobal->Height - 1, 0, HeaderTextColor, ALIGN_CENTER, "Exit");
-
-  drawIconWindow(gsGlobal->Width - baseX - 5 - getIconWidth(ICON_TRIANGLE) - getLineWidth("Title options"), baseY, gsGlobal->Width - baseX,
-                 gsGlobal->Height, 0, FontMainColor, ALIGN_VCENTER | ALIGN_LEFT, ICON_TRIANGLE);
-  drawTextWindow(0, baseY, gsGlobal->Width - baseX, gsGlobal->Height - 1, 0, HeaderTextColor, ALIGN_VCENTER | ALIGN_RIGHT, "Title options");
-}
-
-// Draws title list
-void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPage, GSTEXTURE *selectedTitleCover) {
-  int curPage = selectedTitleIdx / maxTitlesPerPage;
-
-  // Draw header and footer
-  int titleY = headerHeight;
-  int baseX = keepoutArea + 10;
-  drawTextWindow(baseX, headerHeight - getFontLineHeight(), gsGlobal->Width - baseX, 0, 0, HeaderTextColor, ALIGN_HCENTER, "Title List");
-  snprintf(lineBuffer, 255, "Page %d/%d\nTitle %d/%d", curPage + 1, DIV_ROUND(titles->total, maxTitlesPerPage), selectedTitleIdx + 1, titles->total);
-  drawTextWindow(baseX, headerHeight - getFontLineHeight(), gsGlobal->Width - baseX, 0, 0, HeaderTextColor, ALIGN_RIGHT, lineBuffer);
-
-  drawTitleListFooter(baseX);
-
-  // Draw title list
-  Target *curTitle = titles->first;
-
-  titleY += getFontLineHeight() / 2;
-  while (curTitle != NULL) {
-    // Do not display titles before the current page
-    if (curTitle->idx < maxTitlesPerPage * curPage) {
-      goto next;
-    }
-    // Do not display titles beyond the current page
-    if (curTitle->idx >= maxTitlesPerPage * (curPage + 1)) {
-      break;
-    }
-
-    // Draw title ID for selected title
-    if (selectedTitleIdx == curTitle->idx) {
-      // Draw title ID and device type under the cover art
-      drawTextWindow(coverArtX1,
-                     drawTextWindow(coverArtX1, coverArtY2 + 5, coverArtX2, 0, 0, FontMainColor, ALIGN_HCENTER,
-                                    curTitle->id), // Use y coordinate return by title ID drawing function as an argument
-                     coverArtX2, 0, 0, FontMainColor, ALIGN_HCENTER, modeToString(curTitle->device->mode));
-    }
-
-    // Draw title name
-    titleY = drawText(baseX, titleY, 0, coverArtX1 - 5, 0, ((selectedTitleIdx == curTitle->idx) ? ColorSelected : FontMainColor), curTitle->name);
-
-  next:
-    curTitle = curTitle->next;
-  }
-
-  // Draw cover art placeholder/frame
-  gsKit_prim_sprite(gsGlobal, coverArtX1 - 2, coverArtY1 - 2, coverArtX2 + 2, coverArtY2 + 2, 1, FontMainColor);
-
-  // Draw cover art if it exists
-  if (selectedTitleCover != NULL) {
-    // Temporaily disable alpha blending
-    // Some PNGs require inverted alpha channel value to display properly
-    // Since cover art has nothing to blend, we can bypass the issue altogether
-    gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
-    gsKit_prim_sprite_texture(gsGlobal, selectedTitleCover, coverArtX1, coverArtY1, 0.0f, 0.0f, coverArtX2, coverArtY2, selectedTitleCover->Width,
-                              selectedTitleCover->Height, 2, FontMainColor);
-    gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-  } else {
-    gsKit_prim_sprite(gsGlobal, coverArtX1, coverArtY1, coverArtX2, coverArtY2, 1, BGColor);
-    drawTextWindow(coverArtX1, coverArtY1, coverArtX2, coverArtY2, 1, FontMainColor, ALIGN_CENTER, "No cover art");
-  }
-}
-
-void drawTitleOptionsFooter(int baseX) {
-  drawIconWindow(baseX, gsGlobal->Height - footerHeight, 0, gsGlobal->Height, 0, FontMainColor, ALIGN_CENTER, ICON_CIRCLE);
-  drawIconWindow(baseX + getIconWidth(ICON_CIRCLE), gsGlobal->Height - footerHeight, 0, gsGlobal->Height, 0, FontMainColor, ALIGN_CENTER, ICON_CROSS);
-  drawTextWindow(baseX + 5 + getIconWidth(ICON_CIRCLE) + getIconWidth(ICON_CROSS), gsGlobal->Height - 1 - footerHeight, 0, gsGlobal->Height, 0,
-                 HeaderTextColor, ALIGN_VCENTER, "Toggle");
-
-  drawIconWindow((gsGlobal->Width * 3 / 8) - getIconWidth(ICON_SQUARE), gsGlobal->Height - footerHeight, gsGlobal->Width, gsGlobal->Height, 0,
-                 FontMainColor, ALIGN_VCENTER, ICON_SQUARE);
-  drawTextWindow((gsGlobal->Width * 3 / 8) + 5, gsGlobal->Height - footerHeight, gsGlobal->Width, gsGlobal->Height, 0, HeaderTextColor, ALIGN_VCENTER,
-                 "Test");
-
-  drawIconWindow((gsGlobal->Width * 5 / 8), gsGlobal->Height - footerHeight, gsGlobal->Width - getLineWidth("Save") - 5, gsGlobal->Height, 0,
-                 FontMainColor, ALIGN_VCENTER, ICON_START);
-  drawTextWindow((gsGlobal->Width * 5 / 8) + 5 + getIconWidth(ICON_START), gsGlobal->Height - 1 - footerHeight, gsGlobal->Width, gsGlobal->Height, 0,
-                 HeaderTextColor, ALIGN_VCENTER, "Save");
-
-  drawIconWindow(gsGlobal->Width - baseX - 5 - getIconWidth(ICON_TRIANGLE) - getLineWidth("Cancel"), gsGlobal->Height - footerHeight,
-                 gsGlobal->Width - baseX, gsGlobal->Height, 0, FontMainColor, ALIGN_VCENTER | ALIGN_LEFT, ICON_TRIANGLE);
-  drawTextWindow(0, gsGlobal->Height - 1 - footerHeight, gsGlobal->Width - baseX, gsGlobal->Height, 0, HeaderTextColor, ALIGN_VCENTER | ALIGN_RIGHT,
-                 "Cancel");
-
-  drawTextWindow(0, gsGlobal->Height - 1 - footerHeight - getFontLineHeight() / 2, gsGlobal->Width, gsGlobal->Height, 0, HeaderTextColor,
-                 ALIGN_TOP | ALIGN_HCENTER, "Switch views");
-  drawIconWindow(0, gsGlobal->Height - footerHeight - getFontLineHeight() / 2, (gsGlobal->Width - getLineWidth("Switch views")) / 2 - 5,
-                 gsGlobal->Height, 0, FontMainColor, ALIGN_TOP | ALIGN_RIGHT, ICON_L1);
-  drawIconWindow((gsGlobal->Width + getLineWidth("Switch views")) / 2 + 5, gsGlobal->Height - footerHeight - getFontLineHeight() / 2, gsGlobal->Width,
-                 gsGlobal->Height, 0, FontMainColor, ALIGN_TOP | ALIGN_LEFT, ICON_R1);
-}
-
-// Draws well-known Neutrino arguments
-// Returns -1 if error occurs
-int uiTitleOptionsLoop(Target *target) {
-  int res = 0;
-
-  // Load arguments from config files
-  ArgumentList *titleArguments = loadLaunchArgumentLists(target);
-  int input = 0;
-  int activeArgumentIdx = 0;
-
-  // Parse arguments
-  for (int i = 0; i < (uiArgumentsTotal); i++)
-    uiArguments[i].parse(&uiArguments[i], titleArguments);
-
-  int baseX = keepoutArea + 10;
-  int i = 0;
-  while (1) {
-    gsKit_clear(gsGlobal, BGColor);
-
-    // Draw header
-    snprintf(lineBuffer, 255, "%s\n%s", target->name, target->id);
-    drawTextWindow(baseX, headerHeight - getFontLineHeight(), gsGlobal->Width - baseX, 0, 0, HeaderTextColor, ALIGN_HCENTER, lineBuffer);
-
-    int startY = headerHeight + 1.5 * getFontLineHeight();
-    for (i = 0; i < uiArgumentsTotal; i++) {
-      startY = getFontLineHeight() / 2 +
-               uiArguments[i].draw(&uiArguments[i], (i == activeArgumentIdx) ? 1 : 0, baseX, startY, 0, gsGlobal->Width - baseX, 0);
-    }
-
-    // Draw footer
-    drawTitleOptionsFooter(baseX);
-
-    gsKit_queue_exec(gsGlobal);
-    gsKit_finish();
-    gsKit_sync_flip(gsGlobal);
-
-    // Process user inputs
-    input = waitForInput(-1);
-    if (input & (PAD_L1 | PAD_R1)) {
-      // Show full argument list
-      if ((res = uiArgumentListLoop(target, titleArguments)))
-        goto exit;
-
-      // Re-parse arguments
-      activeArgumentIdx = 0;
-      for (i = 0; i < uiArgumentsTotal; i++)
-        uiArguments[i].parse(&uiArguments[i], titleArguments);
-    } else if (input & PAD_SQUARE) {
-      // Launch title without saving arguments
-      uiLaunchTitle(target, titleArguments);
-      res = -1; // If this was somehow reached, something went terribly wrong
-      goto exit;
-    } else if (input & PAD_START) {
-      updateTitleLaunchArguments(target, titleArguments);
-      goto exit;
-    } else if (input & PAD_TRIANGLE) {
-      // Quit to title list
-      goto exit;
-    } else {
-      switch (uiArguments[activeArgumentIdx].handleInput(&uiArguments[activeArgumentIdx], input)) {
-      case ACTION_CHANGED:
-        uiArguments[activeArgumentIdx].marshal(&uiArguments[activeArgumentIdx], titleArguments);
-        break;
-      case ACTION_NEXT_ARGUMENT:
-        if (activeArgumentIdx < uiArgumentsTotal - 1)
-          activeArgumentIdx++;
-        break;
-      case ACTION_PREV_ARGUMENT:
-        if (activeArgumentIdx > 0)
-          activeArgumentIdx--;
-        break;
-      default:
-      }
-    }
-  }
-exit:
-  freeArgumentList(titleArguments);
-  return res;
-}
-
-// Handles all arguments in arugment list
-// Returns -1 if error occurs, 1 if parent needs to exit to title list
-int uiArgumentListLoop(Target *target, ArgumentList *titleArguments) {
-  int selectedArgIdx = 0;
-  int input = 0;
-
-  Argument *curArgument = titleArguments->first;
-  while (1) {
-    gsKit_clear(gsGlobal, BGColor);
-    int baseX = keepoutArea + 10;
-
-    // Draw header
-    snprintf(lineBuffer, 255, "%s\n%s", target->name, target->id);
-    drawTextWindow(baseX, headerHeight - getFontLineHeight(), gsGlobal->Width - baseX, 0, 0, HeaderTextColor, ALIGN_HCENTER, lineBuffer);
-    drawTextWindow(baseX, headerHeight + 1.5 * getFontLineHeight(), gsGlobal->Width - baseX, 0, 0, FontMainColor, ALIGN_HCENTER, "Launch arguments");
-
-    // Draw footer
-    drawTitleOptionsFooter(baseX);
-
-    int startY = headerHeight + 2.5 * getFontLineHeight();
-    int idx = 0;
-
-    // Set number of elements per page according to line height and available screen height
-    int maxArguments = (gsGlobal->Height - startY - footerHeight - getFontLineHeight() / 2) / getFontLineHeight();
-    int curPage = selectedArgIdx / maxArguments;
-
-    snprintf(lineBuffer, 255, "Page %d/%d", curPage + 1, (!titleArguments->total) ? 1 : DIV_ROUND(titleArguments->total, maxArguments));
-    startY = drawTextWindow(baseX, startY - getFontLineHeight(), gsGlobal->Width - baseX, 0, 0, HeaderTextColor, ALIGN_RIGHT, lineBuffer);
-
-    Argument *argument = titleArguments->first;
-    while (argument != NULL) {
-      // Do not display arguments before the current page
-      if (idx < maxArguments * curPage) {
-        idx++;
-        goto next;
-      }
-      // Do not display arguments beyond the current page
-      if (idx >= maxArguments * (curPage + 1)) {
-        break;
-      }
-
-      // Draw argument
-      if (!argument->isDisabled)
-        drawIconWindow(baseX, startY, 20, startY + getFontLineHeight(), 0, FontMainColor, ALIGN_CENTER, ICON_ENABLED);
-
-      snprintf(lineBuffer, 255, "%s%s%s %s", ((argument->isGlobal) ? "[G] " : ""), argument->arg, (!strlen(argument->value)) ? "" : ":",
-               argument->value);
-      startY = drawText(baseX + getIconWidth(ICON_ENABLED), startY, 0, 0, 0, ((selectedArgIdx == idx) ? ColorSelected : FontMainColor), lineBuffer);
-
-      idx++;
-    next:
-      argument = argument->next;
-    }
-
-    gsKit_queue_exec(gsGlobal);
-    gsKit_finish();
-    gsKit_sync_flip(gsGlobal);
-
-    // Process user inputs
-    input = waitForInput(-1);
-    if (input & (PAD_L1 | PAD_R1)) {
-      return 0;
-    } else if (input & PAD_SQUARE) {
-      // Launch title without saving arguments
-      uiLaunchTitle(target, titleArguments);
-      return -1; // If this was somehow reached, something went terribly wrong
-    } else if (input & PAD_START) {
-      updateTitleLaunchArguments(target, titleArguments);
-      return 1;
-    } else if (input & PAD_TRIANGLE) {
-      return 1;
-    }
-
-    // Ignore inputs when the argument is not initialized
-    if (!curArgument)
-      continue;
-
-    if (input & (PAD_CROSS | PAD_CIRCLE)) {
-      // Toggle argument
-      curArgument->isDisabled = !curArgument->isDisabled;
-      // If the argument was disabled, reset global flag
-      if (curArgument->isDisabled)
-        curArgument->isGlobal = 0;
-    } else if (input & PAD_UP) {
-      // Point to the previous argument
-      selectedArgIdx = (selectedArgIdx - 1 + titleArguments->total) % titleArguments->total;
-      curArgument = (curArgument->prev) ? curArgument->prev : titleArguments->last;
-    } else if (input & PAD_DOWN) {
-      // Advance to the next argument
-      selectedArgIdx = (selectedArgIdx + 1) % titleArguments->total;
-      curArgument = (curArgument->next) ? curArgument->next : titleArguments->first;
-    }
-  }
-}
-
 // Displays Game ID and launches the title
-void uiLaunchTitle(Target *target, ArgumentList *arguments) {
-  // Initialize arugments if not set
-  if (arguments == NULL) {
-    arguments = loadLaunchArgumentLists(target);
-  }
+void uiLaunchTitle(Target *target, ArgumentList *arguments, GSTEXTURE *cover) {
+  UILaunchHandoff handoff = {.target = target, .cover = cover};
 
-  gsKit_clear(gsGlobal, BGColor);
-
-  // Draw screen with GameID and title parameters
-  snprintf(lineBuffer, 255, "Launching\n%s\n%s\n\n%s", target->name, target->id, target->fullPath);
-  drawTextWindow(0, 0, gsGlobal->Width, gsGlobal->Height, 0, FontMainColor, ALIGN_CENTER, lineBuffer);
-  drawGameID(target->id);
-
-  gsKit_queue_exec(gsGlobal);
-  gsKit_finish();
-  gsKit_sync_flip(gsGlobal);
-
-  // Cleanup the UI and launch title
+  // Present immediately, then continue with real launch work. There is no
+  // minimum display time or transition delay.
+  uiPresentLaunchHandoff(target, cover, LAUNCH_STAGE_PREPARING);
   closePad();
+
+  if (arguments == NULL)
+    arguments = loadLaunchArgumentLists(target);
+
+  // Keep the final framebuffer resident while Neutrino loads. The process
+  // replacement reclaims these UI resources without exposing a black frame.
+  launchTitleWithProgress(target, arguments, uiLaunchHandoffProgress, &handoff);
+
+  // launchTitleWithProgress normally never returns. Retain cleanup for an
+  // unsupported target mode or another pre-exec failure.
   closeUI();
-  launchTitle(target, arguments);
 }
 
 //
@@ -703,44 +1294,30 @@ int startSplashScreen() {
 
 // Draws loading splash screen in a separate thread
 void uiSplashThread() {
-  // Draw logo and version
-  gsKit_mode_switch(gsGlobal, GS_PERSISTENT);
-  gsKit_TexManager_nextFrame(gsGlobal);
-  gsKit_clear(gsGlobal, BGColor);
-  drawLogo((gsGlobal->Width - getLogoWidth()) / 2, gsGlobal->Height / 4, 2);
-  drawTextWindow(0, (gsGlobal->Height / 4 + getLogoHeight() + 10), gsGlobal->Width, 0, 0, GS_SETREG_RGBA(0x40, 0x40, 0x40, 0x80), ALIGN_HCENTER,
-                 GIT_VERSION);
   gsKit_mode_switch(gsGlobal, GS_ONESHOT);
-
-  drawGameID("NHDDL");
-
-  uint64_t color = HeaderTextColor;
   int logStartY = gsGlobal->Height - footerHeight - getFontLineHeight() * 3;
-  // Loop until something sends a signal
+
+  // Redraw continuously so the loading crystal keeps moving between boot
+  // messages. The main thread still owns every initialization and scan step.
   while (PollSema(logBuffer.doneSema) != logBuffer.doneSema) {
+    if (PollSema(logBuffer.newStringSema) == logBuffer.newStringSema) {
+      SignalSema(logBuffer.drawnSema);
+    }
+
+    gsKit_TexManager_nextFrame(gsGlobal);
+    drawSplashGlassBackground(uiNowMs());
+
+    drawBootLogo(gsGlobal->Width / 2, keepoutArea + 8, gsGlobal->Width * 41 / 100, 2);
+
+    // Successful boot stays intentionally minimal. Only surface a fatal error
+    // so a failed initialization cannot be mistaken for endless loading.
+    if ((logBuffer.level == LEVEL_ERROR) && (logBuffer.buf[0] != '\0'))
+      drawTextWindow(0, logStartY, gsGlobal->Width, gsGlobal->Height - footerHeight, 2, ErrorTextColor, ALIGN_CENTER, logBuffer.buf);
+
     gsKit_queue_exec(gsGlobal);
     gsKit_finish();
     gsKit_sync_flip(gsGlobal);
-    // Wait until a new string is written to buffer
-    WaitSema(logBuffer.newStringSema);
-    gsKit_TexManager_nextFrame(gsGlobal);
-    switch (logBuffer.level) {
-    case LEVEL_INFO_NODELAY:
-    case LEVEL_INFO:
-      color = HeaderTextColor;
-      break;
-    case LEVEL_WARN:
-      color = WarnTextColor;
-      break;
-    case LEVEL_ERROR:
-      color = ErrorTextColor;
-      break;
-    }
-    drawTextWindow(0, logStartY, gsGlobal->Width, gsGlobal->Height - footerHeight, 0, color, ALIGN_CENTER, logBuffer.buf);
-    if (logBuffer.neutrinoVersion[0] != '\0')
-      drawTextWindow(0, (gsGlobal->Height / 4 + getLogoHeight() + getFontLineHeight() + 10), gsGlobal->Width, 0, 0,
-                     GS_SETREG_RGBA(0x40, 0x40, 0x40, 0x80), ALIGN_HCENTER, logBuffer.neutrinoVersion);
-    SignalSema(logBuffer.drawnSema);
+    usleep(16000);
   }
   gsKit_queue_reset(gsGlobal->Per_Queue);
   DeleteSema(logBuffer.doneSema);

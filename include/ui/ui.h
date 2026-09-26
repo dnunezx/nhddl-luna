@@ -2,10 +2,12 @@
 #define _UI_H_
 
 #include "target.h"
+#include "options.h"
+#include <gsKit.h>
 
 int uiInit();
 int uiLoop(TargetList *titles);
-void uiCleanup();
+void uiLaunchTitle(Target *target, ArgumentList *arguments, GSTEXTURE *cover);
 
 // Splash screen log level types
 typedef enum {
