@@ -36,7 +36,8 @@ int gridPageSlotAttempted(int buffer, int slot);
 int refreshGridSelectedCover(Target *target, int buffer);
 void prepareGridPageBuffer(int buffer, int pageBase, int *pageBases,
                            int *pageComplete, int *pageNextSlot);
-void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx);
+void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx,
+                        int useFullResolution);
 void updatePSBBNCoverResidency(int flowOffset);
 void refreshOrbsLogos(TargetList *titles, int selectedTitleIdx);
 void refreshOrbsBackground(Target *target);

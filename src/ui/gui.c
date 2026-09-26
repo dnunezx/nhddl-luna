@@ -369,7 +369,8 @@ int uiLoop(TargetList *titles) {
       // Finish synchronous artwork loading before sampling the glide clock.
       if (view != UI_VIEW_ORBS) {
         if (psbbnCoverBaseIdx != flowSelectedTitleIdx)
-          refreshPSBBNCovers(flowTitles, flowSelectedTitleIdx, psbbnCoverBaseIdx);
+          refreshPSBBNCovers(flowTitles, flowSelectedTitleIdx, psbbnCoverBaseIdx,
+                             view == UI_VIEW_ORBIT);
         psbbnCoverBaseIdx = flowSelectedTitleIdx;
       } else {
         refreshOrbsLogos(flowTitles, flowSelectedTitleIdx);
@@ -405,7 +406,7 @@ int uiLoop(TargetList *titles) {
       }
 
       flowOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart, psbbnAnimationDuration, now);
-      if (view != UI_VIEW_ORBS)
+      if (view == UI_VIEW_ORBIT)
         updatePSBBNCoverResidency(flowOffset);
       now = uiNowMs();
       flowOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart, psbbnAnimationDuration, now);

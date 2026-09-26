@@ -285,9 +285,9 @@ static void setPSBBNCoverResidentSize(int cacheIdx, int selected) {
 }
 
 // Loads one PSBBN square artwork asset from the metadata device. The decoded
-// source stays in EE RAM while the focused and immediate transition covers are
-// full-size in GS VRAM; other neighbors use compact runtime thumbnails. Source
-// PNG files are not altered, and promotion reuses their full decoded pixels.
+// source stays in EE RAM. Collection uses compact runtime thumbnails for every
+// cover; Orbit can keep its focused and transition covers full-size in GS VRAM.
+// Source PNG files are not altered, and Orbit promotion reuses decoded pixels.
 static int loadPSBBNCoverArt(struct DeviceMapEntry *device, char *titleID, int cacheIdx, int selected) {
   GSTEXTURE *texture = psbbnCoverTextures[cacheIdx];
 
@@ -542,15 +542,18 @@ void prepareGridPageBuffer(int buffer, int pageBase, int *pageBases, int *pageCo
   pageNextSlot[buffer] = 0;
 }
 
-static void loadPSBBNCoverCacheEntry(TargetList *titles, int selectedTitleIdx, int cacheIdx) {
+static void loadPSBBNCoverCacheEntry(TargetList *titles, int selectedTitleIdx, int cacheIdx,
+                                     int useFullResolution) {
   int targetIdx = lunaNavWrap(titles->total, selectedTitleIdx + cacheIdx - PSBBN_COVER_CACHE_FOCUS);
   Target *target = getTargetByIdx(titles, targetIdx);
   psbbnCoverLoaded[cacheIdx] = (loadPSBBNCoverArt(target->device, target->id, cacheIdx,
-                                                  cacheIdx == PSBBN_COVER_CACHE_FOCUS ||
-                                                  cacheIdx == PSBBN_COVER_CACHE_FOCUS - 1) == 0);
+                                                  useFullResolution &&
+                                                      (cacheIdx == PSBBN_COVER_CACHE_FOCUS ||
+                                                       cacheIdx == PSBBN_COVER_CACHE_FOCUS - 1)) == 0);
 }
 
-void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx) {
+void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx,
+                        int useFullResolution) {
   int direction = lunaNavDirection(titles->total, previousTitleIdx, selectedTitleIdx);
 
   if (previousTitleIdx >= 0 && direction > 0 && lunaNavWrap(titles->total, previousTitleIdx + 1) == selectedTitleIdx) {
@@ -573,7 +576,8 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
     psbbnCoverSourceHeight[PSBBN_COVER_CACHE_COUNT - 1] = recycledHeight;
     psbbnCoverFullResolution[PSBBN_COVER_CACHE_COUNT - 1] = recycledFullResolution;
     releasePSBBNCoverCacheEntry(PSBBN_COVER_CACHE_COUNT - 1);
-    loadPSBBNCoverCacheEntry(titles, selectedTitleIdx, PSBBN_COVER_CACHE_COUNT - 1);
+    loadPSBBNCoverCacheEntry(titles, selectedTitleIdx, PSBBN_COVER_CACHE_COUNT - 1,
+                            useFullResolution);
     return;
   }
 
@@ -597,20 +601,19 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
     psbbnCoverSourceHeight[0] = recycledHeight;
     psbbnCoverFullResolution[0] = recycledFullResolution;
     releasePSBBNCoverCacheEntry(0);
-    loadPSBBNCoverCacheEntry(titles, selectedTitleIdx, 0);
+    loadPSBBNCoverCacheEntry(titles, selectedTitleIdx, 0, useFullResolution);
     return;
   }
 
   releasePSBBNCovers();
   for (int cacheIdx = 0; cacheIdx < PSBBN_COVER_CACHE_COUNT; cacheIdx++)
-    loadPSBBNCoverCacheEntry(titles, selectedTitleIdx, cacheIdx);
+    loadPSBBNCoverCacheEntry(titles, selectedTitleIdx, cacheIdx, useFullResolution);
 }
 
-// Held input can leave the rendered focal point more than one title behind the
-// logical selection. Keep the two textures nearest the moving visual focus at
-// full resolution; pinning resolution to the fixed cache focus would enlarge a
-// 64x64 thumbnail during fast traversal. Demote first so promotion never causes
-// a temporary third full-size allocation in the GS's constrained VRAM.
+// Orbit held input can leave the rendered focal point more than one title behind
+// the logical selection. Keep its two nearest textures at full resolution.
+// Collection does not call this function, so all its covers remain thumbnails.
+// Demote first to avoid a temporary third full-size GS allocation.
 void updatePSBBNCoverResidency(int flowOffset) {
   int closest = -1;
   int nextClosest = -1;
