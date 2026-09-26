@@ -90,3 +90,12 @@ $RECYCLE.BIN/
 /BUILDING.md
 /FMCB.md
 /NHDDL_FIDELITY.md
+/AGENTS.md
+/EMULATION.md
+/PROJECT.md
+/NEUTRINO_FORK.md
+/local/
+/notes/
+/instructions/
+/emulation/*
+!/emulation/build-luna-emulator.sh
