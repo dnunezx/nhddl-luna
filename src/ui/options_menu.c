@@ -282,11 +282,11 @@ static void drawTitleOptionsFrame(const OptionsBackdrop *backdrop, Target *targe
                        selectedGlobal == 0, selectorY, "Classic art layout",
                        pendingOverlap ? "Overlap" : "Separate");
     drawOptionsTextRow(baseX, firstY + rowStep, gsGlobal->Width - baseX,
-                       selectedGlobal == 1, selectorY, "Orbs view (Experimental)",
+                       selectedGlobal == 1, selectorY, "Scroll view (Experimental)",
                        pendingOrbs ? "On" : "Off");
     drawOptionsTextRow(baseX, firstY + 2 * rowStep, gsGlobal->Width - baseX,
                        selectedGlobal == 2, selectorY, "Background (Experimental)",
-                       pendingBackground ? "Orbs" : "Stars & cubes");
+                       pendingBackground ? "Ambient Orbs" : "Stars & cubes");
     static const char *const glassColorLabels[GLASS_COLOR_COUNT] = {
         "Original", "Luminous", "Cosmic"};
     drawOptionsTextRow(baseX, firstY + 3 * rowStep, gsGlobal->Width - baseX,
@@ -298,8 +298,8 @@ static void drawTitleOptionsFrame(const OptionsBackdrop *backdrop, Target *targe
                        "Ambient sound", pendingAmbient ? "On" : "Off");
     static const char *const descriptions[] = {
         "Choose how cover art sits in Classic view.",
-        "Show the experimental Orbs library view.",
-        "Choose the library's animated background.",
+        "Show the experimental Scroll library view.",
+        "Choose Ambient Orbs or the stars and cubes background.",
         "Change the tint of the glass interface.",
         "Play ambient music while browsing."};
     drawTextWindow(baseX + 18, menuBottom - lineHeight,
@@ -361,13 +361,13 @@ static int optionsGlobalDirty(int pendingOverlap, int pendingOrbs,
 // Handles the Game and System settings tabs.
 // Returns -1 if error occurs
 int uiTitleOptionsLoop(Target *target, int *classicArtOverlap, int *orbsEnabled,
-                       int *orbsBackgroundSetting, int *glassColorSetting,
+                       int *ambientOrbsBackgroundSetting, int *glassColorSetting,
                        int *ambientEnabled) {
   int res = 0;
   int saveError = 0;
   int pendingOverlap = *classicArtOverlap;
   int pendingOrbs = *orbsEnabled;
-  int pendingBackground = *orbsBackgroundSetting;
+  int pendingBackground = *ambientOrbsBackgroundSetting;
   int pendingGlassColor = *glassColorSetting;
   int pendingAmbient = *ambientEnabled;
   int titleArgumentsChanged = 0;
@@ -400,7 +400,7 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap, int *orbsEnabled,
                    ? 1000 : (int)(elapsed * 1000U / OPTIONS_FADE_DURATION_MS);
     int systemDirty = optionsGlobalDirty(pendingOverlap, pendingOrbs,
         pendingBackground, pendingGlassColor, pendingAmbient,
-        *classicArtOverlap, *orbsEnabled, *orbsBackgroundSetting,
+        *classicArtOverlap, *orbsEnabled, *ambientOrbsBackgroundSetting,
         *glassColorSetting, *ambientEnabled);
     drawTitleOptionsFrame(&backdrop, target, page, selectedGameRow,
                           selectedGlobal, pendingOverlap, pendingOrbs,
@@ -420,7 +420,7 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap, int *orbsEnabled,
   while (1) {
     int systemDirty = optionsGlobalDirty(pendingOverlap, pendingOrbs,
         pendingBackground, pendingGlassColor, pendingAmbient,
-        *classicArtOverlap, *orbsEnabled, *orbsBackgroundSetting,
+        *classicArtOverlap, *orbsEnabled, *ambientOrbsBackgroundSetting,
         *glassColorSetting, *ambientEnabled);
     drawTitleOptionsFrame(&backdrop, target, page, selectedGameRow,
                           selectedGlobal, pendingOverlap, pendingOrbs,
@@ -465,10 +465,10 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap, int *orbsEnabled,
           if (!saveError)
             *orbsEnabled = pendingOrbs;
         }
-        if (!saveError && pendingBackground != *orbsBackgroundSetting) {
-          saveError = saveOrbsBackground(target, pendingBackground);
+        if (!saveError && pendingBackground != *ambientOrbsBackgroundSetting) {
+          saveError = saveAmbientOrbsBackground(target, pendingBackground);
           if (!saveError)
-            *orbsBackgroundSetting = pendingBackground;
+            *ambientOrbsBackgroundSetting = pendingBackground;
         }
         if (!saveError && pendingGlassColor != *glassColorSetting) {
           saveError = saveGlassColorPreset(target, (GlassColorPreset)pendingGlassColor);

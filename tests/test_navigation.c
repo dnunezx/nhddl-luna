@@ -69,6 +69,24 @@ static void testCollectionFastScan(void) {
   assert(lunaCollectionScanUpdate(&scan, 1, 249) == 1); // Timer wrap.
 }
 
+static void testScrollFast(void) {
+  LunaScrollFast fast = {0};
+  assert(lunaScrollFastUpdate(&fast, 1, 100) == 0);
+  assert(lunaScrollFastUpdate(&fast, 1, 1599) == 0);
+  assert(!fast.active);
+  assert(lunaScrollFastUpdate(&fast, 1, 1600) == 1);
+  assert(fast.active);
+  assert(lunaScrollFastUpdate(&fast, 1, 1689) == 0);
+  assert(lunaScrollFastUpdate(&fast, 1, 1690) == 1);
+  assert(lunaScrollFastUpdate(&fast, -1, 1691) == 0);
+  assert(!fast.active);
+  assert(lunaScrollFastUpdate(&fast, 0, 1700) == 0);
+  assert(lunaScrollFastUpdate(&fast, -1, 1710) == 0);
+  assert(lunaScrollFastUpdate(&fast, -1, 3210) == -1);
+  assert(lunaScrollFastUpdate(&fast, 0, 3220) == 0);
+  assert(!fast.active);
+}
+
 static void testRouting(void) {
   int selected;
   for (selected = 0; selected < 17; selected++) {
@@ -109,6 +127,7 @@ int main(void) {
   testBufferSelection();
   testTiming();
   testCollectionFastScan();
+  testScrollFast();
   testRouting();
   testMarkedNavigation();
   puts("navigation tests passed");

@@ -1,5 +1,5 @@
-#ifndef LUNA_UI_VIEW_ORBS_H
-#define LUNA_UI_VIEW_ORBS_H
+#ifndef LUNA_UI_VIEW_SCROLL_H
+#define LUNA_UI_VIEW_SCROLL_H
 
 #include "target.h"
 #include <stdint.h>
@@ -20,11 +20,11 @@ uint64_t glassCoverAccentColor(int alpha);
 uint64_t glassMissingCoverColor(int alpha);
 uint64_t glassMissingCoverTextColor(void);
 uint64_t glassMissingCoverDiamondColor(int alpha);
-void observeOrbSelection(int selectedTitleIdx, uint32_t now);
 void drawSplashGlassBackground(uint32_t now);
-void setOrbsBackgroundStyle(int enabled);
+void setAmbientOrbsBackgroundStyle(int enabled);
 int orbsVisualCacheIndex(int flowOffset);
 void drawOrbsView(TargetList *titles, int selectedTitleIdx,
-                  int flowOffset, int visualFocus, uint32_t now);
+                  int flowOffset, int visualFocus, int fastScroll,
+                  uint32_t now);
 
 #endif

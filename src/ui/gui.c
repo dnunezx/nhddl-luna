@@ -5,12 +5,13 @@
 #include "neutrino.h"
 #include "options.h"
 #include "ui/ambient.h"
+#include "ui/ambient_orbs.h"
 #include "ui/art_cache.h"
 #include "ui/graphics.h"
 #include "ui/handoff.h"
 #include "ui/navigation.h"
 #include "ui/options_menu.h"
-#include "ui/view_orbs.h"
+#include "ui/view_scroll.h"
 #include "ui/pad.h"
 #include "ui/ui.h"
 #include "ui/view_internal.h"
@@ -38,7 +39,7 @@ void uiSplashThread();
 
 GSGLOBAL *gsGlobal;
 char lineBuffer[255];
-static int orbsBackground = 0;
+static int ambientOrbsBackground = 0;
 static int glassColorSetting = GLASS_COLOR_ORIGINAL;
 
 const int keepoutArea = 20;
@@ -244,6 +245,7 @@ int uiLoop(TargetList *titles) {
   uint32_t classicArtDueMs = 0;
   uint32_t classicCoverFadeStartMs = 0;
   LunaNavRepeatState classicRepeat = {0};
+  LunaScrollFast scrollFast = {0};
   UILibraryView view = UI_VIEW_CLASSIC;
   Target *curTarget = titles->first;
 
@@ -271,8 +273,8 @@ int uiLoop(TargetList *titles) {
   free(lastTitle);
   view = loadLastLibraryView(curTarget);
   orbsEnabled = loadOrbsViewEnabled(curTarget);
-  orbsBackground = loadOrbsBackground(curTarget);
-  setOrbsBackgroundStyle(orbsBackground);
+  ambientOrbsBackground = loadAmbientOrbsBackground(curTarget);
+  setAmbientOrbsBackgroundStyle(ambientOrbsBackground);
   glassColorSetting = loadGlassColorPreset(curTarget);
   setGlassColorPreset((GlassColorPreset)glassColorSetting);
   ambientEnabled = loadAmbientSoundEnabled(curTarget);
@@ -323,7 +325,8 @@ int uiLoop(TargetList *titles) {
         orbitRandomNextStep = uiNowMs() + ORBIT_RANDOM_STEP_MS;
       }
     }
-    observeOrbSelection(selectedTitleIdx, uiNowMs());
+    if (view != UI_VIEW_ORBS)
+      observeAmbientOrbsSelection(selectedTitleIdx, uiNowMs());
 
     // Reload target if index has changed
     if (curTarget->idx != selectedTitleIdx) {
@@ -375,7 +378,8 @@ int uiLoop(TargetList *titles) {
                              view == UI_VIEW_ORBIT);
         psbbnCoverBaseIdx = flowSelectedTitleIdx;
       } else {
-        refreshOrbsLogos(flowTitles, flowSelectedTitleIdx);
+        if (!scrollFast.active)
+          refreshOrbsLogos(flowTitles, flowSelectedTitleIdx);
       }
       now = uiNowMs();
 
@@ -388,11 +392,15 @@ int uiLoop(TargetList *titles) {
       } else if (psbbnAnimationTargetIdx != flowSelectedTitleIdx) {
         int currentOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart, psbbnAnimationDuration, now);
         int direction = lunaNavDirection(flowTitles->total, psbbnAnimationTargetIdx, flowSelectedTitleIdx);
+        if (view == UI_VIEW_ORBS && scrollFast.active)
+          triggerAmbientOrbsScrollReaction(direction, now);
         psbbnOutgoingTitleIdx = psbbnAnimationTargetIdx;
         psbbnAnimationStartOffset = currentOffset + direction * 1000;
         if (view == UI_VIEW_PSBBN && collectionScan.active) {
           psbbnAnimationStartOffset = collectionScan.heldDirection * 1000;
           psbbnAnimationDuration = COLLECTION_SCAN_STEP_MS;
+        } else if (view == UI_VIEW_ORBS && scrollFast.active) {
+          psbbnAnimationDuration = SCROLL_FAST_ANIMATION_MS;
         } else if (currentOffset * direction < 0) {
           int reversalDistance = (psbbnAnimationStartOffset < 0) ? -psbbnAnimationStartOffset : psbbnAnimationStartOffset;
           if (reversalDistance > 1000)
@@ -432,8 +440,10 @@ int uiLoop(TargetList *titles) {
         int visualFocus = orbsVisualCacheIndex(flowOffset);
         orbsVisualTitleIdx = lunaNavWrap(titles->total,
             selectedTitleIdx + visualFocus - ORBS_LOGO_CACHE_FOCUS);
-        refreshOrbsBackground(getTargetByIdx(titles, orbsVisualTitleIdx));
-        drawOrbsView(titles, selectedTitleIdx, flowOffset, visualFocus, now);
+        if (!scrollFast.active)
+          refreshOrbsBackground(getTargetByIdx(titles, orbsVisualTitleIdx));
+        drawOrbsView(titles, selectedTitleIdx, flowOffset, visualFocus,
+                     scrollFast.active, now);
       }
     } else if (view == UI_VIEW_GRID) {
       int didLoadArtwork = 0;
@@ -674,7 +684,7 @@ int uiLoop(TargetList *titles) {
 
     // Keep rendering after options close, while ignoring the Triangle press
     // that closed them until the button is released.
-    input = pollInput();
+    input = view == UI_VIEW_ORBS ? pollScrollInput() : pollInput();
     if (optionsTriangleHeld) {
       if (input & PAD_TRIANGLE)
         input &= ~PAD_TRIANGLE;
@@ -688,6 +698,16 @@ int uiLoop(TargetList *titles) {
     }
     if ((input & PAD_SELECT) == 0)
       favoritesTabButtonHeld = 0;
+
+    int scrollFastStep = 0;
+    if (view == UI_VIEW_ORBS) {
+      int direction = 0;
+      if (input & (PAD_LEFT | PAD_UP))
+        direction = -1;
+      else if (input & (PAD_RIGHT | PAD_DOWN))
+        direction = 1;
+      scrollFastStep = lunaScrollFastUpdate(&scrollFast, direction, uiNowMs());
+    }
 
     if (view == UI_VIEW_GRID) {
       uint32_t now = uiNowMs();
@@ -846,6 +866,16 @@ int uiLoop(TargetList *titles) {
       prevInput = rawInput;
       if (!input)
         continue;
+    } else if (view == UI_VIEW_ORBS && scrollFast.active) {
+      const int rawInput = input;
+      const int navButtons = PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN;
+      input = (rawInput & ~navButtons) & ~(prevInput & ~navButtons);
+      if (scrollFastStep)
+        input |= scrollFastStep < 0 ? PAD_UP : PAD_DOWN;
+      prevInput = rawInput;
+      frameCount = 0;
+      if (!input)
+        continue;
     } else {
       if (frameCount && (input == prevInput))
         continue;
@@ -939,6 +969,9 @@ int uiLoop(TargetList *titles) {
     } else if (input & PAD_CIRCLE) {
       UILibraryView previousView = view;
       view = lunaNavNextView(view, orbsEnabled);
+      if (previousView == UI_VIEW_ORBS || view == UI_VIEW_ORBS)
+        resetAmbientOrbsScroll();
+      scrollFast = (LunaScrollFast){0};
       collectionScan = (LunaCollectionScan){0};
       favoritesOnly = 0;
       collectionFavoritesOnly = 0;
@@ -1163,7 +1196,7 @@ int uiLoop(TargetList *titles) {
       prevInput = 0; // Reset previous input
       // Enter title options screen
       if ((res = uiTitleOptionsLoop(curTarget, &classicArtOverlap, &orbsEnabled,
-                                    &orbsBackground, &glassColorSetting,
+                                    &ambientOrbsBackground, &glassColorSetting,
                                     &ambientEnabled)) < 0) {
         // Something went wrong, main loop must exit immediately
         ambientStop();
@@ -1185,7 +1218,7 @@ int uiLoop(TargetList *titles) {
         if (saveLastLibraryView(curTarget, view))
           DPRINTF("WARN: Could not save selected library view\n");
       }
-      setOrbsBackgroundStyle(orbsBackground);
+      setAmbientOrbsBackgroundStyle(ambientOrbsBackground);
       setGlassColorPreset((GlassColorPreset)glassColorSetting);
       optionsTriangleHeld = (pollInput() & PAD_TRIANGLE) != 0;
       input = 0;

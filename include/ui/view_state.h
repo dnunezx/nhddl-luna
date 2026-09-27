@@ -3,7 +3,7 @@
 
 #include "target.h"
 #include "ui/navigation.h"
-#include "ui/view_orbs.h"
+#include "ui/view_scroll.h"
 
 // The selected view is stored with the selected title's metadata on its game drive.
 // Missing or invalid state falls back to Classic.
@@ -15,13 +15,13 @@ int saveLastLibraryView(Target *target, UILibraryView view);
 int loadClassicArtOverlap(Target *target);
 int saveClassicArtOverlap(Target *target, int overlap);
 
-// Orbs is an experimental library view and is disabled by default.
+// Scroll is an experimental library view and is disabled by default.
 int loadOrbsViewEnabled(Target *target);
 int saveOrbsViewEnabled(Target *target, int enabled);
 
 // The shared library background defaults to stars and cubes.
-int loadOrbsBackground(Target *target);
-int saveOrbsBackground(Target *target, int enabled);
+int loadAmbientOrbsBackground(Target *target);
+int saveAmbientOrbsBackground(Target *target, int enabled);
 
 // Glass color is a library-wide preference; invalid or absent data uses Original.
 GlassColorPreset loadGlassColorPreset(Target *target);

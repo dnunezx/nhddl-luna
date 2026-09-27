@@ -237,7 +237,7 @@ int saveOrbsViewEnabled(Target *target, int enabled) {
   return 0;
 }
 
-int loadOrbsBackground(Target *target) {
+int loadAmbientOrbsBackground(Target *target) {
   struct DeviceMapEntry *device = viewDevice(target);
   const char *paths[] = {backgroundTempPath, backgroundPath};
   char path[PATH_MAX];
@@ -264,7 +264,7 @@ int loadOrbsBackground(Target *target) {
   return 0;
 }
 
-int saveOrbsBackground(Target *target, int enabled) {
+int saveAmbientOrbsBackground(Target *target, int enabled) {
   struct DeviceMapEntry *device = viewDevice(target);
   char directory[PATH_MAX];
   char path[PATH_MAX];

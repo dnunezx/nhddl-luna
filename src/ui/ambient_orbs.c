@@ -1,7 +1,6 @@
-// LUNA visual rendering extracted from gui.c.
+// Ambient Orbs: reusable animated formation asset.
 #include "ui/view_internal.h"
-#include "ui/view_orbs.h"
-#include <stdio.h>
+#include "ui/ambient_orbs.h"
 
 // The original seven-orb ellipse expands to twelve points for formations.
 #define ORB_ORBIT_COUNT 7
@@ -29,62 +28,43 @@
 #define ORB_SELECTION_PULSE_MS 1100
 #define ORB_SIZE_PULSE_MS 2400
 #define ORB_SELECTION_EVENT_COUNT 12
+#define SCROLL_ORB_EVENT_COUNT 12
+#define SCROLL_ORB_REACTION_MS 1050
+#define SCROLL_LETTER_MORPH_MS 420
+#define SCROLL_GLYPH_MORPH_MS 140
+#define SCROLL_GLYPH_DEPTH_X 9.0f
+#define SCROLL_GLYPH_DEPTH_Y 8.0f
 
-static int orbsBackgroundStyle;
-static GlassColorPreset glassColorPreset = GLASS_COLOR_ORIGINAL;
-
-void setGlassColorPreset(GlassColorPreset preset) {
-  glassColorPreset = (preset >= GLASS_COLOR_ORIGINAL && preset < GLASS_COLOR_COUNT)
-                        ? preset : GLASS_COLOR_ORIGINAL;
-}
-
-GlassColorPreset getGlassColorPreset(void) {
-  return glassColorPreset;
-}
-
-uint64_t glassPresetColor(int red, int green, int blue, int alpha) {
-  static const int palette[GLASS_COLOR_COUNT][3] = {
-      {0, 0, 0}, {0xE0, 0xE0, 0xE0}, {0x78, 0x78, 0x78}};
-  if (glassColorPreset == GLASS_COLOR_ORIGINAL)
-    return GS_SETREG_RGBA(red, green, blue, alpha);
-  int brightness = red;
-  if (green > brightness)
-    brightness = green;
-  if (blue > brightness)
-    brightness = blue;
-  return GS_SETREG_RGBA(palette[glassColorPreset][0] * brightness / 255,
-                        palette[glassColorPreset][1] * brightness / 255,
-                        palette[glassColorPreset][2] * brightness / 255, alpha);
-}
-
-uint64_t glassCoverAccentColor(int alpha) {
-  return glassPresetColor(0x18, 0x78, 0xC8, alpha);
-}
-
-uint64_t glassMissingCoverColor(int alpha) {
-  return GS_SETREG_RGBA(0x04, 0x14, 0x34, alpha);
-}
-
-uint64_t glassMissingCoverTextColor(void) {
-  if (glassColorPreset == GLASS_COLOR_ORIGINAL)
-    return HeaderTextColor;
-  if (glassColorPreset == GLASS_COLOR_BLACK)
-    return GS_SETREG_RGBA(0xC8, 0xC8, 0xC8, 0x80);
-  return glassPresetColor(0xE0, 0xF0, 0xFF, 0x80);
-}
-
-uint64_t glassMissingCoverDiamondColor(int alpha) {
-  if (glassColorPreset == GLASS_COLOR_BLACK)
-    return GS_SETREG_RGBA(0xC8, 0xC8, 0xC8, alpha);
-  return glassPresetColor(0x70, 0xD8, 0xFF, alpha);
-}
-
-static uint32_t glassStartMs = 0;
+static uint32_t glassStartMs;
 static uint32_t orbSelectionEvents[ORB_SELECTION_EVENT_COUNT];
 static uint32_t orbLastSelectionEventMs;
 static int orbSelectionEventNext;
 static int orbSelectionEventCount;
 static int orbObservedSelection = -1;
+
+typedef struct {
+  uint32_t startMs;
+  int direction;
+} ScrollOrbEvent;
+
+typedef struct {
+  float reach;
+  float direction;
+} ScrollOrbMotion;
+
+static ScrollOrbEvent scrollOrbEvents[SCROLL_ORB_EVENT_COUNT];
+static int scrollOrbEventNext;
+static int scrollOrbEventCount;
+static uint32_t scrollOrbClockMs;
+static uint32_t scrollOrbLastFrameMs;
+static int scrollOrbClockInitialized;
+static uint32_t scrollLetterStartMs;
+static float scrollLetterFrom;
+static int scrollLetterTarget;
+static int scrollLetterInitialized;
+static char scrollLetterGlyph;
+static char scrollLetterPreviousGlyph;
+static uint32_t scrollGlyphStartMs;
 
 typedef struct {
   float x;
@@ -101,204 +81,10 @@ typedef struct {
 static const int glassSin[32] = {0,   25,  49,  71,  90,  106, 117, 125, 127, 125, 117, 106, 90,  71,  49,  25,
                                  0,  -25, -49, -71, -90, -106, -117, -125, -127, -125, -117, -106, -90, -71, -49, -25};
 
-#define GLASS_STAR_TILE_SIZE 16
-#define GLASS_STAR_ATLAS_WIDTH 64
-#define GLASS_STAR_ATLAS_HEIGHT 32
-
-typedef struct {
-  uint8_t red;
-  uint8_t green;
-  uint8_t blue;
-  uint8_t alpha;
-} GlassStarPixel;
-
-static GSTEXTURE glassStarAtlas;
-static GlassStarPixel glassStarAtlasPixels[GLASS_STAR_ATLAS_WIDTH * GLASS_STAR_ATLAS_HEIGHT] __attribute__((aligned(128)));
-
-static uint64_t glassColor(int red, int green, int blue, int alpha, int brightness);
 static float orbWave(uint32_t phase);
-void drawOrbitalDisc(int centerX, int centerY, int radius, int z, uint64_t centerColor, uint64_t edgeColor);
-
-void resetGlassVisuals(uint32_t startMs) {
-  glassStartMs = startMs;
-  orbObservedSelection = -1;
-  orbSelectionEventCount = 0;
-  orbSelectionEventNext = 0;
-  orbLastSelectionEventMs = 0;
-}
-
-static uint32_t glassElapsedMs(uint32_t frameNowMs) {
-  return frameNowMs - glassStartMs;
-}
 
 static uint32_t glassPhase(uint32_t elapsedMs, uint32_t periodMs, uint32_t offsetMs) {
   return (uint32_t)((((uint64_t)(elapsedMs + offsetMs)) << 16) / periodMs);
-}
-
-static int glassStarEdgeAlpha(float x, int width, int fadeWidth) {
-  float distance;
-
-  if (x < 0)
-    distance = x + fadeWidth;
-  else if (x >= width)
-    distance = width + fadeWidth - x;
-  else {
-    distance = x;
-    if ((width - 1 - x) < distance)
-      distance = width - 1 - x;
-  }
-
-  if (distance <= 0)
-    return 0;
-  if (distance >= fadeWidth)
-    return 255;
-  return (int)(distance * 255.0f / fadeWidth);
-}
-
-static int clampColor(int value) {
-  if (value < 0)
-    return 0;
-  if (value > 255)
-    return 255;
-  return value;
-}
-
-static int glassIntegerSqrt(int value) {
-  int root = 0;
-  while ((root + 1) * (root + 1) <= value)
-    root++;
-  return root;
-}
-
-static void compositeGlassStarDisc(GlassStarPixel *pixel, int distance, int radius, int red, int green, int blue,
-                                   int centerAlpha) {
-  if (distance >= radius)
-    return;
-
-  const int sourceAlpha = centerAlpha * (radius - distance) / radius;
-  const int oldAlpha = pixel->alpha;
-  const int combinedAlpha = sourceAlpha + (oldAlpha * (0x80 - sourceAlpha) + 0x40) / 0x80;
-  if (combinedAlpha <= 0)
-    return;
-
-  const int denominator = combinedAlpha * 0x80;
-  pixel->red = (red * sourceAlpha * 0x80 + pixel->red * oldAlpha * (0x80 - sourceAlpha) + denominator / 2) /
-               denominator;
-  pixel->green =
-      (green * sourceAlpha * 0x80 + pixel->green * oldAlpha * (0x80 - sourceAlpha) + denominator / 2) / denominator;
-  pixel->blue =
-      (blue * sourceAlpha * 0x80 + pixel->blue * oldAlpha * (0x80 - sourceAlpha) + denominator / 2) / denominator;
-  pixel->alpha = combinedAlpha;
-}
-
-void initGlassStarAtlas(void) {
-  static const int starRed[3] = {0x82, 0xA4, 0xC6};
-  static const int starGreen[3] = {0xAA, 0xC4, 0xDE};
-  static const int starBlue[3] = {0xD0, 0xE2, 0xF4};
-  static const int discBrightness[4] = {-28, -12, 12, 32};
-  static const int discAlpha[4] = {0x80 / 7, 0x80 / 3, 0x80, 0x80 / 2};
-  // Normalized radii preserve the two existing star profiles: 4/2/1/1 and 5/3/2/1.
-  static const int discRadius[2][4] = {{128, 64, 32, 32}, {128, 77, 51, 26}};
-
-  for (int i = 0; i < GLASS_STAR_ATLAS_WIDTH * GLASS_STAR_ATLAS_HEIGHT; i++) {
-    glassStarAtlasPixels[i].red = 0;
-    glassStarAtlasPixels[i].green = 0;
-    glassStarAtlasPixels[i].blue = 0;
-    glassStarAtlasPixels[i].alpha = 0;
-  }
-
-  for (int sizeIndex = 0; sizeIndex < 2; sizeIndex++) {
-    for (int layer = 0; layer < 3; layer++) {
-      const int tileX = layer * GLASS_STAR_TILE_SIZE;
-      const int tileY = sizeIndex * GLASS_STAR_TILE_SIZE;
-      for (int y = 0; y < GLASS_STAR_TILE_SIZE; y++) {
-        for (int x = 0; x < GLASS_STAR_TILE_SIZE; x++) {
-          GlassStarPixel *pixel = &glassStarAtlasPixels[(tileY + y) * GLASS_STAR_ATLAS_WIDTH + tileX + x];
-          const int dx = (x * 2 + 1 - GLASS_STAR_TILE_SIZE) * 8;
-          const int dy = (y * 2 + 1 - GLASS_STAR_TILE_SIZE) * 8;
-          const int distance = glassIntegerSqrt(dx * dx + dy * dy);
-
-          // Give transparent edge texels the outer glow color to avoid dark linear-filter fringes.
-          pixel->red = clampColor(starRed[layer] + discBrightness[0]);
-          pixel->green = clampColor(starGreen[layer] + discBrightness[0]);
-          pixel->blue = clampColor(starBlue[layer] + discBrightness[0]);
-          for (int disc = 0; disc < 4; disc++)
-            compositeGlassStarDisc(pixel, distance, discRadius[sizeIndex][disc],
-                                   clampColor(starRed[layer] + discBrightness[disc]),
-                                   clampColor(starGreen[layer] + discBrightness[disc]),
-                                   clampColor(starBlue[layer] + discBrightness[disc]), discAlpha[disc]);
-        }
-      }
-    }
-  }
-
-  glassStarAtlas.Width = GLASS_STAR_ATLAS_WIDTH;
-  glassStarAtlas.Height = GLASS_STAR_ATLAS_HEIGHT;
-  glassStarAtlas.PSM = GS_PSM_CT32;
-  glassStarAtlas.ClutPSM = 0;
-  glassStarAtlas.TBW = 0;
-  glassStarAtlas.Mem = (u32 *)glassStarAtlasPixels;
-  glassStarAtlas.Clut = NULL;
-  glassStarAtlas.Vram = 0;
-  glassStarAtlas.VramClut = 0;
-  glassStarAtlas.Filter = GS_FILTER_LINEAR;
-  glassStarAtlas.ClutStorageMode = 0;
-  glassStarAtlas.Delayed = GS_SETTING_ON;
-  gsKit_TexManager_bind(gsGlobal, &glassStarAtlas);
-}
-
-static void drawGlassStarDisc(int x, int y, int size, int red, int green, int blue, int alpha, int brightness) {
-  drawOrbitalDisc(x, y, size, 0, glassColor(red, green, blue, alpha, brightness),
-                  glassColor(red, green, blue, 0, brightness));
-}
-
-static void drawGlassStarSprite(int x, int y, int size, int red, int green, int blue, int alpha) {
-  if (alpha <= 0)
-    return;
-  drawGlassStarDisc(x, y, size + 3, red, green, blue, alpha / 7, -28);
-  drawGlassStarDisc(x, y, size + 1, red, green, blue, alpha / 3, -12);
-  drawGlassStarDisc(x, y, size, red, green, blue, alpha, 12);
-  drawGlassStarDisc(x, y, 1, red, green, blue, alpha / 2, 32);
-}
-
-static void drawGlassBackgroundStarSprite(float x, float y, int size, int layer, int alpha) {
-  if (alpha <= 0)
-    return;
-  if (alpha > 0x80)
-    alpha = 0x80;
-
-  const int radius = size + 3;
-  const int tileX = layer * GLASS_STAR_TILE_SIZE;
-  const int tileY = (size - 1) * GLASS_STAR_TILE_SIZE;
-  gsKit_prim_sprite_texture(gsGlobal, &glassStarAtlas, x - radius, y - radius, tileX, tileY, x + radius, y + radius,
-                            tileX + GLASS_STAR_TILE_SIZE - 1, tileY + GLASS_STAR_TILE_SIZE - 1, 0,
-                            GS_SETREG_RGBA(0x80, 0x80, 0x80, alpha));
-}
-
-static uint64_t glassColor(int red, int green, int blue, int alpha, int brightness) {
-  return glassPresetColor(clampColor(red + brightness), clampColor(green + brightness),
-                          clampColor(blue + brightness), alpha);
-}
-
-void drawGlassDiamond(int centerX, int centerY, int radius, int z, uint64_t color) {
-  gsKit_prim_line(gsGlobal, centerX, centerY - radius, centerX + radius, centerY, z, color);
-  gsKit_prim_line(gsGlobal, centerX + radius, centerY, centerX, centerY + radius, z, color);
-  gsKit_prim_line(gsGlobal, centerX, centerY + radius, centerX - radius, centerY, z, color);
-  gsKit_prim_line(gsGlobal, centerX - radius, centerY, centerX, centerY - radius, z, color);
-}
-
-void drawGlassPanel(int x1, int y1, int x2, int y2, int z) {
-  const uint64_t glass = glassPresetColor(0x05, 0x0D, 0x22, 0x54);
-  const uint64_t glassInner = glassPresetColor(0x18, 0x46, 0x70, 0x14);
-  const uint64_t shine = glassPresetColor(0x88, 0xD8, 0xFF, 0x4A);
-  const uint64_t edge = glassPresetColor(0x24, 0x68, 0x98, 0x38);
-
-  gsKit_prim_sprite(gsGlobal, x1, y1, x2, y2, z, glass);
-  gsKit_prim_sprite(gsGlobal, x1 + 2, y1 + 2, x2 - 2, y1 + 5, z + 1, glassInner);
-  gsKit_prim_sprite(gsGlobal, x1, y1, x2, y1 + 1, z + 2, shine);
-  gsKit_prim_sprite(gsGlobal, x1, y1, x1 + 1, y2, z + 2, shine);
-  gsKit_prim_sprite(gsGlobal, x1, y2 - 1, x2, y2, z + 1, edge);
-  gsKit_prim_sprite(gsGlobal, x2 - 1, y1, x2, y2, z + 1, edge);
 }
 
 static void projectCrystalPointRotated(GlassPoint *point, float centerX, float centerY,
@@ -328,117 +114,35 @@ static void projectCrystalPoint(GlassPoint *point, float centerX, float centerY,
                              sourceX, sourceY, sourceZ);
 }
 
-static void drawGlassCube(float centerX, float centerY, int size, uint32_t yawPhase, int red, int green, int blue,
-                          int stableOutline) {
-  // Clean-room crystal renderer based only on observation of the stock System
-  // Configuration animation: a tumbling translucent shell around a dark core.
-  static const int source[8][3] = {{-127, -127, -127}, {127, -127, -127}, {127, 127, -127}, {-127, 127, -127},
-                                    {-127, -127, 127},  {127, -127, 127},  {127, 127, 127},  {-127, 127, 127}};
-  static const int faceVertices[6][4] = {{3, 2, 0, 1}, {7, 6, 4, 5}, {3, 7, 0, 4},
-                                         {2, 6, 1, 5}, {3, 2, 7, 6}, {0, 1, 4, 5}};
-  static const int faceShade[6] = {-18, 8, -26, -4, 28, -34};
-  static const int edgeVertices[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
-                                          {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
-  const uint32_t pitchPhase = ((yawPhase * 5) / 7) + (5 << 11);
-  const uint32_t rollPhase = ((yawPhase * 3) / 11) + (2 << 11);
-  const GlassRotation rotation = {
-      orbWave(yawPhase) / 127.0f, orbWave(yawPhase + (8 << 11)) / 127.0f,
-      orbWave(pitchPhase) / 127.0f, orbWave(pitchPhase + (8 << 11)) / 127.0f,
-      orbWave(rollPhase) / 127.0f, orbWave(rollPhase + (8 << 11)) / 127.0f};
-  GlassPoint shell[8];
-  GlassPoint core[8];
-  int faceOrder[6] = {0, 1, 2, 3, 4, 5};
-  int faceDepth[6];
-
-  for (int i = 0; i < 8; i++) {
-    projectCrystalPointRotated(&shell[i], centerX, centerY, size, &rotation,
-                               source[i][0], source[i][1], source[i][2]);
-    projectCrystalPointRotated(&core[i], centerX, centerY, (size * 68) / 100,
-                               &rotation, source[i][0], source[i][1], source[i][2]);
-  }
-
-  for (int face = 0; face < 6; face++) {
-    faceDepth[face] = 0;
-    for (int vertex = 0; vertex < 4; vertex++)
-      faceDepth[face] += shell[faceVertices[face][vertex]].depth;
-  }
-
-  // Draw rear faces first so the transparent front faces retain their depth.
-  for (int i = 0; i < 5; i++) {
-    for (int j = i + 1; j < 6; j++) {
-      if (faceDepth[faceOrder[i]] > faceDepth[faceOrder[j]]) {
-        int swap = faceOrder[i];
-        faceOrder[i] = faceOrder[j];
-        faceOrder[j] = swap;
-      }
-    }
-  }
-
-  // The low-alpha shell remains visible behind the central smoked volume.
-  for (int order = 0; order < 6; order++) {
-    int face = faceOrder[order];
-    int a = faceVertices[face][0];
-    int b = faceVertices[face][1];
-    int c = faceVertices[face][2];
-    int d = faceVertices[face][3];
-    int shade = faceShade[face] + faceDepth[face] / 18;
-    uint64_t light = glassColor(red, green, blue, 0x25, shade + 34);
-    uint64_t mid = glassColor(red, green, blue, 0x1D, shade + 8);
-    uint64_t dark = glassColor(red, green, blue, 0x16, shade - 24);
-    gsKit_prim_quad_gouraud(gsGlobal, shell[a].x, shell[a].y, shell[b].x, shell[b].y, shell[c].x, shell[c].y, shell[d].x,
-                            shell[d].y, 0, light, mid, dark, mid);
-  }
-
-  // A dark inner cube creates the stock crystal's dense central volume.
-  for (int order = 0; order < 6; order++) {
-    int face = faceOrder[order];
-    int a = faceVertices[face][0];
-    int b = faceVertices[face][1];
-    int c = faceVertices[face][2];
-    int d = faceVertices[face][3];
-    int shade = faceShade[face] + faceDepth[face] / 22;
-    uint64_t light = glassColor(red / 2, green / 2, blue / 2, 0x42, shade + 8);
-    uint64_t mid = glassColor(red / 3, green / 3, blue / 3, 0x48, shade - 12);
-    uint64_t dark = glassColor(red / 4, green / 4, blue / 4, 0x50, shade - 28);
-    gsKit_prim_quad_gouraud(gsGlobal, core[a].x, core[a].y, core[b].x, core[b].y, core[c].x, core[c].y, core[d].x, core[d].y, 0,
-                            light, mid, dark, mid);
-  }
-
-  // Keep the large loading cube's outline subdued so interlaced output does
-  // not turn its moving one-pixel edges into a white shimmer.
-  for (int i = 0; i < 12; i++) {
-    int a = edgeVertices[i][0];
-    int b = edgeVertices[i][1];
-    int edgeDepth = (shell[a].depth + shell[b].depth) / 2;
-    int edgeAlpha = stableOutline ? 0x30 + (edgeDepth + 180) / 14 : 0x38 + (edgeDepth + 180) / 8;
-    int edgeBrightness = stableOutline ? 18 + (edgeDepth + 180) / 12 : 46 + (edgeDepth + 180) / 5;
-    int maxAlpha = stableOutline ? 0x50 : 0x78;
-    if (edgeAlpha > maxAlpha)
-      edgeAlpha = maxAlpha;
-    gsKit_prim_line(gsGlobal, shell[a].x, shell[a].y, shell[b].x, shell[b].y, 0,
-                    glassColor(red, green, blue, edgeAlpha, edgeBrightness));
-  }
-
-  if (!stableOutline) {
-    int nearest = 0;
-    for (int i = 1; i < 8; i++) {
-      if (shell[i].depth > shell[nearest].depth)
-        nearest = i;
-    }
-    drawGlassStarSprite((int)(shell[nearest].x + 0.5f), (int)(shell[nearest].y + 0.5f), 1, clampColor(red + 90),
-                        clampColor(green + 90), clampColor(blue + 90), 0x58);
-  }
+void resetAmbientOrbs(uint32_t startMs) {
+  glassStartMs = startMs;
+  resetAmbientOrbsScroll();
 }
 
-void drawOrbitalDisc(int centerX, int centerY, int radius, int z, uint64_t centerColor, uint64_t edgeColor) {
-  for (int i = 0; i < 32; i++) {
-    int next = (i + 1) & 31;
-    int x1 = centerX + (glassSin[(i + 8) & 31] * radius) / 127;
-    int y1 = centerY + (glassSin[i] * radius) / 127;
-    int x2 = centerX + (glassSin[(next + 8) & 31] * radius) / 127;
-    int y2 = centerY + (glassSin[next] * radius) / 127;
-    gsKit_prim_triangle_gouraud(gsGlobal, centerX, centerY, x1, y1, x2, y2, z, centerColor, edgeColor, edgeColor);
-  }
+void resetAmbientOrbsScroll(void) {
+  scrollOrbEventNext = 0;
+  scrollOrbEventCount = 0;
+  scrollOrbClockInitialized = 0;
+  scrollLetterInitialized = 0;
+  scrollLetterGlyph = 0;
+  scrollLetterPreviousGlyph = 0;
+  orbObservedSelection = -1;
+  orbSelectionEventNext = 0;
+  orbSelectionEventCount = 0;
+}
+
+void triggerAmbientOrbsScrollReaction(int direction, uint32_t now) {
+  if (!direction)
+    return;
+  scrollOrbEvents[scrollOrbEventNext].startMs = now - glassStartMs;
+  scrollOrbEvents[scrollOrbEventNext].direction = direction;
+  scrollOrbEventNext = (scrollOrbEventNext + 1) % SCROLL_ORB_EVENT_COUNT;
+  if (scrollOrbEventCount < SCROLL_ORB_EVENT_COUNT)
+    scrollOrbEventCount++;
+}
+
+static uint32_t glassElapsedMs(uint32_t now) {
+  return now - glassStartMs;
 }
 
 // Cubic interpolation keeps the orb path and its velocity smooth between the
@@ -475,7 +179,7 @@ static void orbSelectionChanged(int selectedTitleIdx, uint32_t elapsedMs) {
   orbLastSelectionEventMs = elapsedMs;
 }
 
-void observeOrbSelection(int selectedTitleIdx, uint32_t now) {
+void observeAmbientOrbsSelection(int selectedTitleIdx, uint32_t now) {
   orbSelectionChanged(selectedTitleIdx, glassElapsedMs(now));
 }
 
@@ -495,10 +199,123 @@ static float orbSelectionPulse(uint32_t elapsedMs) {
   return strongest;
 }
 
-static uint32_t orbAnimationMs(uint32_t elapsedMs) {
+static float scrollOrbEase(float progress) {
+  if (progress <= 0.0f)
+    return 0.0f;
+  if (progress >= 1.0f)
+    return 1.0f;
+  return progress * progress * (3.0f - 2.0f * progress);
+}
+
+static float scrollLetterBlendAt(uint32_t elapsedMs) {
+  if (!scrollLetterInitialized)
+    return 0.0f;
+  if (elapsedMs < scrollLetterStartMs)
+    return scrollLetterFrom;
+  const float progress = (elapsedMs - scrollLetterStartMs) /
+                         (float)SCROLL_LETTER_MORPH_MS;
+  return scrollLetterFrom +
+         (scrollLetterTarget - scrollLetterFrom) * scrollOrbEase(progress);
+}
+
+static float scrollGlyphBlendAt(uint32_t elapsedMs) {
+  if (elapsedMs < scrollGlyphStartMs)
+    return 0.0f;
+  return scrollOrbEase((elapsedMs - scrollGlyphStartMs) /
+                       (float)SCROLL_GLYPH_MORPH_MS);
+}
+
+static char scrollTitleInitial(const char *title) {
+  while (*title) {
+    const char c = *title++;
+    if (c >= 'A' && c <= 'Z')
+      return c;
+    if (c >= 'a' && c <= 'z')
+      return c - 'a' + 'A';
+    if (c >= '0' && c <= '9')
+      return '#';
+  }
+  return '#';
+}
+
+static void setScrollLetterMode(int fastScroll, char glyph,
+                                uint32_t elapsedMs) {
+  if (!scrollLetterInitialized) {
+    scrollLetterStartMs = elapsedMs;
+    scrollLetterFrom = 0.0f;
+    scrollLetterTarget = 0;
+    scrollLetterGlyph = glyph;
+    scrollLetterPreviousGlyph = glyph;
+    scrollGlyphStartMs = elapsedMs;
+    scrollLetterInitialized = 1;
+  }
+  if (glyph != scrollLetterGlyph) {
+    scrollLetterPreviousGlyph = scrollLetterGlyph;
+    scrollLetterGlyph = glyph;
+    scrollGlyphStartMs = elapsedMs;
+  }
+  if (fastScroll != scrollLetterTarget) {
+    scrollLetterFrom = scrollLetterBlendAt(elapsedMs);
+    scrollLetterStartMs = elapsedMs;
+    scrollLetterTarget = fastScroll;
+  }
+}
+
+static ScrollOrbMotion scrollOrbMotion(uint32_t elapsedMs) {
+  ScrollOrbMotion motion = {0.0f, 0.0f};
+  for (int i = 0; i < scrollOrbEventCount; i++) {
+    if (elapsedMs < scrollOrbEvents[i].startMs)
+      continue;
+    const uint32_t age = elapsedMs - scrollOrbEvents[i].startMs;
+    if (age >= SCROLL_ORB_REACTION_MS)
+      continue;
+    float weight;
+    if (age < 180)
+      weight = scrollOrbEase(age / 180.0f);
+    else if (age < 340)
+      weight = 1.0f;
+    else if (age < 850)
+      weight = 1.0f - scrollOrbEase((age - 340) / 510.0f);
+    else if (age < 950)
+      weight = -0.10f * scrollOrbEase((age - 850) / 100.0f);
+    else
+      weight = -0.10f * (1.0f - scrollOrbEase((age - 950) / 100.0f));
+    motion.reach += weight;
+    motion.direction += weight * scrollOrbEvents[i].direction;
+  }
+  if (motion.reach > 1.0f)
+    motion.reach = 1.0f;
+  if (motion.reach < -0.10f)
+    motion.reach = -0.10f;
+  if (motion.direction > 1.0f)
+    motion.direction = 1.0f;
+  if (motion.direction < -1.0f)
+    motion.direction = -1.0f;
+  return motion;
+}
+
+static void applyScrollOrbMotion(int index, const ScrollOrbMotion *motion,
+                                 float letterBlend, int focusX, int focusY,
+                                 float *x, float *y) {
+  const float reach = motion->reach * (1.0f - letterBlend);
+  const float direction = motion->direction * (1.0f - letterBlend);
+  if (index == 0 || index == 2 || index == 4) {
+    const int slot = index / 2 - 1;
+    const float targetX = focusX - (slot == 0 ? 0.0f : 23.0f);
+    const float targetY = focusY + slot * 18.0f;
+    *x += (targetX - *x) * reach;
+    *y += (targetY - *y) * reach +
+          direction * (1.0f - reach) * 28.0f;
+  } else {
+    *x += reach * 6.0f;
+    *y += direction * 3.0f;
+  }
+}
+
+static uint32_t orbAnimationMs(uint32_t elapsedMs, uint32_t movementMs) {
   // A slow phase swell changes speed smoothly without jumping between paths.
-  float animated = (float)elapsedMs +
-                   orbWave(glassPhase(elapsedMs, ORB_SPEED_SWELL_PERIOD_MS, 0)) *
+  float animated = (float)movementMs +
+                   orbWave(glassPhase(movementMs, ORB_SPEED_SWELL_PERIOD_MS, 0)) *
                        420.0f / 127.0f;
   float selectionAdvance = 0.0f;
   for (int i = 0; i < orbSelectionEventCount; i++) {
@@ -602,6 +419,56 @@ static const OrbLogoStroke orbLogoStrokes[ORB_COUNT] = {
   {572, 0, 710, 11}, {572, 47, 583, 106}, {699, 0, 710, 106},
   {572, 47, 710, 59}
 };
+
+// Each group of four digits is one stroke on a 5 by 7 letter grid.
+static const char *const scrollAlphabetPaths[27] = {
+    "0620 2046 1343",                         // A
+    "0006 0030 3041 4133 3303 3345 4536 3606", // B
+    "4130 3010 1001 0105 0516 1636 3645", // C
+    "0006 0030 3041 4145 4536 3606",       // D
+    "0006 0040 0333 0646",                   // E
+    "0006 0040 0333",                        // F
+    "4130 3010 1001 0105 0516 1636 3645 4543 4323", // G
+    "0006 4046 0343",                        // H
+    "0040 2026 0646",                        // I
+    "0040 4045 4536 3616 1605",            // J
+    "0006 4003 0346",                        // K
+    "0006 0646",                             // L
+    "0600 0023 2340 4046",                  // M
+    "0600 0046 4640",                       // N
+    "0130 3041 4145 4536 3616 1605 0501", // O
+    "0006 0030 3041 4133 3303",            // P
+    "0130 3041 4145 4536 3616 1605 0501 2446", // Q
+    "0006 0030 3041 4133 3303 2346",       // R
+    "4130 3010 1001 0102 0213 1333 3344 4445 4536 3616 1605", // S
+    "0040 2026",                             // T
+    "0005 0516 1636 3645 4045",            // U
+    "0026 2640",                             // V
+    "0006 0614 1426 2634 3446 4640",       // W
+    "0046 4006",                             // X
+    "0023 4023 2326",                        // Y
+    "0040 4006 0646",                        // Z
+    "1016 3036 0242 0444"                   // #
+};
+
+static const char *scrollGlyphPath(char glyph) {
+  return scrollAlphabetPaths[glyph >= 'A' && glyph <= 'Z' ?
+                             glyph - 'A' : 26];
+}
+
+static int nextScrollGlyphStroke(const char **cursor, int *x1, int *y1,
+                                  int *x2, int *y2) {
+  while (**cursor == ' ')
+    (*cursor)++;
+  if (!**cursor)
+    return 0;
+  *x1 = (*cursor)[0] - '0';
+  *y1 = (*cursor)[1] - '0';
+  *x2 = (*cursor)[2] - '0';
+  *y2 = (*cursor)[3] - '0';
+  *cursor += 4;
+  return 1;
+}
 
 typedef struct {
   uint32_t cycle;
@@ -886,6 +753,65 @@ static void orbFormationPosition(const OrbFormation *formation, int index,
   *opacity = fromOpacity + (toOpacity - fromOpacity) * blend;
 }
 
+static void scrollGlyphPoint(char glyph, int index, uint32_t animationMs,
+                              int centerX, int centerY, int radiusX,
+                              int radiusY, float *x, float *y, float *depth) {
+  const char *cursor = scrollGlyphPath(glyph);
+  int x1, y1, x2, y2;
+  int strokeCount = 0;
+  while (nextScrollGlyphStroke(&cursor, &x1, &y1, &x2, &y2))
+    strokeCount++;
+  const int wantedStroke = index % strokeCount;
+  cursor = scrollGlyphPath(glyph);
+  for (int stroke = 0; nextScrollGlyphStroke(&cursor, &x1, &y1, &x2, &y2);
+       stroke++) {
+    if (stroke == wantedStroke)
+      break;
+  }
+  // Each orb sweeps one stroke back and forth; the short afterimages write
+  // the letter without leaving a permanent geometric outline.
+  const uint32_t phase = glassPhase(animationMs,
+                                    1080U + (uint32_t)(index % 3) * 90U,
+                                    (uint32_t)index * 211U);
+  const float along = 0.5f + orbWave(phase) / 254.0f;
+  const float gridX = x1 + (x2 - x1) * along;
+  const float gridY = y1 + (y2 - y1) * along;
+  *x = centerX + (gridX - 2.0f) * radiusX * 1.35f / 4.0f;
+  *y = centerY + (gridY - 3.0f) * radiusY * 1.45f / 6.0f;
+  const float near = 0.5f + orbWave(glassPhase(animationMs, 1800,
+                                               (uint32_t)index * 173U)) /
+                                254.0f;
+  *x += (1.0f - near) * SCROLL_GLYPH_DEPTH_X;
+  *y += (1.0f - near) * SCROLL_GLYPH_DEPTH_Y;
+  *depth = 70.0f + (near * 2.0f - 1.0f) * 18.0f;
+}
+
+static void blendScrollLetterOrb(int index, float letterBlend,
+                                 float glyphBlend, uint32_t animationMs,
+                                 int centerX, int centerY, int radiusX,
+                                 int radiusY, float *x, float *y,
+                                 float *depth, float *opacity) {
+  if (letterBlend <= 0.0f)
+    return;
+  float letterX, letterY, letterDepth;
+  scrollGlyphPoint(scrollLetterGlyph, index, animationMs,
+                   centerX, centerY, radiusX, radiusY,
+                   &letterX, &letterY, &letterDepth);
+  if (scrollLetterPreviousGlyph != scrollLetterGlyph && glyphBlend < 1.0f) {
+    float oldX, oldY, oldDepth;
+    scrollGlyphPoint(scrollLetterPreviousGlyph, index, animationMs,
+                     centerX, centerY, radiusX, radiusY,
+                     &oldX, &oldY, &oldDepth);
+    letterX = oldX + (letterX - oldX) * glyphBlend;
+    letterY = oldY + (letterY - oldY) * glyphBlend;
+    letterDepth = oldDepth + (letterDepth - oldDepth) * glyphBlend;
+  }
+  *x += (letterX - *x) * letterBlend;
+  *y += (letterY - *y) * letterBlend;
+  *depth += (letterDepth - *depth) * letterBlend;
+  *opacity += (1.0f - *opacity) * letterBlend;
+}
+
 static void drawOrbTrailSegment(float oldX, float oldY, float newX, float newY,
                                 float oldWidth, float newWidth,
                                 int z, uint64_t oldColor, uint64_t newColor) {
@@ -1072,24 +998,48 @@ static void drawOrbLogoWordmark(int centerX, int centerY, int radiusX,
   }
 }
 
-static void drawFormationOrbs(int centerX, int centerY, int radiusX, int radiusY,
-                              uint32_t elapsedMs, int glowScale, int trailZ) {
+static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
+                              uint32_t elapsedMs, uint32_t movementMs,
+                              int movementSpeed, int glowScale, int trailZ,
+                              int scrollFocusX) {
   OrbFormation *formation = orbFormationAt(elapsedMs);
   const float selectionPulse = orbSelectionPulse(elapsedMs);
   OrbMotion motion[ORB_TRAIL_SEGMENTS + 1];
+  ScrollOrbMotion scrollMotion[ORB_TRAIL_SEGMENTS + 1];
+  float letterBlend[ORB_TRAIL_SEGMENTS + 1] = {0};
+  float glyphBlend[ORB_TRAIL_SEGMENTS + 1] = {0};
   uint32_t animationTime[ORB_TRAIL_SEGMENTS + 1];
   float positionsX[ORB_COUNT], positionsY[ORB_COUNT];
   float depths[ORB_COUNT], opacities[ORB_COUNT];
   for (int sample = 0; sample <= ORB_TRAIL_SEGMENTS; sample++) {
     const uint32_t age = sample * ORB_TRAIL_STEP_MS;
-    animationTime[sample] = orbAnimationMs(elapsedMs > age ? elapsedMs - age : 0);
+    const uint32_t sampleMs = elapsedMs > age ? elapsedMs - age : 0;
+    const uint32_t movementAge = age * movementSpeed;
+    const uint32_t sampleMovementMs = movementMs > movementAge ?
+                                      movementMs - movementAge : 0;
+    animationTime[sample] = orbAnimationMs(sampleMs, sampleMovementMs);
     motion[sample] = orbMotion(animationTime[sample]);
+    if (scrollFocusX) {
+      scrollMotion[sample] = scrollOrbMotion(sampleMs);
+      letterBlend[sample] = scrollLetterBlendAt(sampleMs);
+      glyphBlend[sample] = scrollGlyphBlendAt(sampleMs);
+    }
   }
-  for (int i = 0; i < ORB_COUNT; i++)
+  for (int i = 0; i < ORB_COUNT; i++) {
     orbFormationPosition(formation, i, elapsedMs, animationTime[0], &motion[0],
                          centerX, centerY, radiusX, radiusY,
                          &positionsX[i], &positionsY[i],
                          &depths[i], &opacities[i]);
+    if (scrollFocusX) {
+      blendScrollLetterOrb(i, letterBlend[0], glyphBlend[0], animationTime[0],
+                           centerX, centerY, radiusX, radiusY,
+                           &positionsX[i], &positionsY[i],
+                           &depths[i], &opacities[i]);
+      applyScrollOrbMotion(i, &scrollMotion[0], letterBlend[0],
+                           scrollFocusX, centerY,
+                           &positionsX[i], &positionsY[i]);
+    }
+  }
 
   // (Cs - 0) * As + Cd: overlapping halos merge into a brighter light.
   gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
@@ -1102,8 +1052,9 @@ static void drawFormationOrbs(int centerX, int centerY, int radiusX, int radiusY
   blend = blend * blend * (3.0f - 2.0f * blend);
   // Existing tails show motion. These longer tails grow along each shape's
   // contours and retract during the transition to the next formation.
-  const float fromExtent = 1.0f - blend;
-  const float toExtent = blend;
+  const float baseStrength = 1.0f - letterBlend[0];
+  const float fromExtent = (1.0f - blend) * baseStrength;
+  const float toExtent = blend * baseStrength;
   const int edgeAlpha = (int)(0x40 * (1.0f + selectionPulse * 0.25f));
   const int logoAlpha = (int)(0x50 * (1.0f + selectionPulse * 0.25f));
   drawOrbFormationEdges(formation->from, fromExtent,
@@ -1128,9 +1079,13 @@ static void drawFormationOrbs(int centerX, int centerY, int radiusX, int radiusY
   if (formation->to == ORB_SHAPE_LUNA)
     drawOrbLogoWordmark(centerX, centerY, radiusX, &motion[0], trailZ,
                         (int)(logoAlpha * toExtent), toExtent);
-  const float logoStrength =
+  const float logoStrength = letterBlend[0] +
       (formation->from == ORB_SHAPE_LUNA ? fromExtent : 0.0f) +
       (formation->to == ORB_SHAPE_LUNA ? toExtent : 0.0f);
+  const float baseTrailVisibility = 1.0f - letterBlend[0];
+  float letterTrailVisibility = letterBlend[0];
+  if (scrollLetterPreviousGlyph != scrollLetterGlyph)
+    letterTrailVisibility *= glyphBlend[0];
   for (int i = 0; i < ORB_COUNT; i++) {
     const float x = positionsX[i];
     const float y = positionsY[i];
@@ -1139,21 +1094,36 @@ static void drawFormationOrbs(int centerX, int centerY, int radiusX, int radiusY
     float newX = x;
     float newY = y;
     float newOpacity = opacity;
-    for (int segment = 1; segment <= ORB_TRAIL_SEGMENTS; segment++) {
+    for (int segment = 1; segment <= ORB_TRAIL_SEGMENTS &&
+                          (baseTrailVisibility > 0.01f ||
+                           letterTrailVisibility > 0.01f); segment++) {
       float oldX, oldY, oldDepth, oldOpacity;
       const uint32_t age = segment * ORB_TRAIL_STEP_MS;
       orbFormationPosition(formation, i, elapsedMs > age ? elapsedMs - age : 0,
                            animationTime[segment],
                            &motion[segment], centerX, centerY, radiusX, radiusY,
                            &oldX, &oldY, &oldDepth, &oldOpacity);
+      if (scrollFocusX) {
+        blendScrollLetterOrb(i, letterBlend[segment], glyphBlend[segment],
+                             animationTime[segment], centerX, centerY,
+                             radiusX, radiusY,
+                             &oldX, &oldY, &oldDepth, &oldOpacity);
+        applyScrollOrbMotion(i, &scrollMotion[segment],
+                             letterBlend[segment], scrollFocusX, centerY,
+                             &oldX, &oldY);
+      }
       const int oldOuterAlpha = (int)((4 + (ORB_TRAIL_SEGMENTS - segment) * 28 /
-                                      ORB_TRAIL_SEGMENTS) * oldOpacity);
+                                      ORB_TRAIL_SEGMENTS) * oldOpacity *
+                                      baseTrailVisibility);
       const int newOuterAlpha = (int)((4 + (ORB_TRAIL_SEGMENTS - segment + 1) * 28 /
-                                      ORB_TRAIL_SEGMENTS) * newOpacity);
+                                      ORB_TRAIL_SEGMENTS) * newOpacity *
+                                      baseTrailVisibility);
       const int oldInnerAlpha = (int)((5 + (ORB_TRAIL_SEGMENTS - segment) * 45 /
-                                      ORB_TRAIL_SEGMENTS) * oldOpacity);
+                                      ORB_TRAIL_SEGMENTS) * oldOpacity *
+                                      baseTrailVisibility);
       const int newInnerAlpha = (int)((5 + (ORB_TRAIL_SEGMENTS - segment + 1) * 45 /
-                                      ORB_TRAIL_SEGMENTS) * newOpacity);
+                                      ORB_TRAIL_SEGMENTS) * newOpacity *
+                                      baseTrailVisibility);
       const int oldOuterWidth = 3 + (ORB_TRAIL_SEGMENTS - segment) * 6 / ORB_TRAIL_SEGMENTS;
       const int newOuterWidth = 3 + (ORB_TRAIL_SEGMENTS - segment + 1) * 6 / ORB_TRAIL_SEGMENTS;
       const int oldInnerWidth = 2 + (ORB_TRAIL_SEGMENTS - segment) * 3 / ORB_TRAIL_SEGMENTS;
@@ -1169,6 +1139,23 @@ static void drawFormationOrbs(int centerX, int centerY, int radiusX, int radiusY
                             oldInnerWidth * trailScale, newInnerWidth * trailScale, trailZ,
                             glassPresetColor(0xA0, 0xD8, 0xFF, oldInnerAlpha),
                             glassPresetColor(0xA0, 0xD8, 0xFF, newInnerAlpha));
+      if (letterTrailVisibility > 0.01f) {
+        const float fade = (ORB_TRAIL_SEGMENTS - segment + 1) /
+                           (float)ORB_TRAIL_SEGMENTS;
+        const int outerAlpha = (int)(0x1E * fade * letterTrailVisibility *
+                                     oldOpacity);
+        const int innerAlpha = (int)(0x42 * fade * letterTrailVisibility *
+                                     newOpacity);
+        drawOrbTrailSegment(oldX, oldY, newX, newY,
+                            3.0f * fade, 4.0f * fade, trailZ,
+                            glassPresetColor(0x48, 0x90, 0xD8, outerAlpha),
+                            glassPresetColor(0x70, 0xB8, 0xF0, innerAlpha));
+        drawOrbGlowDisc(newX, newY, 4.0f + fade * 3.0f, trailZ,
+                        glassPresetColor(0x98, 0xD8, 0xFF,
+                                         (int)(0x24 * fade *
+                                               letterTrailVisibility * newOpacity)),
+                        glassPresetColor(0x98, 0xD8, 0xFF, 0));
+      }
       newX = oldX;
       newY = oldY;
       newOpacity = oldOpacity;
@@ -1195,6 +1182,13 @@ static void drawFormationOrbs(int centerX, int centerY, int radiusX, int radiusY
     if (coreAlpha > 0x80)
       coreAlpha = 0x80;
 
+    if (letterBlend[0] > 0.0f)
+      drawOrbGlowDisc(x + SCROLL_GLYPH_DEPTH_X * 0.75f,
+                      y + SCROLL_GLYPH_DEPTH_Y * 0.75f,
+                      haloRadius * 0.62f, trailZ,
+                      glassPresetColor(0x30, 0x68, 0xA8,
+                                       (int)(coreAlpha * letterBlend[0] * 0.28f)),
+                      glassPresetColor(0x30, 0x68, 0xA8, 0));
     drawOrbGlowDisc(x, y, haloRadius, trailZ + 1,
                     glassPresetColor(0x70, 0xA8, 0xE8, haloAlpha),
                     glassPresetColor(0x70, 0xA8, 0xE8, 0));
@@ -1205,260 +1199,27 @@ static void drawFormationOrbs(int centerX, int centerY, int radiusX, int radiusY
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
 }
 
-static void drawOrbitalStars(int width, int height, uint32_t elapsedMs) {
-  static const int speedPixelsPerSecond[3] = {4, 8, 13};
-  const int edgeFadeWidth = 18;
-  float scroll[3];
 
-  for (int layer = 0; layer < 3; layer++)
-    scroll[layer] = (float)(((uint64_t)elapsedMs * speedPixelsPerSecond[layer]) %
-                            ((uint64_t)width * 1000)) / 1000.0f;
-
-  gsKit_TexManager_bind(gsGlobal, &glassStarAtlas);
-  for (int i = 0; i < 58; i++) {
-    int layer = i % 3;
-    int baseX = (i * 97 + i * i * 13 + 31) % width;
-    int baseY = (i * 53 + i * i * 7 + 19) % height;
-    float y = baseY + orbWave(glassPhase(elapsedMs, 7000 + layer * 1300, i * 113)) * (layer + 1) / 160.0f;
-    float x = baseX + scroll[layer];
-    if (x >= width)
-      x -= width;
-    int twinkle = (int)(orbWave(glassPhase(elapsedMs, 2600 + layer * 900, i * 173)) / 14.0f);
-    int size = ((layer == 2) && ((i % 5) == 0)) ? 2 : 1;
-    int alpha = 0x20 + layer * 0x12;
-    int edgeAlpha = (alpha * glassStarEdgeAlpha(x, width, edgeFadeWidth)) / 255;
-    drawGlassBackgroundStarSprite(x, y, size, layer, edgeAlpha + twinkle);
-
-    // Cross-fade a duplicate through the opposite edge during wraparound.
-    if (x < edgeFadeWidth)
-      drawGlassBackgroundStarSprite(x + width, y, size, layer,
-                                    (alpha * glassStarEdgeAlpha(x + width, width, edgeFadeWidth)) / 255 + twinkle);
-    else if (x >= width - edgeFadeWidth)
-      drawGlassBackgroundStarSprite(x - width, y, size, layer,
-                                    (alpha * glassStarEdgeAlpha(x - width, width, edgeFadeWidth)) / 255 + twinkle);
-  }
+void drawAmbientOrbsBackground(int centerX, int centerY, int radiusX,
+                               int radiusY, uint32_t elapsedMs, int trailZ) {
+  drawAmbientOrbs(centerX, centerY, radiusX, radiusY, elapsedMs,
+                  elapsedMs, 1, 100, trailZ, 0);
 }
 
-static void drawColorStarBackground(uint32_t frameNowMs) {
-  const int width = gsGlobal->Width;
-  const int height = gsGlobal->Height;
-  const uint32_t elapsedMs = glassElapsedMs(frameNowMs);
-  const uint64_t black = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80);
-
-  gsKit_prim_quad_gouraud(gsGlobal, 0, 0, width, 0, 0, height, width, height, 0, black, black, black, black);
-
-  drawOrbitalStars(width, height, elapsedMs);
-}
-
-static void drawGlassBackground(uint32_t frameNowMs) {
-  const int width = gsGlobal->Width;
-  const int height = gsGlobal->Height;
-  const uint32_t elapsedMs = glassElapsedMs(frameNowMs);
-  const int orbitX = width * 65 / 100;
-  const int orbitY = height * 52 / 100;
-
-  drawColorStarBackground(frameNowMs);
-
-  // Two floating glass cubes retain the PS2 BIOS geometry without crowding the library.
-  // Share one orbital phase and keep the crystals half a revolution apart.
-  // The nested ellipses retain at least 96 pixels of center separation, so
-  // their paths cannot collide even at their closest vertical alignment.
-  uint32_t orbitPhase = glassPhase(elapsedMs, 36000, 0);
-  uint32_t oppositePhase = orbitPhase + (16 << 11);
-  float nearX = orbitX + orbWave(orbitPhase + (8 << 11)) * (146.0f / 127.0f);
-  float nearY = orbitY + orbWave(orbitPhase) * (56.0f / 127.0f);
-  float farX = orbitX + orbWave(oppositePhase + (8 << 11)) * (96.0f / 127.0f);
-  float farY = orbitY + orbWave(oppositePhase) * (40.0f / 127.0f);
-  drawGlassCube(nearX, nearY, 9, glassPhase(elapsedMs, 18000, 3000), 0x38, 0x98, 0xD8, 1);
-  drawGlassCube(farX, farY, 7, glassPhase(elapsedMs, 26000, 12000), 0x78, 0x68, 0xC8, 1);
-}
-
-void drawSplashGlassBackground(uint32_t now) {
-  const uint32_t elapsedMs = glassElapsedMs(now);
-  // Keep the transparent logo over a visibly blue-purple field.
-  const uint64_t topLeft = GS_SETREG_RGBA(0x04, 0x0B, 0x26, 0x80);
-  const uint64_t topRight = GS_SETREG_RGBA(0x20, 0x10, 0x48, 0x80);
-  const uint64_t bottomLeft = GS_SETREG_RGBA(0x08, 0x18, 0x40, 0x80);
-  const uint64_t bottomRight = GS_SETREG_RGBA(0x34, 0x18, 0x60, 0x80);
-  gsKit_prim_quad_gouraud(gsGlobal, 0, 0, gsGlobal->Width, 0, 0, gsGlobal->Height, gsGlobal->Width, gsGlobal->Height, 0,
-              topLeft, topRight, bottomLeft, bottomRight);
-  drawGlassCube(gsGlobal->Width / 2, gsGlobal->Height * 57 / 100, 30,
-          glassPhase(elapsedMs, 9000, 0), 0x38, 0xA8, 0xE0, 1);
-}
-
-
-void setOrbsBackgroundStyle(int enabled) {
-  orbsBackgroundStyle = enabled != 0;
-}
-
-void drawSharedLibraryBackground(uint32_t frameNowMs) {
-  if (orbsBackgroundStyle) {
-    const int width = gsGlobal->Width;
-    const int height = gsGlobal->Height;
-    const uint64_t black = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80);
-    gsKit_prim_quad_gouraud(gsGlobal, 0, 0, width, 0, 0, height,
-                            width, height, 0, black, black, black, black);
-    drawFormationOrbs(width * 65 / 100, height * 52 / 100,
-                  width * 20 / 100, height * 30 / 100,
-                  glassElapsedMs(frameNowMs), 100, 0);
+void drawAmbientOrbsScroll(int centerX, int centerY, int radiusX,
+                           int radiusY, uint32_t elapsedMs,
+                           int fastScroll, const char *title,
+                           int trailZ, int scrollFocusX) {
+  setScrollLetterMode(fastScroll, scrollTitleInitial(title), elapsedMs);
+  if (!scrollOrbClockInitialized) {
+    scrollOrbClockMs = elapsedMs;
+    scrollOrbClockInitialized = 1;
   } else {
-    drawGlassBackground(frameNowMs);
+    scrollOrbClockMs += (elapsedMs - scrollOrbLastFrameMs) *
+                        (fastScroll ? 3U : 1U);
   }
-}
-
-int orbsVisualCacheIndex(int flowOffset) {
-  int closest = ORBS_LOGO_CACHE_FOCUS;
-  int closestDistance = 0x7FFFFFFF;
-  for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++) {
-    int position = (i - ORBS_LOGO_CACHE_FOCUS) * 1000 + flowOffset;
-    int distance = position < 0 ? -position : position;
-    if (distance < closestDistance) {
-      closest = i;
-      closestDistance = distance;
-    }
-  }
-  return closest;
-}
-
-static void drawOrbsLogo(GSTEXTURE *texture, float x, float y,
-                         float width, float height, int brightness) {
-  int previousAlphaTest = gsGlobal->Test->ATST;
-  int previousAlphaReference = gsGlobal->Test->AREF;
-  int previousAlphaFail = gsGlobal->Test->AFAIL;
-  gsKit_TexManager_bind(gsGlobal, texture);
-  gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-  gsGlobal->Test->ATST = 2;
-  gsGlobal->Test->AREF = 0x80;
-  gsGlobal->Test->AFAIL = 0;
-  gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
-  gsKit_set_test(gsGlobal, GS_ATEST_ON);
-  gsKit_prim_sprite_texture(gsGlobal, texture, x, y, 0.0f, 0.0f,
-                            x + width, y + height,
-                            texture->Width - 1, texture->Height - 1, 6,
-                            GS_SETREG_RGBA(brightness, brightness, brightness, 0x80));
-  gsGlobal->Test->ATST = previousAlphaTest;
-  gsGlobal->Test->AREF = previousAlphaReference;
-  gsGlobal->Test->AFAIL = previousAlphaFail;
-  gsKit_set_test(gsGlobal, GS_ATEST_ON);
-  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
-}
-
-void drawOrbsView(TargetList *titles, int selectedTitleIdx,
-                  int flowOffset, int visualFocus, uint32_t now) {
-  const int width = gsGlobal->Width;
-  const int height = gsGlobal->Height;
-  const int listTop = headerHeight + 12;
-  const int listBottom = height - footerHeight - 12;
-  const int centerY = (listTop + listBottom) / 2;
-  const int rowPitch = (listBottom - listTop) / 4;
-  const int logoCenterX = width - 153;
-  const int visualTitleIdx = lunaNavWrap(titles->total,
-      selectedTitleIdx + visualFocus - ORBS_LOGO_CACHE_FOCUS);
-  char title[255];
-
-  if (orbsBackgroundLoaded) {
-    GSTEXTURE *background = orbsBackgroundTexture;
-    gsKit_TexManager_bind(gsGlobal, background);
-    gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
-    gsKit_prim_sprite_texture(gsGlobal, background, 0.0f, 0.0f,
-                              0.0f, 0.0f, (float)width, (float)height,
-                              background->Width - 1, background->Height - 1, 0,
-                              GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
-    gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-  }
-
-  // Keep the orbit visible over the art and make a quiet area for the logos.
-  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
-  gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 1,
-                    GS_SETREG_RGBA(0x00, 0x02, 0x0C, 0x20));
-  gsKit_prim_sprite(gsGlobal, 0, 0, width / 2, height, 2,
-                    GS_SETREG_RGBA(0x02, 0x06, 0x12, 0x26));
-  gsKit_prim_quad_gouraud(gsGlobal, width - 350, 0, width, 0,
-                          width - 350, height, width, height, 2,
-                          GS_SETREG_RGBA(0x02, 0x06, 0x12, 0x08),
-                          GS_SETREG_RGBA(0x02, 0x06, 0x12, 0x72),
-                          GS_SETREG_RGBA(0x02, 0x06, 0x12, 0x08),
-                          GS_SETREG_RGBA(0x02, 0x06, 0x12, 0x72));
-  gsKit_prim_sprite(gsGlobal, 0, 0, width, headerHeight + 3, 3,
-                    GS_SETREG_RGBA(0x02, 0x05, 0x10, 0x4A));
-  gsKit_prim_sprite(gsGlobal, 0, height - footerHeight, width, height, 3,
-                    GS_SETREG_RGBA(0x02, 0x05, 0x10, 0x62));
-
-  drawTextWindow(keepoutArea + 10, headerHeight - getFontLineHeight(),
-                 width - keepoutArea, 0, 7, FontMainColor, ALIGN_LEFT, "ORBS");
-  snprintf(lineBuffer, sizeof(lineBuffer), "%d/%d", visualTitleIdx + 1,
-           titles->total);
-  drawTextWindow(width - 116, headerHeight - getFontLineHeight(),
-                 width - keepoutArea - 8, 0, 7, FontMainColor,
-                 ALIGN_RIGHT, lineBuffer);
-
-  gsKit_prim_sprite(gsGlobal, width - 283, centerY - 37,
-                    width - 35, centerY + 37, 4,
-                    GS_SETREG_RGBA(0x18, 0x34, 0x58, 0x56));
-  drawOrbitalDisc(width - 20, centerY, 10, 6,
-                  GS_SETREG_RGBA(0xD0, 0xEB, 0xFF, 0x80),
-                  GS_SETREG_RGBA(0x30, 0x8C, 0xD8, 0));
-  drawFormationOrbs(width * 27 / 100, centerY, width * 20 / 100,
-                (listBottom - listTop) * 36 / 100,
-                glassElapsedMs(now), 100, 5);
-
-  for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++) {
-    int position = (i - ORBS_LOGO_CACHE_FOCUS) * 1000 + flowOffset;
-    int distance = position < 0 ? -position : position;
-    int targetIdx = lunaNavWrap(titles->total,
-        selectedTitleIdx + i - ORBS_LOGO_CACHE_FOCUS);
-    int duplicate = 0;
-    int proximity;
-    float logoWidth;
-    float logoHeight;
-    float rowY;
-    if (distance > 1350)
-      continue;
-    for (int j = 0; j < ORBS_LOGO_CACHE_COUNT; j++) {
-      int otherPosition = (j - ORBS_LOGO_CACHE_FOCUS) * 1000 + flowOffset;
-      int otherDistance = otherPosition < 0 ? -otherPosition : otherPosition;
-      int otherTarget = lunaNavWrap(titles->total,
-          selectedTitleIdx + j - ORBS_LOGO_CACHE_FOCUS);
-      if (j != i && otherTarget == targetIdx &&
-          (otherDistance < distance || (otherDistance == distance && j < i))) {
-        duplicate = 1;
-        break;
-      }
-    }
-    if (duplicate)
-      continue;
-    proximity = distance < 1000 ? 1000 - distance : 0;
-    logoWidth = 188.0f + 44.0f * lunaNavEase(proximity) / 1000.0f;
-    logoHeight = 62.0f + 14.0f * lunaNavEase(proximity) / 1000.0f;
-    rowY = centerY + position * rowPitch / 1000.0f;
-    if (orbsLogoLoaded[i])
-      drawOrbsLogo(orbsLogoTextures[i], logoCenterX - logoWidth / 2.0f,
-                   rowY - logoHeight / 2.0f, logoWidth, logoHeight,
-                   i == visualFocus ? 0x80 : 0x58);
-    else {
-      formatPSBBNTitle(getTargetByIdx(titles, targetIdx)->name, title, 190);
-      drawTextWindow(width - 270, (int)rowY - getFontLineHeight() / 2,
-                     width - 35, (int)rowY + getFontLineHeight() / 2, 6,
-                     i == visualFocus ? FontMainColor : HeaderTextColor,
-                     ALIGN_CENTER, title);
-    }
-  }
-
-  const int footerY = height - footerHeight + 8;
-  const int circleX = 26;
-  const int crossX = width * 39 / 100;
-  const int triangleX = width * 69 / 100;
-  drawIconWindow(circleX, footerY, 0, height, 8, FontMainColor,
-                 ALIGN_CENTER, ICON_CIRCLE);
-  drawTextWindow(circleX + getIconWidth(ICON_CIRCLE) + 6, footerY,
-                 crossX - 8, height, 8, FontMainColor, ALIGN_VCENTER, "Views");
-  drawIconWindow(crossX, footerY, 0, height, 8, FontMainColor,
-                 ALIGN_CENTER, ICON_CROSS);
-  drawTextWindow(crossX + getIconWidth(ICON_CROSS) + 6, footerY,
-                 triangleX - 8, height, 8, FontMainColor, ALIGN_VCENTER, "Launch");
-  drawIconWindow(triangleX, footerY, 0, height, 8, FontMainColor,
-                 ALIGN_CENTER, ICON_TRIANGLE);
-  drawTextWindow(triangleX + getIconWidth(ICON_TRIANGLE) + 6, footerY,
-                 width - keepoutArea, height, 8, FontMainColor,
-                 ALIGN_VCENTER, "Options");
+  scrollOrbLastFrameMs = elapsedMs;
+  drawAmbientOrbs(centerX, centerY, radiusX, radiusY, elapsedMs,
+                  scrollOrbClockMs, fastScroll ? 3 : 1, 100,
+                  trailZ, scrollFocusX);
 }

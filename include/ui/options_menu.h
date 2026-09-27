@@ -4,7 +4,7 @@
 #include "target.h"
 
 int uiTitleOptionsLoop(Target *target, int *classicArtOverlap, int *orbsEnabled,
-                       int *orbsBackgroundSetting, int *glassColorPreset,
+                       int *ambientOrbsBackgroundSetting, int *glassColorPreset,
                        int *ambientEnabled);
 
 #endif

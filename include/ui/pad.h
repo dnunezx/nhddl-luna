@@ -17,4 +17,7 @@ int readInput(void);
 // Returns inputs on both gamepads
 int pollInput();
 
+// Also maps the left stick to the four directions for Scroll navigation.
+int pollScrollInput(void);
+
 #endif

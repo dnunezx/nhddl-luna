@@ -36,7 +36,8 @@ set(SOURCES
     src/ui/view_collection.c
   src/ui/view_grid.c
   src/ui/view_orbit.c
-  src/ui/view_orbs.c
+  src/ui/view_scroll.c
+  src/ui/ambient_orbs.c
     src/ui/pad.c
 
     # Devices

@@ -30,6 +30,9 @@
 #define CLASSIC_COVER_FADE_DURATION_MS 180
 #define COLLECTION_SCAN_HOLD_MS 450
 #define COLLECTION_SCAN_STEP_MS 100
+#define SCROLL_FAST_HOLD_MS 1500
+#define SCROLL_FAST_STEP_MS 90
+#define SCROLL_FAST_ANIMATION_MS 110
 
 typedef struct {
   int heldDirection;
@@ -39,6 +42,15 @@ typedef struct {
 } LunaCollectionScan;
 
 int lunaCollectionScanUpdate(LunaCollectionScan *scan, int direction, uint32_t now);
+
+typedef struct {
+  int heldDirection;
+  int active;
+  uint32_t holdStartMs;
+  uint32_t nextStepMs;
+} LunaScrollFast;
+
+int lunaScrollFastUpdate(LunaScrollFast *fast, int direction, uint32_t now);
 
 typedef struct {
   int direction;

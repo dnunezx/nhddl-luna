@@ -24,6 +24,26 @@ int lunaCollectionScanUpdate(LunaCollectionScan *scan, int direction, uint32_t n
   return direction;
 }
 
+int lunaScrollFastUpdate(LunaScrollFast *fast, int direction, uint32_t now) {
+  if (direction != fast->heldDirection) {
+    fast->heldDirection = direction;
+    fast->active = 0;
+    fast->holdStartMs = now;
+    fast->nextStepMs = now;
+  }
+  if (!direction)
+    return 0;
+  if (!fast->active) {
+    if (now - fast->holdStartMs < SCROLL_FAST_HOLD_MS)
+      return 0;
+    fast->active = 1;
+  }
+  if ((int32_t)(now - fast->nextStepMs) < 0)
+    return 0;
+  fast->nextStepMs = now + SCROLL_FAST_STEP_MS;
+  return direction;
+}
+
 int lunaNavWrap(int total, int index) {
   if (total <= 0)
     return -1;

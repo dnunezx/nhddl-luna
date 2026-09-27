@@ -8,6 +8,7 @@
 
 static unsigned char padBuffer[2][256] ALIGNED(64);
 static unsigned int prevInputs[2] = {0, 0};
+static unsigned char scrollStickCentered[2] = {0, 0};
 
 // Initializes gamepad input driver
 void initPad() {
@@ -17,6 +18,8 @@ void initPad() {
 
   prevInputs[0] = 0;
   prevInputs[1] = 0;
+  scrollStickCentered[0] = 0;
+  scrollStickCentered[1] = 0;
 }
 
 // Closes gamepad gamepad input driver
@@ -69,3 +72,34 @@ int readInput(void) { return readPad(0, 0) | readPad(1, 0); }
 
 // Returns inputs on both gamepads
 int pollInput() { return (pollPad(0, 0) | pollPad(1, 0)); }
+
+int pollScrollInput(void) {
+  int input = pollInput();
+  for (int port = 0; port < 2; port++) {
+    struct padButtonStatus buttons;
+    if (padRead(port, 0, &buttons) == 0) {
+      scrollStickCentered[port] = 0;
+      continue;
+    }
+    // Digital pads leave the stick bytes at zero, which looks like a held
+    // up-left stick unless the active pad mode is checked first.
+    const int mode = padInfoMode(port, 0, PAD_MODECURID, 0);
+    if (mode != PAD_TYPE_ANALOG && mode != PAD_TYPE_DUALSHOCK) {
+      scrollStickCentered[port] = 0;
+      continue;
+    }
+    const int horizontal = (int)buttons.ljoy_h - 128;
+    const int vertical = (int)buttons.ljoy_v - 128;
+    const int absHorizontal = horizontal < 0 ? -horizontal : horizontal;
+    const int absVertical = vertical < 0 ? -vertical : vertical;
+    if (absHorizontal < 24 && absVertical < 24)
+      scrollStickCentered[port] = 1;
+    if (!scrollStickCentered[port])
+      continue;
+    if (absVertical >= absHorizontal && absVertical >= 64)
+      input |= vertical < 0 ? PAD_UP : PAD_DOWN;
+    else if (absHorizontal >= 64)
+      input |= horizontal < 0 ? PAD_LEFT : PAD_RIGHT;
+  }
+  return input;
+}
