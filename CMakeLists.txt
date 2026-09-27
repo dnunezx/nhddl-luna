@@ -103,6 +103,7 @@ target_link_options(${EE_BIN}
 # Link libraries
 target_link_libraries(${EE_BIN}
     pad
+    poweroff
     patches
     fileXio
     libdebug.a

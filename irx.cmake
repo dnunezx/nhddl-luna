@@ -5,6 +5,7 @@ set(IRX_FILES
     mcserv
     fileXio
     iomanX
+    poweroff
     freepad
     ps2dev9
     bdm

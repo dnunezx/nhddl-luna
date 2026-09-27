@@ -5,7 +5,9 @@
 #include <ctype.h>
 #include <debug.h>
 #include <fcntl.h>
+#include <hdd-ioctl.h>
 #include <iopcontrol.h>
+#include <libpwroff.h>
 #include <loadfile.h>
 #include <sbv_patches.h>
 #include <sifrpc.h>
@@ -29,6 +31,7 @@
 // Embedded IOP modules
 IRX_DEFINE(iomanX);
 IRX_DEFINE(fileXio);
+IRX_DEFINE(poweroff);
 IRX_DEFINE(sio2man);
 IRX_DEFINE(mcman);
 IRX_DEFINE(mcserv);
@@ -78,6 +81,7 @@ static ModuleListEntry moduleList[] = {
     //
     INT_MODULE(iomanX, MODE_ALL, NULL),
     INT_MODULE(fileXio, MODE_ALL, NULL),
+    INT_MODULE(poweroff, MODE_ALL, NULL),
     INT_MODULE(sio2man, MODE_ALL, NULL),
     INT_MODULE(mcman, MODE_ALL, NULL),
     INT_MODULE(mcserv, MODE_ALL, NULL),
@@ -120,6 +124,21 @@ int loadModule(ModuleListEntry *mod);
 
 uint32_t loadedModules = 0;
 uint8_t isWarmReboot = 0;
+
+static void powerButtonPressed(void *arg) {
+  (void)arg;
+
+  // Finish metadata writes before shutting down the HDD and DEV9.
+  if (LAUNCHER_OPTIONS.mode & MODE_HDL) {
+    fileXioDevctl("pfs:", PDIOC_CLOSEALL, NULL, 0, NULL, 0);
+    fileXioSync("pfs0:", FXIO_WAIT);
+    fileXioUmount("pfs0:");
+  }
+  if (LAUNCHER_OPTIONS.mode & (MODE_ATA | MODE_HDL | MODE_UDPFS))
+    fileXioDevctl("dev9x:", DDIOC_OFF, NULL, 0, NULL, 0);
+
+  poweroffShutdown();
+}
 
 // Initializes IOP modules
 int initModules(ModeType modeType) {
@@ -218,6 +237,7 @@ int initModules(ModeType modeType) {
   }
 
   LAUNCHER_OPTIONS.mode |= modeType;
+  poweroffSetCallback(powerButtonPressed, NULL);
   return 0;
 }
 
