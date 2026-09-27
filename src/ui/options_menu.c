@@ -15,13 +15,9 @@
 #include <string.h>
 #include <unistd.h>
 
-#define OPTIONS_FADE_DURATION_MS 360
+#define OPTIONS_PAN_DURATION_MS 300
 #define OPTIONS_SELECTION_GLOW_DURATION_MS 110
 #define OPTIONS_GLOW_ROW_SCALE 256
-
-typedef struct {
-  GSTEXTURE libraryFrame;
-} OptionsBackdrop;
 
 typedef enum {
   OPTIONS_PER_GAME,
@@ -39,8 +35,7 @@ typedef struct {
   int initialized;
 } OptionsSelector;
 
-static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments,
-                              const OptionsBackdrop *backdrop);
+static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments);
 
 static const char *const gameRowLabels[LUNA_GAME_ROW_COUNT] = {
     "IOP: Fast reads", "IOP: Sync reads",
@@ -67,77 +62,60 @@ static const char *const viewRowLabels[UI_VIEW_ORBS + 1] = {
 #define OPTIONS_VIEW_ART_LAYOUT_ROW 1
 #define OPTIONS_VIEW_ROW_COUNT (UI_VIEW_ORBS + 2)
 
-// The last library frame stays in the other screen buffer while the options
-// screen draws repeatedly into the current buffer. No artwork texture or extra
-// full-size framebuffer allocation is needed for the backdrop.
-static void drawOptionsBackdrop(const OptionsBackdrop *backdrop) {
+// Give Options its own scene without carrying library text into the menu.
+static void drawOptionsSheet(void) {
   const int width = gsGlobal->Width;
   const int height = gsGlobal->Height;
-  const GSTEXTURE *frame = &backdrop->libraryFrame;
-  GSTEXTURE sharpFrame = *frame;
-  sharpFrame.Filter = GS_FILTER_NEAREST;
-  static const int sampleX[] = {-9, 9, 0, 0, 0};
-  static const int sampleY[] = {0, 0, -9, 9, 0};
-  // Each successive fixed-alpha blend gives all five samples equal weight.
-  static const int sampleAlpha[] = {0x80, 0x40, 0x2B, 0x20, 0x1A};
-
   gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
   gsKit_set_test(gsGlobal, GS_ATEST_OFF);
-  gsKit_prim_sprite_texture(gsGlobal, &sharpFrame, 0, 0, 0, 0, width, height,
-                            width, height, 0,
-                            GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
-
+  gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 0,
+                    GS_SETREG_RGBA(0x04, 0x0A, 0x18, 0x80));
   gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-  for (int i = 0; i < 5; i++) {
-    // The GS can fetch outside the framebuffer when a shifted sample crosses
-    // an edge. Clip both rectangles so every texture coordinate stays valid.
-    const int left = sampleX[i] < 0 ? -sampleX[i] : 0;
-    const int top = sampleY[i] < 0 ? -sampleY[i] : 0;
-    const int right = sampleX[i] > 0 ? width - sampleX[i] : width;
-    const int bottom = sampleY[i] > 0 ? height - sampleY[i] : height;
-    gsKit_set_primalpha(gsGlobal,
-                        GS_SETREG_ALPHA(0, 1, 2, 1, sampleAlpha[i]), 0);
-    gsKit_prim_sprite_texture(gsGlobal, frame, left, top,
-                              left + sampleX[i], top + sampleY[i],
-                              right, bottom, right + sampleX[i],
-                              bottom + sampleY[i], 0,
-                              GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
-  }
-  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
+  drawSharedLibraryBackground(uiNowMs());
+  gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 0,
+                    glassPresetColor(0x02, 0x07, 0x16, 0x38));
+  gsKit_prim_sprite(gsGlobal, 32, 80, width - 32,
+                    height - footerHeight + 1, 1,
+                    glassPresetColor(0x02, 0x08, 0x18, 0x48));
+  drawGlassPanel(30, 78, width - 30, height - footerHeight + 3, 2);
 }
 
-static void drawOptionsSheet(const OptionsBackdrop *backdrop) {
-  drawOptionsBackdrop(backdrop);
-  gsKit_prim_sprite(gsGlobal, 0, 0, gsGlobal->Width, gsGlobal->Height, 0,
-                    GS_SETREG_RGBA(0x02, 0x08, 0x16, 0x70));
-}
-
-// Blend the untouched library frame over the finished menu. Fading that copy
-// away reveals the options and gradually brings in the dark, blurred backdrop.
-static void drawOptionsFade(const OptionsBackdrop *backdrop, int progress) {
-  if (progress >= 1000)
+// The library frame stays in the other screen buffer. Moving it down reveals
+// Options from the top in Collection; other views reveal it from the left.
+static void drawOptionsPanCover(const GSTEXTURE *libraryFrame, int offset,
+                                int panToTop) {
+  const int width = gsGlobal->Width;
+  const int height = gsGlobal->Height;
+  if (offset >= (panToTop ? height : width))
     return;
-  const GSTEXTURE *frame = &backdrop->libraryFrame;
-  GSTEXTURE sharpFrame = *frame;
-  sharpFrame.Filter = GS_FILTER_NEAREST;
-  int alpha = ((1000 - progress) * 0x80 + 500) / 1000;
+  gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
   gsKit_set_test(gsGlobal, GS_ATEST_OFF);
-  gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 2, 1, alpha), 0);
-  gsKit_prim_sprite_texture(gsGlobal, &sharpFrame, 0, 0, 0, 0,
-                            gsGlobal->Width, gsGlobal->Height,
-                            gsGlobal->Width, gsGlobal->Height, 0,
+  gsKit_prim_sprite_texture(gsGlobal, libraryFrame,
+                            panToTop ? 0 : offset, panToTop ? offset : 0,
+                            0, 0, width, height,
+                            width - (panToTop ? 0 : offset),
+                            height - (panToTop ? offset : 0), 0,
                             GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
-  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+  gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
+}
+
+static int optionsPanOffset(uint32_t elapsed, int opening, int panToTop) {
+  int progress = elapsed >= OPTIONS_PAN_DURATION_MS
+                     ? 1000 : (int)(elapsed * 1000U / OPTIONS_PAN_DURATION_MS);
+  int eased = (int)((int64_t)progress * progress *
+                    (3000 - 2 * progress) / 1000000);
+  int span = panToTop ? gsGlobal->Height : gsGlobal->Width;
+  int offset = span * (opening ? eased : 1000 - eased) / 1000;
+  return panToTop ? psbbnFieldStableY(offset) : offset;
 }
 
 static void presentOptionsFrame(void) {
   gsKit_queue_exec(gsGlobal);
   gsKit_finish();
   gsKit_vsync_wait();
-  // Keep ActiveBuffer fixed: the other buffer holds the untouched library view.
+  // Keep ActiveBuffer fixed while redrawing the options screen.
   gsKit_display_buffer(gsGlobal);
   usleep(1000);
 }
@@ -300,7 +278,7 @@ static void drawOrbsComingSoon(GSTEXTURE *texture, int centerX, int centerY,
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
 }
 
-static void drawTitleOptionsFrame(const OptionsBackdrop *backdrop, Target *target,
+static void drawTitleOptionsFrame(Target *target,
                                   OptionsPage page, int selectedGameRow,
                                   int selectedGlobal, int selectedView,
                                   int pendingOverlap, uint32_t pendingViews,
@@ -309,14 +287,16 @@ static void drawTitleOptionsFrame(const OptionsBackdrop *backdrop, Target *targe
                                   GSTEXTURE *orbsPreview,
                                   const LunaGameOptions *gameOptions, int gameDirty,
                                   int systemDirty, int viewsDirty,
-                                  int saveError, int progress,
+                                  int saveError,
+                                  const GSTEXTURE *libraryFrame, int panOffset,
+                                  int panToTop,
                                   OptionsSelector *selector) {
   int baseX = keepoutArea + 10;
   const int lineHeight = getFontLineHeight();
   // The destination buffer still has the library's old depth values. Draw
   // this composed screen in command order, then restore normal library depth.
   gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
-  drawOptionsSheet(backdrop);
+  drawOptionsSheet();
 
   snprintf(lineBuffer, sizeof(lineBuffer), "Options");
   drawTextWindow(baseX, headerHeight - lineHeight,
@@ -449,7 +429,8 @@ static void drawTitleOptionsFrame(const OptionsBackdrop *backdrop, Target *targe
                    page == OPTIONS_GLOBAL ? "Could not save global settings" :
                    page == OPTIONS_VIEWS ? "Could not save views" :
                                            "Could not save game settings");
-  drawOptionsFade(backdrop, progress);
+  if (libraryFrame != NULL)
+    drawOptionsPanCover(libraryFrame, panOffset, panToTop);
   gsKit_set_test(gsGlobal, GS_ZTEST_ON);
   presentOptionsFrame();
 }
@@ -465,7 +446,8 @@ static int optionsGlobalDirty(int pendingBackground, int pendingGlassColor,
 // Returns -1 if error occurs
 int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
                        int *ambientOrbsBackgroundSetting, int *glassColorSetting,
-                       int *ambientEnabled, uint32_t *enabledViews) {
+                       int *ambientEnabled, uint32_t *enabledViews,
+                       int panToTop) {
   int res = 0;
   int saveError = 0;
   int pendingOverlap = *classicArtOverlap;
@@ -486,46 +468,36 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
   lunaGameOptionsRead(&gameOptions, titleArguments);
   int input = 0;
 
-  OptionsBackdrop backdrop = {0};
-  backdrop.libraryFrame.Width = gsGlobal->Width;
-  backdrop.libraryFrame.Height = gsGlobal->Height;
-  backdrop.libraryFrame.PSM = gsGlobal->PSM;
-  backdrop.libraryFrame.TBW = gsGlobal->Width / 64;
-  backdrop.libraryFrame.Vram = gsGlobal->ScreenBuffer[(gsGlobal->ActiveBuffer ^ 1) & 1];
-  backdrop.libraryFrame.Filter = GS_FILTER_LINEAR;
   GSTEXTURE orbsPreview = {0};
   int orbsPreviewAttempted = 0;
   int orbsPreviewLoaded = 0;
 
-  uint32_t fadeStart = uiNowMs();
-  int progress;
-  int closeRequested = 0;
-  int triangleReleased = 0;
+  GSTEXTURE libraryFrame = {0};
+  libraryFrame.Width = gsGlobal->Width;
+  libraryFrame.Height = gsGlobal->Height;
+  libraryFrame.PSM = gsGlobal->PSM;
+  libraryFrame.TBW = gsGlobal->Width / 64;
+  libraryFrame.Vram = gsGlobal->ScreenBuffer[(gsGlobal->ActiveBuffer ^ 1) & 1];
+  libraryFrame.Filter = GS_FILTER_NEAREST;
+
+  uint32_t panStart = uiNowMs();
+  int panOffset;
   do {
-    uint32_t elapsed = uiNowMs() - fadeStart;
-    progress = elapsed >= OPTIONS_FADE_DURATION_MS
-                   ? 1000 : (int)(elapsed * 1000U / OPTIONS_FADE_DURATION_MS);
+    panOffset = optionsPanOffset(uiNowMs() - panStart, 1, panToTop);
     int systemDirty = optionsGlobalDirty(
         pendingBackground, pendingGlassColor, pendingAmbient,
         *ambientOrbsBackgroundSetting,
         *glassColorSetting, *ambientEnabled);
     int viewsDirty = pendingViews != *enabledViews ||
                      pendingOverlap != *classicArtOverlap;
-    drawTitleOptionsFrame(&backdrop, target, page, selectedGameRow,
+    drawTitleOptionsFrame(target, page, selectedGameRow,
                           selectedGlobal, selectedView, pendingOverlap, pendingViews,
                           pendingBackground, pendingGlassColor, pendingAmbient,
-                          NULL,
-                          &gameOptions, titleArgumentsChanged,
-                          systemDirty, viewsDirty, saveError, progress, &selector);
-    int heldInput = pollInput();
-    if (!(heldInput & PAD_TRIANGLE))
-      triangleReleased = 1;
-    else if (triangleReleased)
-      closeRequested = 1;
-  } while (progress < 1000);
-
-  if (closeRequested)
-    goto exit;
+                          NULL, &gameOptions, titleArgumentsChanged,
+                          systemDirty, viewsDirty, saveError,
+                          &libraryFrame, panOffset, panToTop, &selector);
+    pollInput();
+  } while (panOffset < (panToTop ? gsGlobal->Height : gsGlobal->Width));
 
   while (1) {
     if (page == OPTIONS_ORBS && !orbsPreviewAttempted) {
@@ -541,12 +513,13 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
         *glassColorSetting, *ambientEnabled);
     int viewsDirty = pendingViews != *enabledViews ||
                      pendingOverlap != *classicArtOverlap;
-    drawTitleOptionsFrame(&backdrop, target, page, selectedGameRow,
+    drawTitleOptionsFrame(target, page, selectedGameRow,
                           selectedGlobal, selectedView, pendingOverlap, pendingViews,
                           pendingBackground, pendingGlassColor, pendingAmbient,
                           orbsPreviewLoaded ? &orbsPreview : NULL,
                           &gameOptions, titleArgumentsChanged,
-                          systemDirty, viewsDirty, saveError, 1000, &selector);
+                          systemDirty, viewsDirty, saveError,
+                          NULL, 0, panToTop, &selector);
 
     // Process user inputs
     input = readInput();
@@ -639,7 +612,7 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
     if (selectedGameRow == LUNA_GAME_LAUNCH_ARGUMENTS &&
         (input & (PAD_CROSS | PAD_CIRCLE))) {
       // Open the full argument list from its visible Game row.
-      res = uiArgumentListLoop(target, titleArguments, &backdrop);
+      res = uiArgumentListLoop(target, titleArguments);
       if (res < 0)
         goto exit;
       if (res == 2) {
@@ -674,17 +647,16 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
   }
 exit:
   if (res >= 0) {
-    fadeStart = uiNowMs();
+    panStart = uiNowMs();
     do {
-      uint32_t elapsed = uiNowMs() - fadeStart;
-      progress = elapsed >= OPTIONS_FADE_DURATION_MS
-                     ? 0 : 1000 - (int)(elapsed * 1000U / OPTIONS_FADE_DURATION_MS);
-      drawTitleOptionsFrame(&backdrop, target, page, selectedGameRow,
+      panOffset = optionsPanOffset(uiNowMs() - panStart, 0, panToTop);
+      drawTitleOptionsFrame(target, page, selectedGameRow,
                             selectedGlobal, selectedView, pendingOverlap, pendingViews,
                             pendingBackground, pendingGlassColor, pendingAmbient,
                             orbsPreviewLoaded ? &orbsPreview : NULL,
-                            &gameOptions, 0, 0, 0, 0, progress, &selector);
-    } while (progress > 0);
+                            &gameOptions, 0, 0, 0, 0,
+                            &libraryFrame, panOffset, panToTop, &selector);
+    } while (panOffset > 0);
   }
   if (orbsPreviewLoaded)
     gsKit_TexManager_free(gsGlobal, &orbsPreview);
@@ -695,15 +667,14 @@ exit:
 
 // LUNA's advanced view of the merged game and global launch arguments.
 // Returns -1 after a failed launch, 0 on Back, 1 after edits, or 2 after Save.
-static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments,
-                              const OptionsBackdrop *backdrop) {
+static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments) {
   int selectedArgIdx = 0;
   int saveError = 0;
   int changed = 0;
   Argument *curArgument = titleArguments->first;
   while (1) {
     gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
-    drawOptionsSheet(backdrop);
+    drawOptionsSheet();
     const int baseX = keepoutArea + 10;
     const int lineHeight = getFontLineHeight();
     const int menuTop = headerHeight + 2 * lineHeight + 8;

@@ -1218,7 +1218,8 @@ int uiLoop(TargetList *titles) {
       // Enter title options screen
       if ((res = uiTitleOptionsLoop(curTarget, &classicArtOverlap,
                                     &ambientOrbsBackground, &glassColorSetting,
-                                    &ambientEnabled, &enabledViews)) < 0) {
+                                    &ambientEnabled, &enabledViews,
+                                    view == UI_VIEW_PSBBN)) < 0) {
         // Something went wrong, main loop must exit immediately
         ambientStop();
         freeTargetList(favoriteTitles);
