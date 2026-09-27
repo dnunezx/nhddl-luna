@@ -644,6 +644,11 @@ int loadPNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path)
   return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 1);
 }
 
+int loadPNGTextureRGBAMemory(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
+                             const unsigned char *data, size_t size) {
+  return gsKit_texture_png_mem(gsGlobal, texture, (void *)data, size, 0, 1);
+}
+
 int decodePNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path) {
   return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 0);
 }

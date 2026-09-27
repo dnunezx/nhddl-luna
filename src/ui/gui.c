@@ -31,6 +31,7 @@
 #define PSBBN_TIMER_TICKS_PER_MS 576ULL
 #define GRID_LEFT_SHOULDERS (PAD_L1 | PAD_L2)
 #define GRID_RIGHT_SHOULDERS (PAD_R1 | PAD_R2)
+#define SPLASH_MIN_VISIBLE_MS 3400
 
 void closeUI();
 int uiLoop(TargetList *titles);
@@ -41,6 +42,7 @@ GSGLOBAL *gsGlobal;
 char lineBuffer[255];
 static int ambientOrbsBackground = 0;
 static int glassColorSetting = GLASS_COLOR_ORIGINAL;
+static uint32_t splashVisibleStartMs;
 
 const int keepoutArea = 20;
 const int headerHeight = 40;
@@ -67,6 +69,7 @@ int psbbnFieldStableY(int y) {
 int psbbnFieldStableHeight(void) {
   return (gsGlobal->Interlace == GS_INTERLACED) ? 2 : 1;
 }
+
 void initVMode(GSGLOBAL *gsGlobal) {
   switch (LAUNCHER_OPTIONS.vmode) {
   case GS_MODE_NTSC:
@@ -240,8 +243,8 @@ int uiLoop(TargetList *titles) {
   int classicDisplayedDiscAvailable = 0;
   int classicPreviousCoverAvailable = 0;
   int classicArtOverlap = 0;
-  int orbsEnabled = 0;
   int ambientEnabled = 1;
+  uint32_t enabledViews = UI_VIEW_ALL_MASK;
   uint32_t classicArtDueMs = 0;
   uint32_t classicCoverFadeStartMs = 0;
   LunaNavRepeatState classicRepeat = {0};
@@ -272,15 +275,17 @@ int uiLoop(TargetList *titles) {
   }
   free(lastTitle);
   view = loadLastLibraryView(curTarget);
-  orbsEnabled = loadOrbsViewEnabled(curTarget);
+  enabledViews = loadEnabledLibraryViews(curTarget);
+  if (!(enabledViews & (1U << view)))
+    view = lunaNavNextView(view, enabledViews);
+  if (view == UI_VIEW_ORBIT)
+    resetAmbientOrbsOrbit(uiNowMs());
   ambientOrbsBackground = loadAmbientOrbsBackground(curTarget);
   setAmbientOrbsBackgroundStyle(ambientOrbsBackground);
   glassColorSetting = loadGlassColorPreset(curTarget);
   setGlassColorPreset((GlassColorPreset)glassColorSetting);
   ambientEnabled = loadAmbientSoundEnabled(curTarget);
   ambientSetEnabled(ambientEnabled);
-  if (view == UI_VIEW_ORBS && !orbsEnabled)
-    view = UI_VIEW_CLASSIC;
   classicArtOverlap = loadClassicArtOverlap(curTarget);
   setClassicArtOverlap(classicArtOverlap);
 
@@ -309,6 +314,7 @@ int uiLoop(TargetList *titles) {
   int prevInput = 0;
   int input = 0;
   int optionsTriangleHeld = 0;
+  int forceViewSwitch = 0;
   while (1) {
     gsKit_clear(gsGlobal, BGColor);
     gsKit_TexManager_nextFrame(gsGlobal);
@@ -811,6 +817,17 @@ int uiLoop(TargetList *titles) {
       }
     }
 
+    if (forceViewSwitch) {
+      // Reuse the normal view transition after disabling the active view.
+      input = PAD_CIRCLE;
+      prevInput = 0;
+      frameCount = 0;
+      gridCascadeActive = 0;
+      gridFastTrackActive = 0;
+      gridShoulderDirection = 0;
+      forceViewSwitch = 0;
+    }
+
     if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT || view == UI_VIEW_ORBS) {
       // Held navigation starts a new step roughly every 180 ms while each
       // glide lasts 420 ms. The accumulated fractional offset keeps the whole
@@ -968,7 +985,11 @@ int uiLoop(TargetList *titles) {
       return -1;
     } else if (input & PAD_CIRCLE) {
       UILibraryView previousView = view;
-      view = lunaNavNextView(view, orbsEnabled);
+      view = lunaNavNextView(view, enabledViews);
+      if (view == previousView)
+        continue;
+      if (view == UI_VIEW_ORBIT)
+        resetAmbientOrbsOrbit(uiNowMs());
       if (previousView == UI_VIEW_ORBS || view == UI_VIEW_ORBS)
         resetAmbientOrbsScroll();
       scrollFast = (LunaScrollFast){0};
@@ -1195,31 +1216,19 @@ int uiLoop(TargetList *titles) {
                 lunaNavMarkedCount(favoriteFlags, titles->total) > 0)) {
       prevInput = 0; // Reset previous input
       // Enter title options screen
-      if ((res = uiTitleOptionsLoop(curTarget, &classicArtOverlap, &orbsEnabled,
+      if ((res = uiTitleOptionsLoop(curTarget, &classicArtOverlap,
                                     &ambientOrbsBackground, &glassColorSetting,
-                                    &ambientEnabled)) < 0) {
+                                    &ambientEnabled, &enabledViews)) < 0) {
         // Something went wrong, main loop must exit immediately
         ambientStop();
         freeTargetList(favoriteTitles);
         free(favoriteFlags);
         return -1;
       }
-      if (view == UI_VIEW_ORBS && !orbsEnabled) {
-        releaseOrbsArt();
-        view = UI_VIEW_CLASSIC;
-        isCoverUninitialized = loadCoverArt(curTarget->device, curTarget->id);
-        isDiscUninitialized = loadDiscArt(curTarget->device, curTarget->id);
-        classicDisplayedCoverAvailable = !isCoverUninitialized;
-        classicDisplayedDiscAvailable = !isDiscUninitialized;
-        classicPreviousCoverAvailable = 0;
-        classicArtRequestedIdx = -1;
-        classicNavHeld = 0;
-        classicRepeat.direction = 0;
-        if (saveLastLibraryView(curTarget, view))
-          DPRINTF("WARN: Could not save selected library view\n");
-      }
       setAmbientOrbsBackgroundStyle(ambientOrbsBackground);
       setGlassColorPreset((GlassColorPreset)glassColorSetting);
+      if (!(enabledViews & (1U << view)))
+        forceViewSwitch = 1;
       optionsTriangleHeld = (pollInput() & PAD_TRIANGLE) != 0;
       input = 0;
     } else if (input & PAD_START) {
@@ -1324,6 +1333,8 @@ static uint8_t threadStack[THREAD_STACK_SIZE] __attribute__((aligned(16)));
 // Initializes and starts UI splash thread
 int startSplashScreen() {
   DPRINTF("Starting UI splash thread\n");
+  splashVisibleStartMs = uiNowMs();
+  resetAmbientOrbsSplash(splashVisibleStartMs);
   // Initialize splash semaphores
   ee_sema_t semaphore;
   semaphore.init_count = 0;
@@ -1359,7 +1370,7 @@ void uiSplashThread() {
   gsKit_mode_switch(gsGlobal, GS_ONESHOT);
   int logStartY = gsGlobal->Height - footerHeight - getFontLineHeight() * 3;
 
-  // Redraw continuously so the loading crystal keeps moving between boot
+  // Redraw continuously so the formations keep moving between boot
   // messages. The main thread still owns every initialization and scan step.
   while (PollSema(logBuffer.doneSema) != logBuffer.doneSema) {
     if (PollSema(logBuffer.newStringSema) == logBuffer.newStringSema) {
@@ -1367,9 +1378,11 @@ void uiSplashThread() {
     }
 
     gsKit_TexManager_nextFrame(gsGlobal);
-    drawSplashGlassBackground(uiNowMs());
-
-    drawBootLogo(gsGlobal->Width / 2, keepoutArea + 8, gsGlobal->Width * 41 / 100, 2);
+    gsKit_clear(gsGlobal, GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80));
+    const uint32_t now = uiNowMs();
+    drawAmbientOrbsSplash(gsGlobal->Width / 2, gsGlobal->Height * 48 / 100,
+                          gsGlobal->Width * 31 / 100,
+                          gsGlobal->Height * 36 / 100, now, 1);
 
     // Successful boot stays intentionally minimal. Only surface a fatal error
     // so a failed initialization cannot be mistaken for endless loading.
@@ -1390,6 +1403,9 @@ void uiSplashThread() {
 
 // Stops UI splash thread
 void stopUISplashThread() {
+  // A fast scan otherwise exits before the LUNA-to-cube animation is visible.
+  while ((uint32_t)(uiNowMs() - splashVisibleStartMs) < SPLASH_MIN_VISIBLE_MS)
+    usleep(16000);
   SignalSema(logBuffer.doneSema);
   SignalSema(logBuffer.newStringSema);
   WaitSema(logBuffer.drawnSema);

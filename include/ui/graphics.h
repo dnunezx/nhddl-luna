@@ -3,6 +3,7 @@
 #define _UI_GRAPHICS_H_
 
 #include <gsKit.h>
+#include <stddef.h>
 #include <stdint.h>
 
 // Predefined colors
@@ -26,6 +27,10 @@ extern GSTEXTURE *gridSelector;
 
 // Loads a PNG file through LUNA's RGBA-normalizing decoder.
 int loadPNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path);
+
+// Loads an embedded PNG and uploads it to GS VRAM.
+int loadPNGTextureRGBAMemory(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
+                             const unsigned char *data, size_t size);
 
 // Decodes a PNG into EE memory without uploading it to GS VRAM.
 int decodePNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path);

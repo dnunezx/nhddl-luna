@@ -65,6 +65,8 @@ typedef enum {
   UI_VIEW_ORBS = 4,
 } UILibraryView;
 
+#define UI_VIEW_ALL_MASK ((1U << (UI_VIEW_ORBS + 1)) - 1U)
+
 int lunaNavWrap(int total, int index);
 int lunaNavRepeatStep(LunaNavRepeatState *state, int direction, uint32_t now,
                       uint32_t initialDelayMs, uint32_t intervalMs);
@@ -86,6 +88,6 @@ int lunaNavMarkedByRank(const uint8_t *marked, int total, int rank);
 int lunaNavMarkedStep(const uint8_t *marked, int total, int index, int direction);
 int lunaNavMarkedPage(const uint8_t *marked, int total, int index, int pageSize,
                       int direction);
-UILibraryView lunaNavNextView(UILibraryView view, int orbsEnabled);
+UILibraryView lunaNavNextView(UILibraryView view, uint32_t enabledViews);
 
 #endif

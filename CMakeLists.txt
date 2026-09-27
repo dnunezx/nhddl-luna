@@ -50,6 +50,7 @@ set(SOURCES
     src/devices/hdl.c
     src/devices/title_id.c
 )
+
 include(irx.cmake)
 
 # Get git version for build info
@@ -110,6 +111,7 @@ target_link_libraries(${EE_BIN}
     dmakit
     png
     z
+    m
     tiff
     audsrv
 )

@@ -238,6 +238,11 @@ int lunaNavMarkedPage(const uint8_t *marked, int total, int index, int pageSize,
   return lunaNavMarkedByRank(marked, total, rank);
 }
 
-UILibraryView lunaNavNextView(UILibraryView view, int orbsEnabled) {
-  return (UILibraryView)((view + 1) % (orbsEnabled ? UI_VIEW_ORBS + 1 : UI_VIEW_ORBIT + 1));
+UILibraryView lunaNavNextView(UILibraryView view, uint32_t enabledViews) {
+  for (int step = 1; step <= UI_VIEW_ORBS + 1; step++) {
+    UILibraryView next = (UILibraryView)((view + step) % (UI_VIEW_ORBS + 1));
+    if (enabledViews & (1U << next))
+      return next;
+  }
+  return UI_VIEW_CLASSIC;
 }

@@ -5,14 +5,15 @@
 #include <errno.h>
 #include <ps2sdkapi.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const char lastViewPath[] = "/lastView.txt";
 static const char lastViewTempPath[] = "/lastView.txt.tmp";
+static const char enabledViewsPath[] = "/enabledViews.txt";
+static const char enabledViewsTempPath[] = "/enabledViews.txt.tmp";
 static const char classicLayoutPath[] = "/classicLayout.txt";
 static const char classicLayoutTempPath[] = "/classicLayout.txt.tmp";
-static const char orbsViewPath[] = "/orbsView.txt";
-static const char orbsViewTempPath[] = "/orbsView.txt.tmp";
 static const char backgroundPath[] = "/background.txt";
 static const char backgroundTempPath[] = "/background.txt.tmp";
 static const char glassColorPath[] = "/glassColor.txt";
@@ -179,64 +180,6 @@ int saveClassicArtOverlap(Target *target, int overlap) {
   return 0;
 }
 
-int loadOrbsViewEnabled(Target *target) {
-  struct DeviceMapEntry *device = viewDevice(target);
-  const char *paths[] = {orbsViewTempPath, orbsViewPath};
-  char path[PATH_MAX];
-  char value[24];
-
-  if (device == NULL || device->mountpoint == NULL)
-    return 0;
-  for (int i = 0; i < 2; i++) {
-    if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
-      continue;
-    FILE *file = fopen(path, "r");
-    if (file == NULL)
-      continue;
-    int readable = fgets(value, sizeof(value), file) != NULL;
-    fclose(file);
-    if (!readable)
-      continue;
-    value[strcspn(value, "\r\n")] = '\0';
-    if (!strcmp(value, "enabled"))
-      return 1;
-    if (!strcmp(value, "disabled"))
-      return 0;
-  }
-  return 0;
-}
-
-int saveOrbsViewEnabled(Target *target, int enabled) {
-  struct DeviceMapEntry *device = viewDevice(target);
-  char directory[PATH_MAX];
-  char path[PATH_MAX];
-  char tempPath[PATH_MAX];
-  struct stat st;
-  FILE *file;
-
-  if (device == NULL || device->mountpoint == NULL)
-    return -EINVAL;
-  if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
-      buildConfigFilePath(path, sizeof(path), device->mountpoint, orbsViewPath) ||
-      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, orbsViewTempPath))
-    return -ENAMETOOLONG;
-  if (stat(directory, &st) == -1 && mkdir(directory, 0777))
-    return -EIO;
-  file = fopen(tempPath, "w");
-  if (file == NULL)
-    return -EIO;
-  int writeResult = fprintf(file, "%s\n", enabled ? "enabled" : "disabled");
-  int closeResult = fclose(file);
-  if (writeResult < 0 || closeResult) {
-    remove(tempPath);
-    return -EIO;
-  }
-  remove(path);
-  if (rename(tempPath, path))
-    return -EIO;
-  return 0;
-}
-
 int loadAmbientOrbsBackground(Target *target) {
   struct DeviceMapEntry *device = viewDevice(target);
   const char *paths[] = {backgroundTempPath, backgroundPath};
@@ -284,6 +227,64 @@ int saveAmbientOrbsBackground(Target *target, int enabled) {
   if (file == NULL)
     return -EIO;
   int writeResult = fprintf(file, "%s\n", enabled ? "orbs" : "stars");
+  int closeResult = fclose(file);
+  if (writeResult < 0 || closeResult) {
+    remove(tempPath);
+    return -EIO;
+  }
+  remove(path);
+  if (rename(tempPath, path))
+    return -EIO;
+  return 0;
+}
+
+uint32_t loadEnabledLibraryViews(Target *target) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  const char *paths[] = {enabledViewsTempPath, enabledViewsPath};
+  char path[PATH_MAX];
+  char value[24];
+
+  if (device == NULL || device->mountpoint == NULL)
+    return UI_VIEW_ALL_MASK;
+  for (int i = 0; i < 2; i++) {
+    if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
+      continue;
+    FILE *file = fopen(path, "r");
+    if (file == NULL)
+      continue;
+    int readable = fgets(value, sizeof(value), file) != NULL;
+    fclose(file);
+    if (!readable)
+      continue;
+    char *end;
+    unsigned long mask = strtoul(value, &end, 10);
+    if ((*end == '\0' || *end == '\r' || *end == '\n') &&
+        mask != 0 && (mask & ~UI_VIEW_ALL_MASK) == 0)
+      return (uint32_t)mask;
+  }
+  return UI_VIEW_ALL_MASK;
+}
+
+int saveEnabledLibraryViews(Target *target, uint32_t enabledViews) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  char directory[PATH_MAX];
+  char path[PATH_MAX];
+  char tempPath[PATH_MAX];
+  struct stat st;
+
+  if (device == NULL || device->mountpoint == NULL || enabledViews == 0 ||
+      (enabledViews & ~UI_VIEW_ALL_MASK) != 0)
+    return -EINVAL;
+  if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
+      buildConfigFilePath(path, sizeof(path), device->mountpoint, enabledViewsPath) ||
+      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, enabledViewsTempPath))
+    return -ENAMETOOLONG;
+  if (stat(directory, &st) == -1 && mkdir(directory, 0777))
+    return -EIO;
+  FILE *file = fopen(tempPath, "w");
+  if (file == NULL)
+    return -EIO;
+  int writeResult = fprintf(file, "%lu\n", (unsigned long)enabledViews);
   int closeResult = fclose(file);
   if (writeResult < 0 || closeResult) {
     remove(tempPath);

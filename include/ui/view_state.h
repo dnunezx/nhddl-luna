@@ -10,14 +10,14 @@
 UILibraryView loadLastLibraryView(Target *target);
 int saveLastLibraryView(Target *target, UILibraryView view);
 
+// All five views are enabled when no valid selection has been saved.
+uint32_t loadEnabledLibraryViews(Target *target);
+int saveEnabledLibraryViews(Target *target, uint32_t enabledViews);
+
 // Classic artwork layout is a library-wide preference on the metadata drive.
 // Missing or invalid state keeps the original separate cover and disc layout.
 int loadClassicArtOverlap(Target *target);
 int saveClassicArtOverlap(Target *target, int overlap);
-
-// Scroll is an experimental library view and is disabled by default.
-int loadOrbsViewEnabled(Target *target);
-int saveOrbsViewEnabled(Target *target, int enabled);
 
 // The shared library background defaults to stars and cubes.
 int loadAmbientOrbsBackground(Target *target);

@@ -16,12 +16,11 @@ void initGlassStarAtlas(void);
 void setGlassColorPreset(GlassColorPreset preset);
 GlassColorPreset getGlassColorPreset(void);
 uint64_t glassPresetColor(int red, int green, int blue, int alpha);
+uint64_t glassLightColor(int red, int green, int blue, int alpha);
 uint64_t glassCoverAccentColor(int alpha);
 uint64_t glassMissingCoverColor(int alpha);
 uint64_t glassMissingCoverTextColor(void);
 uint64_t glassMissingCoverDiamondColor(int alpha);
-void drawSplashGlassBackground(uint32_t now);
-void setAmbientOrbsBackgroundStyle(int enabled);
 int orbsVisualCacheIndex(int flowOffset);
 void drawOrbsView(TargetList *titles, int selectedTitleIdx,
                   int flowOffset, int visualFocus, int fastScroll,

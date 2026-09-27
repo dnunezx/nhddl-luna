@@ -4,7 +4,6 @@
 #include "ui/ambient_orbs.h"
 #include <stdio.h>
 
-static int ambientOrbsBackgroundStyle;
 static GlassColorPreset glassColorPreset = GLASS_COLOR_ORIGINAL;
 
 void setGlassColorPreset(GlassColorPreset preset) {
@@ -95,6 +94,19 @@ void resetGlassVisuals(uint32_t startMs) {
 
 static uint32_t glassElapsedMs(uint32_t frameNowMs) {
   return frameNowMs - glassStartMs;
+}
+
+uint64_t glassLightColor(int red, int green, int blue, int alpha) {
+  if (glassColorPreset == GLASS_COLOR_BLACK) {
+    int brightness = red;
+    if (green > brightness)
+      brightness = green;
+    if (blue > brightness)
+      brightness = blue;
+    brightness = 0xC8 * brightness / 255;
+    return GS_SETREG_RGBA(brightness, brightness, brightness, alpha);
+  }
+  return glassPresetColor(red, green, blue, alpha);
 }
 
 static uint32_t glassPhase(uint32_t elapsedMs, uint32_t periodMs, uint32_t offsetMs) {
@@ -242,8 +254,8 @@ static void drawGlassBackgroundStarSprite(float x, float y, int size, int layer,
 }
 
 static uint64_t glassColor(int red, int green, int blue, int alpha, int brightness) {
-  return glassPresetColor(clampColor(red + brightness), clampColor(green + brightness),
-                          clampColor(blue + brightness), alpha);
+  return glassLightColor(clampColor(red + brightness), clampColor(green + brightness),
+                         clampColor(blue + brightness), alpha);
 }
 
 void drawGlassDiamond(int centerX, int centerY, int radius, int z, uint64_t color) {
@@ -479,37 +491,9 @@ static void drawGlassBackground(uint32_t frameNowMs) {
   drawGlassCube(farX, farY, 7, glassPhase(elapsedMs, 26000, 12000), 0x78, 0x68, 0xC8, 1);
 }
 
-void drawSplashGlassBackground(uint32_t now) {
-  const uint32_t elapsedMs = glassElapsedMs(now);
-  // Keep the transparent logo over a visibly blue-purple field.
-  const uint64_t topLeft = GS_SETREG_RGBA(0x04, 0x0B, 0x26, 0x80);
-  const uint64_t topRight = GS_SETREG_RGBA(0x20, 0x10, 0x48, 0x80);
-  const uint64_t bottomLeft = GS_SETREG_RGBA(0x08, 0x18, 0x40, 0x80);
-  const uint64_t bottomRight = GS_SETREG_RGBA(0x34, 0x18, 0x60, 0x80);
-  gsKit_prim_quad_gouraud(gsGlobal, 0, 0, gsGlobal->Width, 0, 0, gsGlobal->Height, gsGlobal->Width, gsGlobal->Height, 0,
-              topLeft, topRight, bottomLeft, bottomRight);
-  drawGlassCube(gsGlobal->Width / 2, gsGlobal->Height * 57 / 100, 30,
-          glassPhase(elapsedMs, 9000, 0), 0x38, 0xA8, 0xE0, 1);
-}
-
-
-void setAmbientOrbsBackgroundStyle(int enabled) {
-  ambientOrbsBackgroundStyle = enabled != 0;
-}
-
 void drawSharedLibraryBackground(uint32_t frameNowMs) {
-  if (ambientOrbsBackgroundStyle) {
-    const int width = gsGlobal->Width;
-    const int height = gsGlobal->Height;
-    const uint64_t black = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80);
-    gsKit_prim_quad_gouraud(gsGlobal, 0, 0, width, 0, 0, height,
-                            width, height, 0, black, black, black, black);
-    drawAmbientOrbsBackground(width * 65 / 100, height * 52 / 100,
-                              width * 20 / 100, height * 30 / 100,
-                              glassElapsedMs(frameNowMs), 0);
-  } else {
+  if (!drawAmbientOrbsBackground(frameNowMs))
     drawGlassBackground(frameNowMs);
-  }
 }
 
 int orbsVisualCacheIndex(int flowOffset) {
@@ -564,33 +548,35 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
   const uint32_t elapsedMs = glassElapsedMs(now);
   char title[255];
 
+  drawSharedLibraryBackground(now);
+
   if (orbsBackgroundLoaded && !fastScroll) {
     GSTEXTURE *background = orbsBackgroundTexture;
     gsKit_TexManager_bind(gsGlobal, background);
-    gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
+    gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
+    gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
     gsKit_prim_sprite_texture(gsGlobal, background, 0.0f, 0.0f,
                               0.0f, 0.0f, (float)width, (float)height,
                               background->Width - 1, background->Height - 1, 0,
-                              GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
-    gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
+                              GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x50));
   }
 
   // Keep the orbit visible over the art and make a quiet area for the logos.
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
   gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 1,
-                    GS_SETREG_RGBA(0x00, 0x02, 0x0C, 0x20));
+                    glassPresetColor(0x00, 0x02, 0x0C, 0x20));
   gsKit_prim_sprite(gsGlobal, 0, 0, width / 2, height, 2,
-                    GS_SETREG_RGBA(0x02, 0x06, 0x12, 0x26));
+                    glassPresetColor(0x02, 0x06, 0x12, 0x26));
   gsKit_prim_quad_gouraud(gsGlobal, width - 350, 0, width, 0,
                           width - 350, height, width, height, 2,
-                          GS_SETREG_RGBA(0x02, 0x06, 0x12, 0x08),
-                          GS_SETREG_RGBA(0x02, 0x06, 0x12, 0x72),
-                          GS_SETREG_RGBA(0x02, 0x06, 0x12, 0x08),
-                          GS_SETREG_RGBA(0x02, 0x06, 0x12, 0x72));
+                          glassPresetColor(0x02, 0x06, 0x12, 0x08),
+                          glassPresetColor(0x02, 0x06, 0x12, 0x72),
+                          glassPresetColor(0x02, 0x06, 0x12, 0x08),
+                          glassPresetColor(0x02, 0x06, 0x12, 0x72));
   gsKit_prim_sprite(gsGlobal, 0, 0, width, headerHeight + 3, 3,
-                    GS_SETREG_RGBA(0x02, 0x05, 0x10, 0x4A));
+                    glassPresetColor(0x02, 0x05, 0x10, 0x4A));
   gsKit_prim_sprite(gsGlobal, 0, height - footerHeight, width, height, 3,
-                    GS_SETREG_RGBA(0x02, 0x05, 0x10, 0x62));
+                    glassPresetColor(0x02, 0x05, 0x10, 0x62));
 
   drawTextWindow(keepoutArea + 10, headerHeight - getFontLineHeight(),
                  width - keepoutArea, 0, 7, FontMainColor, ALIGN_LEFT, "SCROLL");
@@ -602,10 +588,10 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
 
   gsKit_prim_sprite(gsGlobal, width - 283, centerY - 37,
                     width - 35, centerY + 37, 4,
-                    GS_SETREG_RGBA(0x18, 0x34, 0x58, 0x56));
+                    glassPresetColor(0x18, 0x34, 0x58, 0x56));
   drawOrbitalDisc(width - 20, centerY, 10, 6,
-                  GS_SETREG_RGBA(0xD0, 0xEB, 0xFF, 0x80),
-                  GS_SETREG_RGBA(0x30, 0x8C, 0xD8, 0));
+                  glassLightColor(0xD0, 0xEB, 0xFF, 0x80),
+                  glassLightColor(0x30, 0x8C, 0xD8, 0));
   drawAmbientOrbsScroll(width * 27 / 100, centerY, width * 20 / 100,
                         (listBottom - listTop) * 36 / 100, elapsedMs,
                         fastScroll, getTargetByIdx(titles, visualTitleIdx)->name,
@@ -648,7 +634,7 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
       formatPSBBNTitle(getTargetByIdx(titles, targetIdx)->name, title, 190);
       drawTextWindow(width - 270, (int)rowY - getFontLineHeight() / 2,
                      width - 35, (int)rowY + getFontLineHeight() / 2, 6,
-                     i == visualFocus ? FontMainColor : HeaderTextColor,
+                     i == visualFocus ? FontMainColor : glassMissingCoverTextColor(),
                      ALIGN_CENTER, title);
     }
   }

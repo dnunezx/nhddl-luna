@@ -1,5 +1,6 @@
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/view_internal.h"
+#include "ui/ambient_orbs.h"
 
 #include <stdio.h>
 
@@ -157,7 +158,15 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
   if (selectedSize > maxSelectedSize)
     selectedSize = maxSelectedSize;
 
-  drawSharedLibraryBackground(frameNowMs);
+  // Orbit owns centered Ambient Orbs formations, independent of the
+  // shared library background preference.
+  const uint64_t black = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80);
+  gsKit_prim_quad_gouraud(gsGlobal, 0, 0, gsGlobal->Width, 0,
+                          0, gsGlobal->Height, gsGlobal->Width,
+                          gsGlobal->Height, 0, black, black, black, black);
+  drawAmbientOrbsOrbit(gsGlobal->Width / 2, gsGlobal->Height / 2,
+                       gsGlobal->Width * 25 / 100,
+                       gsGlobal->Height * 35 / 100, frameNowMs, 0);
   drawTextWindow(keepoutArea + 10, headerHeight - getFontLineHeight(),
                  gsGlobal->Width - keepoutArea, 0, 6,
                  HeaderTextColor, ALIGN_LEFT, "ORBIT");
