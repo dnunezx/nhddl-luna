@@ -16,6 +16,10 @@ static const char classicLayoutPath[] = "/classicLayout.txt";
 static const char classicLayoutTempPath[] = "/classicLayout.txt.tmp";
 static const char backgroundPath[] = "/background.txt";
 static const char backgroundTempPath[] = "/background.txt.tmp";
+static const char orbsThemePath[] = "/orbsTheme.txt";
+static const char orbsThemeTempPath[] = "/orbsTheme.txt.tmp";
+static const char orbsAppearancePath[] = "/orbsAppearance.txt";
+static const char orbsAppearanceTempPath[] = "/orbsAppearance.txt.tmp";
 static const char glassColorPath[] = "/glassColor.txt";
 static const char glassColorTempPath[] = "/glassColor.txt.tmp";
 static const char ambientSoundPath[] = "/ambientSound.txt";
@@ -227,6 +231,123 @@ int saveAmbientOrbsBackground(Target *target, int enabled) {
   if (file == NULL)
     return -EIO;
   int writeResult = fprintf(file, "%s\n", enabled ? "orbs" : "stars");
+  int closeResult = fclose(file);
+  if (writeResult < 0 || closeResult) {
+    remove(tempPath);
+    return -EIO;
+  }
+  remove(path);
+  if (rename(tempPath, path))
+    return -EIO;
+  return 0;
+}
+
+AmbientOrbsTheme loadAmbientOrbsTheme(Target *target) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  const char *paths[] = {orbsThemeTempPath, orbsThemePath};
+  char path[PATH_MAX];
+  char value[24];
+
+  if (device == NULL || device->mountpoint == NULL)
+    return ORBS_THEME_LUNA;
+  for (int i = 0; i < 2; i++) {
+    if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
+      continue;
+    FILE *file = fopen(path, "r");
+    if (file == NULL)
+      continue;
+    int readable = fgets(value, sizeof(value), file) != NULL;
+    fclose(file);
+    if (!readable)
+      continue;
+    value[strcspn(value, "\r\n")] = '\0';
+    if (!strcmp(value, "ps2-original"))
+      return ORBS_THEME_PS2_ORIGINAL;
+    if (!strcmp(value, "luna"))
+      return ORBS_THEME_LUNA;
+  }
+  return ORBS_THEME_LUNA;
+}
+
+int saveAmbientOrbsTheme(Target *target, AmbientOrbsTheme theme) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  char directory[PATH_MAX];
+  char path[PATH_MAX];
+  char tempPath[PATH_MAX];
+  struct stat st;
+
+  if (device == NULL || device->mountpoint == NULL ||
+      (theme != ORBS_THEME_LUNA && theme != ORBS_THEME_PS2_ORIGINAL))
+    return -EINVAL;
+  if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
+      buildConfigFilePath(path, sizeof(path), device->mountpoint, orbsThemePath) ||
+      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, orbsThemeTempPath))
+    return -ENAMETOOLONG;
+  if (stat(directory, &st) == -1 && mkdir(directory, 0777))
+    return -EIO;
+  FILE *file = fopen(tempPath, "w");
+  if (file == NULL)
+    return -EIO;
+  int writeResult = fprintf(file, "%s\n", theme == ORBS_THEME_PS2_ORIGINAL ?
+                            "ps2-original" : "luna");
+  int closeResult = fclose(file);
+  if (writeResult < 0 || closeResult) {
+    remove(tempPath);
+    return -EIO;
+  }
+  remove(path);
+  if (rename(tempPath, path))
+    return -EIO;
+  return 0;
+}
+
+AmbientOrbsAppearance loadAmbientOrbsAppearance(Target *target) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  const char *paths[] = {orbsAppearanceTempPath, orbsAppearancePath};
+  char path[PATH_MAX];
+  char value[24];
+  if (device == NULL || device->mountpoint == NULL)
+    return ORBS_APPEARANCE_LUNA;
+  for (int i = 0; i < 2; i++) {
+    if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
+      continue;
+    FILE *file = fopen(path, "r");
+    if (file == NULL)
+      continue;
+    int readable = fgets(value, sizeof(value), file) != NULL;
+    fclose(file);
+    if (!readable)
+      continue;
+    value[strcspn(value, "\r\n")] = '\0';
+    if (!strcmp(value, "ps2-original"))
+      return ORBS_APPEARANCE_PS2_ORIGINAL;
+    if (!strcmp(value, "luna"))
+      return ORBS_APPEARANCE_LUNA;
+  }
+  return ORBS_APPEARANCE_LUNA;
+}
+
+int saveAmbientOrbsAppearance(Target *target, AmbientOrbsAppearance appearance) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  char directory[PATH_MAX];
+  char path[PATH_MAX];
+  char tempPath[PATH_MAX];
+  struct stat st;
+  if (device == NULL || device->mountpoint == NULL ||
+      (appearance != ORBS_APPEARANCE_LUNA &&
+       appearance != ORBS_APPEARANCE_PS2_ORIGINAL))
+    return -EINVAL;
+  if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
+      buildConfigFilePath(path, sizeof(path), device->mountpoint, orbsAppearancePath) ||
+      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, orbsAppearanceTempPath))
+    return -ENAMETOOLONG;
+  if (stat(directory, &st) == -1 && mkdir(directory, 0777))
+    return -EIO;
+  FILE *file = fopen(tempPath, "w");
+  if (file == NULL)
+    return -EIO;
+  int writeResult = fprintf(file, "%s\n", appearance == ORBS_APPEARANCE_PS2_ORIGINAL ?
+                            "ps2-original" : "luna");
   int closeResult = fclose(file);
   if (writeResult < 0 || closeResult) {
     remove(tempPath);

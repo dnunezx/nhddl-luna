@@ -6,8 +6,9 @@
 #include "ui/ambient.h"
 #include "ui/pad.h"
 #include "ui/view_state.h"
-#include "ui/orbs_coming_soon.h"
 #include "options.h"
+#include <ctype.h>
+#include <dirent.h>
 #include <libpad.h>
 #include <math.h>
 #include <stdio.h>
@@ -36,11 +37,14 @@ typedef struct {
 } OptionsSelector;
 
 static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments);
+static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
+                           LunaGameOptions *gameOptions, int slot);
 
 static const char *const gameRowLabels[LUNA_GAME_ROW_COUNT] = {
     "IOP: Fast reads", "IOP: Sync reads",
     "EE: Unhook syscalls", "IOP: Emulate DVD-DL",
     "IOP: Fix game buffer overrun", "Launch arguments",
+    "VMC slot 1", "VMC slot 2",
     "Video mode", "Field flipping",
     "Show PS2 logo", "Debug colors"};
 
@@ -51,6 +55,8 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Emulate a dual-layer DVD for this game.",
     "Work around a game buffer overrun.",
     "Review every launch argument, including global overrides.",
+    "Assign an existing OPL card image from this drive's VMC folder.",
+    "Assign an existing OPL card image to the second slot.",
     "Choose a forced output mode for this game.",
     "Choose field flipping for a forced video mode.",
     "Show the PlayStation 2 startup logo.",
@@ -210,9 +216,11 @@ static int optionsViewRowForLibraryView(int view) {
 static int optionsGameRowY(int index, int firstY, int rowStep) {
   if (index <= LUNA_GAME_LAUNCH_ARGUMENTS)
     return firstY + (index + 1) * rowStep;
-  if (index <= LUNA_GAME_FIELD_FLIP)
+  if (index <= LUNA_GAME_VMC_SLOT2)
     return firstY + (index + 2) * rowStep;
-  return firstY + (index + 3) * rowStep;
+  if (index <= LUNA_GAME_FIELD_FLIP)
+    return firstY + (index + 3) * rowStep;
+  return firstY + (index + 4) * rowStep;
 }
 
 static void drawOptionsMusicNote(int centerX, int y, uint64_t color) {
@@ -239,54 +247,16 @@ static void drawOptionsSection(int y, const char *title, int musicNotes) {
     drawGlassDiamond(titleX + titleWidth + 14, y + 8, 6, 0, color);
 }
 
-static void drawOrbsComingSoon(GSTEXTURE *texture, int centerX, int centerY,
-                              int size, uint32_t now) {
-  const float half = size * 0.5f;
-  const float angle = 6.28318530718f * (now % 16000U) / 16000.0f;
-  const float sine = sinf(angle);
-  const float cosine = cosf(angle);
-  const float upperLeftX = centerX + half * (sine - cosine);
-  const float upperLeftY = centerY - half * (sine + cosine);
-  const float upperRightX = centerX + half * (cosine + sine);
-  const float upperRightY = centerY + half * (sine - cosine);
-  const float lowerLeftX = centerX - half * (cosine + sine);
-  const float lowerLeftY = centerY + half * (cosine - sine);
-  const float lowerRightX = centerX + half * (cosine - sine);
-  const float lowerRightY = centerY + half * (sine + cosine);
-  const int previousAlphaTest = gsGlobal->Test->ATST;
-  const int previousAlphaReference = gsGlobal->Test->AREF;
-  const int previousAlphaFail = gsGlobal->Test->AFAIL;
-
-  gsKit_TexManager_bind(gsGlobal, texture);
-  gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-  gsGlobal->Test->ATST = 2;
-  gsGlobal->Test->AREF = 0x80;
-  gsGlobal->Test->AFAIL = 0;
-  gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
-  gsKit_set_test(gsGlobal, GS_ATEST_ON);
-  gsKit_prim_quad_texture(gsGlobal, texture,
-                          upperLeftX, upperLeftY, 0.0f, 0.0f,
-                          upperRightX, upperRightY, texture->Width - 1, 0.0f,
-                          lowerLeftX, lowerLeftY, 0.0f, texture->Height - 1,
-                          lowerRightX, lowerRightY,
-                          texture->Width - 1, texture->Height - 1,
-                          0, GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
-  gsGlobal->Test->ATST = previousAlphaTest;
-  gsGlobal->Test->AREF = previousAlphaReference;
-  gsGlobal->Test->AFAIL = previousAlphaFail;
-  gsKit_set_test(gsGlobal, GS_ATEST_ON);
-  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
-}
-
 static void drawTitleOptionsFrame(Target *target,
                                   OptionsPage page, int selectedGameRow,
                                   int selectedGlobal, int selectedView,
                                   int pendingOverlap, uint32_t pendingViews,
                                   int pendingBackground,
                                   int pendingGlassColor, int pendingAmbient,
-                                  GSTEXTURE *orbsPreview,
+                                  int pendingOrbsTheme, int pendingOrbsAppearance,
+                                  int selectedOrbsRow,
                                   const LunaGameOptions *gameOptions, int gameDirty,
-                                  int systemDirty, int viewsDirty,
+                                  int systemDirty, int viewsDirty, int orbsDirty,
                                   int saveError,
                                   const GSTEXTURE *libraryFrame, int panOffset,
                                   int panToTop,
@@ -307,8 +277,8 @@ static void drawTitleOptionsFrame(Target *target,
   const int middle = gsGlobal->Width / 2;
   static const int tabOffsets[] = {-175, -75, 30, 135};
   static const char *const tabLabels[] = {"Game", "System", "Views", "Orbs"};
-  static const char *const dirtyTabLabels[] = {"Game *", "System *", "Views *", "Orbs"};
-  const int tabDirty[] = {gameDirty, systemDirty, viewsDirty, 0};
+  static const char *const dirtyTabLabels[] = {"Game *", "System *", "Views *", "Orbs *"};
+  const int tabDirty[] = {gameDirty, systemDirty, viewsDirty, orbsDirty};
   drawIconWindow(middle - 230, tabY, middle - 200, tabY + lineHeight, 0,
                  FontMainColor, ALIGN_VCENTER, ICON_L1);
   for (int tab = OPTIONS_PER_GAME; tab <= OPTIONS_ORBS; tab++) {
@@ -376,16 +346,27 @@ static void drawTitleOptionsFrame(Target *target,
                        : "Circle cycles through enabled views. Keep at least one on.");
   } else if (page == OPTIONS_ORBS) {
     drawOptionsSection(menuTop, "Orbs", 0);
-    if (orbsPreview != NULL) {
-      const int availableHeight = menuBottom - menuTop;
-      const int size = availableHeight / 2 < 150 ? availableHeight / 2 : 150;
-      drawOrbsComingSoon(orbsPreview, middle,
-                         menuTop + availableHeight * 45 / 100,
-                         size, uiNowMs());
-    }
+    const int firstY = menuTop + lineHeight + 4;
+    const int selectorY = optionsSelectorY(selector, page, selectedOrbsRow,
+                                           firstY + selectedOrbsRow * rowStep);
+    drawOptionsTextRow(baseX, firstY, gsGlobal->Width - baseX,
+                       selectedOrbsRow == 0, selectorY,
+                       "Behavior", pendingOrbsTheme == ORBS_THEME_PS2_ORIGINAL ?
+                       "PS2 original" : "LUNA");
+    drawOptionsTextRow(baseX, firstY + rowStep, gsGlobal->Width - baseX,
+                       selectedOrbsRow == 1, selectorY,
+                       "Appearance", pendingOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL ?
+                       "PS2 original" : "LUNA");
     drawTextWindow(baseX, menuBottom - 2 * lineHeight,
                    gsGlobal->Width - baseX, menuBottom, 0,
-                   ColorSelected, ALIGN_HCENTER, "Coming soon");
+                   HeaderTextColor, ALIGN_HCENTER,
+                   selectedOrbsRow == 0 ?
+                       (pendingOrbsTheme == ORBS_THEME_PS2_ORIGINAL ?
+                        "Seven clock-driven lights with long trails." :
+                        "Animated LUNA formations and title reactions.") :
+                       (pendingOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL ?
+                        "Original halo and core masks from the PS2 ROM." :
+                        "LUNA's soft glass lights and bright cores."));
   } else {
     snprintf(lineBuffer, sizeof(lineBuffer), "%.38s  (%s)", target->name, target->id);
     drawTextWindow(baseX, menuTop, gsGlobal->Width - baseX, 0, 0,
@@ -397,10 +378,11 @@ static void drawTitleOptionsFrame(Target *target,
                            ? selectedY + lineHeight - menuBottom : 0;
     int focusY = selectedY - scrollOffset;
     int selectorY = optionsSelectorY(selector, page, selectedGameRow, focusY);
-    const int headingRows[] = {LUNA_GAME_FAST_READS, LUNA_GAME_VIDEO_MODE,
+    const int headingRows[] = {LUNA_GAME_FAST_READS, LUNA_GAME_VMC_SLOT1,
+                               LUNA_GAME_VIDEO_MODE,
                                LUNA_GAME_PS2_LOGO};
-    const char *const headings[] = {"Compatibility", "Video", "Launch"};
-    for (int section = 0; section < 3; section++) {
+    const char *const headings[] = {"Compatibility", "Memory cards", "Video", "Launch"};
+    for (int section = 0; section < 4; section++) {
       int y = optionsGameRowY(headingRows[section], contentTop, gameStep) -
               gameStep - scrollOffset;
       if (y >= contentTop && y + lineHeight <= menuBottom)
@@ -420,14 +402,14 @@ static void drawTitleOptionsFrame(Target *target,
                    ALIGN_LEFT, gameRowDescriptions[selectedGameRow]);
   }
   drawOptionsFooter(page == OPTIONS_PER_GAME, 0,
-                    gameDirty || systemDirty || viewsDirty,
-                    page == OPTIONS_ORBS);
+                    gameDirty || systemDirty || viewsDirty || orbsDirty, 0);
   if (saveError)
     drawTextWindow(baseX, gsGlobal->Height - footerHeight - getFontLineHeight(),
                    gsGlobal->Width - baseX, gsGlobal->Height - footerHeight, 0,
                    ErrorTextColor, ALIGN_HCENTER,
                    page == OPTIONS_GLOBAL ? "Could not save global settings" :
                    page == OPTIONS_VIEWS ? "Could not save views" :
+                   page == OPTIONS_ORBS ? "Could not save orb theme" :
                                            "Could not save game settings");
   if (libraryFrame != NULL)
     drawOptionsPanCover(libraryFrame, panOffset, panToTop);
@@ -442,11 +424,117 @@ static int optionsGlobalDirty(int pendingBackground, int pendingGlassColor,
          pendingAmbient != ambient;
 }
 
+#define VMC_PICKER_MAX_FILES 128
+
+static int vmcFileCompare(const void *left, const void *right) {
+  return strcmp(*(const char *const *)left, *(const char *const *)right);
+}
+
+static int vmcImageFilename(const char *name) {
+  const char *extension = strrchr(name, '.');
+  return extension != NULL && strlen(extension) == 4 &&
+         tolower((unsigned char)extension[1]) == 'b' &&
+         tolower((unsigned char)extension[2]) == 'i' &&
+         tolower((unsigned char)extension[3]) == 'n' &&
+         extension[4] == '\0';
+}
+
+static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
+                           LunaGameOptions *gameOptions, int slot) {
+  char directoryPath[PATH_MAX + 1];
+  char *files[VMC_PICKER_MAX_FILES];
+  int count = 0;
+  int selected = 0;
+  int changed = 0;
+  const char *mountpoint = target->device->mountpoint;
+  size_t mountLength = strlen(mountpoint);
+  if (snprintf(directoryPath, sizeof(directoryPath), "%s%sVMC", mountpoint,
+               mountLength > 0 && mountpoint[mountLength - 1] == '/' ? "" : "/")
+      >= sizeof(directoryPath))
+    return 0;
+  DIR *directory = opendir(directoryPath);
+  if (directory != NULL) {
+    struct dirent *entry;
+    while (count < VMC_PICKER_MAX_FILES && (entry = readdir(directory)) != NULL) {
+      if (entry->d_type == DT_DIR || !vmcImageFilename(entry->d_name))
+        continue;
+      files[count] = strdup(entry->d_name);
+      if (files[count] == NULL)
+        break;
+      count++;
+    }
+    closedir(directory);
+    qsort(files, count, sizeof(files[0]), vmcFileCompare);
+  }
+
+  while (1) {
+    gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
+    drawOptionsSheet();
+    const int baseX = keepoutArea + 10;
+    const int lineHeight = getFontLineHeight();
+    const int menuTop = headerHeight + 2 * lineHeight + 8;
+    const int menuBottom = gsGlobal->Height - footerHeight - lineHeight;
+    const int rowStep = lineHeight + lineHeight / 3;
+    const int focusY = menuTop + selected * rowStep;
+    const int scrollOffset = focusY + lineHeight > menuBottom
+                                 ? focusY + lineHeight - menuBottom : 0;
+    drawTextWindow(baseX, headerHeight - lineHeight, gsGlobal->Width - baseX,
+                   0, 0, HeaderTextColor, ALIGN_HCENTER, "Options");
+    drawOptionsSection(headerHeight + lineHeight / 4,
+                       slot == 0 ? "VMC slot 1" : "VMC slot 2", 0);
+    drawTextWindow(baseX, menuTop - lineHeight, gsGlobal->Width - baseX,
+                   menuTop, 0, HeaderTextColor, ALIGN_HCENTER,
+                   gameOptions->vmcSlotLabel[slot]);
+    for (int index = 0; index <= count; index++) {
+      int y = menuTop + index * rowStep - scrollOffset;
+      if (y < menuTop || y + lineHeight > menuBottom)
+        continue;
+      drawOptionsTextRow(baseX, y, gsGlobal->Width - baseX,
+                         index == selected, y,
+                         index == 0 ? "Physical card" : files[index - 1], NULL);
+    }
+    drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
+                   gsGlobal->Height - footerHeight, 0, HeaderTextColor,
+                   ALIGN_LEFT, count ? "Select a card from /VMC on this drive."
+                                     : "Create a card from Start > Virtual Memory Cards.");
+    drawTextWindow(baseX + 18, gsGlobal->Height - footerHeight,
+                   gsGlobal->Width - baseX, gsGlobal->Height, 0,
+                   HeaderTextColor, ALIGN_VCENTER,
+                   "X Assign                         Triangle Back");
+    gsKit_set_test(gsGlobal, GS_ZTEST_ON);
+    presentOptionsFrame();
+
+    int input = waitForInput(-1);
+    if (input & PAD_TRIANGLE)
+      break;
+    if (input & PAD_UP)
+      selected = (selected + count) % (count + 1);
+    else if (input & PAD_DOWN)
+      selected = (selected + 1) % (count + 1);
+    else if (input & (PAD_CROSS | PAD_CIRCLE)) {
+      char path[PATH_MAX + 1];
+      if (selected == 0) {
+        path[0] = '\0';
+      } else if (snprintf(path, sizeof(path), "%s/%s", directoryPath,
+                          files[selected - 1]) >= sizeof(path)) {
+        continue;
+      }
+      changed = lunaGameOptionsSetVMC(gameOptions, arguments, slot, path);
+      break;
+    }
+  }
+  for (int index = 0; index < count; index++)
+    free(files[index]);
+  return changed;
+}
+
 // Handles the Game and System settings tabs.
 // Returns -1 if error occurs
 int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
                        int *ambientOrbsBackgroundSetting, int *glassColorSetting,
-                       int *ambientEnabled, uint32_t *enabledViews,
+                       int *ambientEnabled, int *orbsThemeSetting,
+                       int *orbsAppearanceSetting,
+                       uint32_t *enabledViews,
                        int panToTop) {
   int res = 0;
   int saveError = 0;
@@ -454,6 +542,8 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
   int pendingBackground = *ambientOrbsBackgroundSetting;
   int pendingGlassColor = *glassColorSetting;
   int pendingAmbient = *ambientEnabled;
+  int pendingOrbsTheme = *orbsThemeSetting;
+  int pendingOrbsAppearance = *orbsAppearanceSetting;
   uint32_t pendingViews = *enabledViews;
   int titleArgumentsChanged = 0;
   OptionsPage page = OPTIONS_PER_GAME;
@@ -461,16 +551,13 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
   int selectedGameRow = LUNA_GAME_FAST_READS;
   int selectedGlobal = 0;
   int selectedView = UI_VIEW_CLASSIC;
+  int selectedOrbsRow = 0;
 
   // Load arguments from config files
   ArgumentList *titleArguments = loadLaunchArgumentLists(target);
   LunaGameOptions gameOptions;
   lunaGameOptionsRead(&gameOptions, titleArguments);
   int input = 0;
-
-  GSTEXTURE orbsPreview = {0};
-  int orbsPreviewAttempted = 0;
-  int orbsPreviewLoaded = 0;
 
   GSTEXTURE libraryFrame = {0};
   libraryFrame.Width = gsGlobal->Width;
@@ -490,35 +577,33 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
         *glassColorSetting, *ambientEnabled);
     int viewsDirty = pendingViews != *enabledViews ||
                      pendingOverlap != *classicArtOverlap;
+    int orbsDirty = pendingOrbsTheme != *orbsThemeSetting ||
+                    pendingOrbsAppearance != *orbsAppearanceSetting;
     drawTitleOptionsFrame(target, page, selectedGameRow,
                           selectedGlobal, selectedView, pendingOverlap, pendingViews,
                           pendingBackground, pendingGlassColor, pendingAmbient,
-                          NULL, &gameOptions, titleArgumentsChanged,
-                          systemDirty, viewsDirty, saveError,
+                          pendingOrbsTheme, pendingOrbsAppearance, selectedOrbsRow,
+                          &gameOptions, titleArgumentsChanged,
+                          systemDirty, viewsDirty, orbsDirty, saveError,
                           &libraryFrame, panOffset, panToTop, &selector);
     pollInput();
   } while (panOffset < (panToTop ? gsGlobal->Height : gsGlobal->Width));
 
   while (1) {
-    if (page == OPTIONS_ORBS && !orbsPreviewAttempted) {
-      orbsPreviewAttempted = 1;
-      orbsPreviewLoaded = loadPNGTextureRGBAMemory(gsGlobal, &orbsPreview,
-          ORBS_COMING_SOON_PNG, SIZE_ORBS_COMING_SOON_PNG) == 0;
-      if (orbsPreviewLoaded)
-        orbsPreview.Filter = GS_FILTER_LINEAR;
-    }
     int systemDirty = optionsGlobalDirty(
         pendingBackground, pendingGlassColor, pendingAmbient,
         *ambientOrbsBackgroundSetting,
         *glassColorSetting, *ambientEnabled);
     int viewsDirty = pendingViews != *enabledViews ||
                      pendingOverlap != *classicArtOverlap;
+    int orbsDirty = pendingOrbsTheme != *orbsThemeSetting ||
+                    pendingOrbsAppearance != *orbsAppearanceSetting;
     drawTitleOptionsFrame(target, page, selectedGameRow,
                           selectedGlobal, selectedView, pendingOverlap, pendingViews,
                           pendingBackground, pendingGlassColor, pendingAmbient,
-                          orbsPreviewLoaded ? &orbsPreview : NULL,
+                          pendingOrbsTheme, pendingOrbsAppearance, selectedOrbsRow,
                           &gameOptions, titleArgumentsChanged,
-                          systemDirty, viewsDirty, saveError,
+                          systemDirty, viewsDirty, orbsDirty, saveError,
                           NULL, 0, panToTop, &selector);
 
     // Process user inputs
@@ -534,8 +619,40 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
       continue;
     }
     if (page == OPTIONS_ORBS) {
-      if (input & PAD_TRIANGLE)
+      if (input & (PAD_UP | PAD_DOWN)) {
+        selectedOrbsRow = 1 - selectedOrbsRow;
+      } else if (input & (PAD_CROSS | PAD_CIRCLE | PAD_LEFT | PAD_RIGHT)) {
+        if (selectedOrbsRow == 0)
+          pendingOrbsTheme = pendingOrbsTheme == ORBS_THEME_LUNA ?
+                             ORBS_THEME_PS2_ORIGINAL : ORBS_THEME_LUNA;
+        else
+          pendingOrbsAppearance = pendingOrbsAppearance == ORBS_APPEARANCE_LUNA ?
+                                  ORBS_APPEARANCE_PS2_ORIGINAL : ORBS_APPEARANCE_LUNA;
+      } else if (input & PAD_START) {
+        saveError = 0;
+        if (pendingOrbsTheme != *orbsThemeSetting) {
+          saveError = saveAmbientOrbsTheme(target,
+                            (AmbientOrbsTheme)pendingOrbsTheme);
+          if (!saveError) {
+            *orbsThemeSetting = pendingOrbsTheme;
+            setAmbientOrbsTheme((AmbientOrbsTheme)pendingOrbsTheme, uiNowMs());
+          }
+        }
+        if (!saveError && pendingOrbsAppearance != *orbsAppearanceSetting) {
+          if (setAmbientOrbsAppearance((AmbientOrbsAppearance)pendingOrbsAppearance)) {
+            saveError = -1;
+          } else {
+            saveError = saveAmbientOrbsAppearance(target,
+                             (AmbientOrbsAppearance)pendingOrbsAppearance);
+            if (!saveError)
+              *orbsAppearanceSetting = pendingOrbsAppearance;
+            else
+              setAmbientOrbsAppearance((AmbientOrbsAppearance)*orbsAppearanceSetting);
+          }
+        }
+      } else if (input & PAD_TRIANGLE) {
         goto exit;
+      }
       continue;
     }
     if (page == OPTIONS_VIEWS) {
@@ -609,7 +726,13 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
       }
       continue;
     }
-    if (selectedGameRow == LUNA_GAME_LAUNCH_ARGUMENTS &&
+    if ((selectedGameRow == LUNA_GAME_VMC_SLOT1 ||
+         selectedGameRow == LUNA_GAME_VMC_SLOT2) &&
+        (input & (PAD_CROSS | PAD_CIRCLE))) {
+      int slot = selectedGameRow - LUNA_GAME_VMC_SLOT1;
+      if (uiVMCPickerLoop(target, titleArguments, &gameOptions, slot))
+        titleArgumentsChanged = 1;
+    } else if (selectedGameRow == LUNA_GAME_LAUNCH_ARGUMENTS &&
         (input & (PAD_CROSS | PAD_CIRCLE))) {
       // Open the full argument list from its visible Game row.
       res = uiArgumentListLoop(target, titleArguments);
@@ -653,14 +776,11 @@ exit:
       drawTitleOptionsFrame(target, page, selectedGameRow,
                             selectedGlobal, selectedView, pendingOverlap, pendingViews,
                             pendingBackground, pendingGlassColor, pendingAmbient,
-                            orbsPreviewLoaded ? &orbsPreview : NULL,
-                            &gameOptions, 0, 0, 0, 0,
+                            *orbsThemeSetting, *orbsAppearanceSetting,
+                            selectedOrbsRow, &gameOptions, 0, 0, 0, 0, 0,
                             &libraryFrame, panOffset, panToTop, &selector);
     } while (panOffset > 0);
   }
-  if (orbsPreviewLoaded)
-    gsKit_TexManager_free(gsGlobal, &orbsPreview);
-  free(orbsPreview.Mem);
   freeArgumentList(titleArguments);
   return res;
 }

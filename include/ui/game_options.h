@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define LUNA_GAME_COMPAT_COUNT 5
-#define LUNA_GAME_ROW_COUNT 10
+#define LUNA_GAME_ROW_COUNT 12
 
 typedef enum {
   LUNA_GAME_FAST_READS,
@@ -14,6 +14,8 @@ typedef enum {
   LUNA_GAME_DVD_DL,
   LUNA_GAME_BUFFER_OVERRUN,
   LUNA_GAME_LAUNCH_ARGUMENTS,
+  LUNA_GAME_VMC_SLOT1,
+  LUNA_GAME_VMC_SLOT2,
   LUNA_GAME_VIDEO_MODE,
   LUNA_GAME_FIELD_FLIP,
   LUNA_GAME_PS2_LOGO,
@@ -26,12 +28,15 @@ typedef struct {
   int fieldFlip; // 0 = off, 1..3 = field flipping modes
   int ps2Logo;
   int debugColors;
+  char vmcSlotLabel[2][25];
 } LunaGameOptions;
 
 void lunaGameOptionsRead(LunaGameOptions *options, ArgumentList *arguments);
 // Returns 1 when an option changed, 0 otherwise. Launch arguments use a separate page.
 int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
                           LunaGameRow row, int direction);
+int lunaGameOptionsSetVMC(LunaGameOptions *options, ArgumentList *arguments,
+                          int slot, const char *path);
 const char *lunaGameOptionsValue(const LunaGameOptions *options, LunaGameRow row);
 
 #endif

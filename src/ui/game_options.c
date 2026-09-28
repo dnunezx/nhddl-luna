@@ -43,6 +43,20 @@ void lunaGameOptionsRead(LunaGameOptions *options, ArgumentList *arguments) {
   }
   options->ps2Logo = argumentEnabled(arguments, "logo");
   options->debugColors = argumentEnabled(arguments, "dbc");
+  for (int slot = 0; slot < 2; slot++) {
+    const char *name = slot == 0 ? "mc0" : "mc1";
+    Argument *card = getArgument(arguments, name);
+    const char *label = "Physical card";
+    if (card != NULL && !card->isDisabled && card->value != NULL && card->value[0]) {
+      const char *slash = strrchr(card->value, '/');
+      const char *backslash = strrchr(card->value, '\\');
+      if (backslash != NULL && (slash == NULL || backslash > slash))
+        slash = backslash;
+      label = slash != NULL ? slash + 1 : card->value;
+    }
+    snprintf(options->vmcSlotLabel[slot], sizeof(options->vmcSlotLabel[slot]),
+             "%.24s", label);
+  }
 }
 
 static int setArgument(ArgumentList *arguments, const char *name, const char *value,
@@ -66,6 +80,16 @@ static int setArgument(ArgumentList *arguments, const char *name, const char *va
   if (enabled && argument->isDisabled)
     argument->isGlobal = 0;
   argument->isDisabled = !enabled;
+  return 1;
+}
+
+int lunaGameOptionsSetVMC(LunaGameOptions *options, ArgumentList *arguments,
+                          int slot, const char *path) {
+  if (slot < 0 || slot > 1 || path == NULL)
+    return 0;
+  if (!setArgument(arguments, slot == 0 ? "mc0" : "mc1", path, path[0] != '\0'))
+    return 0;
+  lunaGameOptionsRead(options, arguments);
   return 1;
 }
 
@@ -131,6 +155,8 @@ const char *lunaGameOptionsValue(const LunaGameOptions *options, LunaGameRow row
     return options->videoMode < 0 ? "Custom" : videoLabels[options->videoMode];
   if (row == LUNA_GAME_FIELD_FLIP)
     return flipLabels[options->fieldFlip];
+  if (row == LUNA_GAME_VMC_SLOT1 || row == LUNA_GAME_VMC_SLOT2)
+    return options->vmcSlotLabel[row - LUNA_GAME_VMC_SLOT1];
   if (row == LUNA_GAME_PS2_LOGO)
     return options->ps2Logo ? "On" : "Off";
   if (row == LUNA_GAME_DEBUG_COLORS)

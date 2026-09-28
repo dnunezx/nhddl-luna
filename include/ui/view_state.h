@@ -4,6 +4,7 @@
 #include "target.h"
 #include "ui/navigation.h"
 #include "ui/view_scroll.h"
+#include "ui/ambient_orbs.h"
 
 // The selected view is stored with the selected title's metadata on its game drive.
 // Missing or invalid state falls back to Classic.
@@ -22,6 +23,14 @@ int saveClassicArtOverlap(Target *target, int overlap);
 // The shared library background defaults to stars and cubes.
 int loadAmbientOrbsBackground(Target *target);
 int saveAmbientOrbsBackground(Target *target, int enabled);
+
+// Orb behavior defaults to LUNA when no valid choice has been saved.
+AmbientOrbsTheme loadAmbientOrbsTheme(Target *target);
+int saveAmbientOrbsTheme(Target *target, AmbientOrbsTheme theme);
+
+// Appearance is independent of behavior and defaults to LUNA.
+AmbientOrbsAppearance loadAmbientOrbsAppearance(Target *target);
+int saveAmbientOrbsAppearance(Target *target, AmbientOrbsAppearance appearance);
 
 // Glass color is a library-wide preference; invalid or absent data uses Original.
 GlassColorPreset loadGlassColorPreset(Target *target);

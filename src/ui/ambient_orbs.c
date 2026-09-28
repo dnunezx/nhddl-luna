@@ -1,6 +1,9 @@
 // Ambient Orbs: reusable animated formation asset.
 #include "ui/view_internal.h"
 #include "ui/ambient_orbs.h"
+#include "options.h"
+#include <stdio.h>
+#include <string.h>
 
 // The original seven-orb ellipse expands to twelve points for formations.
 #define ORB_ORBIT_COUNT 7
@@ -41,6 +44,16 @@ static uint32_t glassStartMs;
 static uint32_t orbitStartMs;
 static uint32_t splashStartMs;
 static int ambientOrbsBackgroundStyle;
+static AmbientOrbsTheme ambientOrbsTheme = ORBS_THEME_LUNA;
+static AmbientOrbsAppearance ambientOrbsAppearance = ORBS_APPEARANCE_LUNA;
+static u32 originalHaloPixels[64 * 64] __attribute__((aligned(64)));
+static u32 originalCorePixels[64 * 64] __attribute__((aligned(64)));
+static GSTEXTURE originalHaloTexture;
+static GSTEXTURE originalCoreTexture;
+static int originalMasksLoaded;
+static uint32_t originalClockAnchorMs;
+static uint32_t originalClockStartMs;
+static uint32_t originalScatterPhase;
 static uint32_t orbSelectionEvents[ORB_SELECTION_EVENT_COUNT];
 static uint32_t orbLastSelectionEventMs;
 static int orbSelectionEventNext;
@@ -124,6 +137,148 @@ void resetAmbientOrbs(uint32_t startMs) {
   orbitStartMs = 0;
   splashStartMs = 0;
   resetAmbientOrbsScroll();
+}
+
+void setAmbientOrbsTheme(AmbientOrbsTheme theme, uint32_t now) {
+  if (theme != ORBS_THEME_PS2_ORIGINAL)
+    theme = ORBS_THEME_LUNA;
+  if (ambientOrbsTheme == theme)
+    return;
+  ambientOrbsTheme = theme;
+  if (theme == ORBS_THEME_PS2_ORIGINAL) {
+    // Sample the console clock once; the frame timer supplies its millisecond
+    // fraction without asking the CDVD RPC service on every frame.
+    const uint32_t stamp = getTimestamp();
+    const uint32_t hour = (stamp >> 12) & 31U;
+    const uint32_t minute = (stamp >> 6) & 63U;
+    const uint32_t second = stamp & 63U;
+    originalClockStartMs =
+        ((hour < 24 ? hour : 0) * 3600U +
+         (minute < 60 ? minute : 0) * 60U +
+         (second < 60 ? second : 0)) * 1000U;
+    originalClockAnchorMs = now;
+    originalScatterPhase = stamp & 0xFFFFU;
+  }
+}
+
+static uint32_t originalReadLE32(const unsigned char *bytes) {
+  return (uint32_t)bytes[0] | (uint32_t)bytes[1] << 8 |
+         (uint32_t)bytes[2] << 16 | (uint32_t)bytes[3] << 24;
+}
+
+// TEXIMAGE is a ROMDIR inside the console BIOS. Its file offsets are
+// relative to the start of TEXIMAGE and rounded up to 16-byte boundaries.
+static int originalFindResource(FILE *rom, const char *name,
+                                long *offset, uint32_t *size) {
+  unsigned char entry[16];
+  long fileOffset = 0;
+  if (fseek(rom, 0, SEEK_SET))
+    return -1;
+  for (int index = 0; index < 256; index++) {
+    if (fread(entry, 1, sizeof(entry), rom) != sizeof(entry) || !entry[0])
+      break;
+    const uint32_t fileSize = originalReadLE32(entry + 12);
+    if (!memcmp(entry, name, strlen(name)) && entry[strlen(name)] == 0) {
+      *offset = fileOffset;
+      *size = fileSize;
+      return 0;
+    }
+    fileOffset += (fileSize + 15U) & ~15U;
+  }
+  return -1;
+}
+
+static int originalExpandMask(FILE *rom, long offset, uint32_t size,
+                              u32 *pixels) {
+  // The retail TEXCNAVI and TEXCBLUR entries are smaller than 2 KiB.
+  unsigned char source[4096];
+  unsigned char mask[64 * 64];
+  if (size < 8 || size > sizeof(source) ||
+      fseek(rom, offset, SEEK_SET) ||
+      fread(source, 1, size, rom) != size ||
+      originalReadLE32(source) != sizeof(mask))
+    return -1;
+  uint32_t descriptor = 0;
+  uint32_t position = 4;
+  int flagsLeft = 0;
+  int shift = 0, backMask = 0;
+  for (int output = 0; output < sizeof(mask);) {
+    if (!flagsLeft) {
+      if (position + 4 > size)
+        return -1;
+      descriptor = ((uint32_t)source[position] << 24) |
+                   ((uint32_t)source[position + 1] << 16) |
+                   ((uint32_t)source[position + 2] << 8) |
+                   source[position + 3];
+      position += 4;
+      int mode = descriptor & 3;
+      shift = 14 - mode;
+      backMask = 0x3fff >> mode;
+      flagsLeft = 30;
+    }
+    if (position >= size)
+      return -1;
+    int value = source[position++];
+    if (descriptor & 0x80000000U) {
+      if (position >= size)
+        return -1;
+      int code = (value << 8) | source[position++];
+      int back = 1 + (code & backMask);
+      int count = 3 + (code >> shift);
+      if (back > output || count > (int)sizeof(mask) - output)
+        return -1;
+      while (count--) {
+        mask[output] = mask[output - back];
+        output++;
+      }
+    } else {
+      mask[output++] = value;
+    }
+    descriptor <<= 1;
+    flagsLeft--;
+  }
+  for (int i = 0; i < sizeof(mask); i++)
+    pixels[i] = 0xffffffU | (uint32_t)mask[i] << 24;
+  return 0;
+}
+
+static void originalInitTexture(GSTEXTURE *texture, u32 *pixels) {
+  memset(texture, 0, sizeof(*texture));
+  texture->Width = 64;
+  texture->Height = 64;
+  texture->PSM = GS_PSM_CT32;
+  texture->Mem = pixels;
+  texture->Filter = GS_FILTER_LINEAR;
+  texture->Delayed = GS_SETTING_ON;
+}
+
+static int originalLoadMasks(void) {
+  if (originalMasksLoaded)
+    return 0;
+  FILE *rom = fopen("rom0:TEXIMAGE", "rb");
+  if (rom == NULL)
+    return -1;
+  long haloOffset, coreOffset;
+  uint32_t haloSize, coreSize;
+  int result = originalFindResource(rom, "TEXCBLUR", &haloOffset, &haloSize) ||
+               originalFindResource(rom, "TEXCNAVI", &coreOffset, &coreSize) ||
+               originalExpandMask(rom, haloOffset, haloSize, originalHaloPixels) ||
+               originalExpandMask(rom, coreOffset, coreSize, originalCorePixels);
+  fclose(rom);
+  if (result)
+    return -1;
+  originalInitTexture(&originalHaloTexture, originalHaloPixels);
+  originalInitTexture(&originalCoreTexture, originalCorePixels);
+  originalMasksLoaded = 1;
+  return 0;
+}
+
+int setAmbientOrbsAppearance(AmbientOrbsAppearance appearance) {
+  if (appearance == ORBS_APPEARANCE_PS2_ORIGINAL && originalLoadMasks())
+    return -1;
+  ambientOrbsAppearance = appearance == ORBS_APPEARANCE_PS2_ORIGINAL ?
+                          appearance : ORBS_APPEARANCE_LUNA;
+  return 0;
 }
 
 void resetAmbientOrbsOrbit(uint32_t now) {
@@ -1044,10 +1199,175 @@ static void drawOrbLogoWordmark(int centerX, int centerY, int radiusX,
   }
 }
 
+// The retail OSDSYS menu uses seven lights on a single clock-driven 3D ring.
+// Seconds give each light 21..27 laps per minute, while minutes turn the ring
+// 1100 times per hour. The second hand spins the whole ring, the hour hand
+// sets its tilt, and the minute hand sets its size.
+static void originalOrbPoint(int index, uint32_t now,
+                             int centerX, int centerY, int radiusX,
+                             int radiusY, float *x, float *y, float *depth) {
+  const uint32_t elapsed = now >= originalClockAnchorMs ?
+                           now - originalClockAnchorMs : 0;
+  const uint64_t clockMs = (uint64_t)originalClockStartMs + elapsed;
+  const uint32_t secondsPhase = (uint32_t)(((clockMs % 60000U) << 16) / 60000U);
+  const uint32_t minutePhase = (uint32_t)(((clockMs % 3600000U) *
+                                           1100U * 65536U) / 3600000U);
+  const uint32_t hourPhase = (uint32_t)(((clockMs % 43200000U) << 16) /
+                                        43200000U);
+  const uint32_t phase = secondsPhase * (uint32_t)(index + 21);
+  const float orbitSine = orbWave(phase) / 127.0f;
+  const float orbitCosine = orbWave(phase + 16384U) / 127.0f;
+  // RotY(second), RotZ(180), RotY(minute*1100) reduce to this phase for
+  // the translated point. The ROM eases the second angle toward the clock;
+  // sampling it directly keeps this stateless trail path continuous.
+  const uint32_t ringPhase = secondsPhase - minutePhase;
+  const float tumbleSine = orbWave(ringPhase) / 127.0f;
+  const float tumbleCosine = orbWave(ringPhase + 16384U) / 127.0f;
+  const float tiltSine = orbWave(hourPhase) / 127.0f;
+  const float tiltCosine = orbWave(hourPhase + 16384U) / 127.0f;
+  const float side = orbitSine * tumbleSine;
+  const float forward = orbitSine * tumbleCosine;
+  const float up = -orbitCosine;
+  const float radius = (10.0f + 7.25f *
+                       (clockMs % 3600000U) / 3600000.0f) / 13.625f;
+  const float perspective = 1.0f + forward * 0.23f;
+  *x = centerX + (side * tiltCosine - up * tiltSine) *
+                   radiusX * radius / perspective;
+  *y = centerY + (side * tiltSine + up * tiltCosine) *
+                   radiusY * radius / perspective;
+  *depth = forward;
+
+  // The first menu entry scatters the lights across the screen before they
+  // settle. Use the same fade window as the ROM's 128-frame entry.
+  const float progress = elapsed >= 2135U ? 1.0f : elapsed / 2135.0f;
+  const float scatter = 1.0f - progress * progress * (3.0f - 2.0f * progress);
+  const uint32_t scatterPhase = originalScatterPhase + (uint32_t)index * 9362U;
+  *x += orbWave(scatterPhase + 16384U) / 127.0f * radiusX * 1.6f * scatter;
+  *y += orbWave(scatterPhase) / 127.0f * radiusY * 1.3f * scatter;
+}
+
+static void drawOriginalOrbDisc(float x, float y, float radiusX,
+                                float radiusY, int z, uint64_t centerColor,
+                                uint64_t edgeColor) {
+  for (int i = 0; i < 16; i++) {
+    const uint32_t phase = (uint32_t)i * 4096U;
+    const uint32_t next = phase + 4096U;
+    gsKit_prim_triangle_gouraud(gsGlobal, x, y,
+        x + orbWave(phase + 16384U) * radiusX / 127.0f,
+        y + orbWave(phase) * radiusY / 127.0f,
+        x + orbWave(next + 16384U) * radiusX / 127.0f,
+        y + orbWave(next) * radiusY / 127.0f,
+        z, centerColor, edgeColor, edgeColor);
+  }
+}
+
+static void drawOriginalMask(GSTEXTURE *texture, float x, float y,
+                             float radiusX, float radiusY, int z,
+                             int red, int green, int blue, int alpha) {
+  if (alpha <= 0)
+    return;
+  if (alpha > 0x80)
+    alpha = 0x80;
+  gsKit_TexManager_bind(gsGlobal, texture);
+  gsKit_prim_sprite_texture(gsGlobal, texture,
+                            x - radiusX, y - radiusY, 0.0f, 0.0f,
+                            x + radiusX, y + radiusY, 63.0f, 63.0f, z,
+                            GS_SETREG_RGBA(red, green, blue, alpha));
+}
+
+static void drawOriginalOrbSprite(float x, float y, float size, int z,
+                                  int red, int green, int blue, float opacity) {
+  const float haloX = 30.0f * size;
+  const float haloY = 15.0f * size;
+  const int haloAlpha = (int)(0x3c * opacity);
+  const int coreAlpha = (int)(0x80 * opacity);
+  // The ROM softens the whole 3D layer with five framebuffer passes. Soft
+  // copies of its actual halo mask approximate that spread within the orb
+  // layer, leaving the surrounding LUNA interface sharp.
+  static const int offsets[4][2] = {{-2, 0}, {2, 0}, {0, -2}, {0, 2}};
+  for (int tap = 0; tap < 4; tap++)
+    drawOriginalMask(&originalHaloTexture, x + offsets[tap][0] * size,
+                     y + offsets[tap][1] * size, haloX * 1.05f,
+                     haloY * 1.05f, z, red, green, blue, haloAlpha / 10);
+  drawOriginalMask(&originalHaloTexture, x, y, haloX, haloY,
+                   z, red, green, blue, haloAlpha * 3 / 4);
+  drawOriginalMask(&originalCoreTexture, x, y, 4.5f * size, 2.25f * size,
+                   z, 0x80, 0x80, 0x80, coreAlpha);
+}
+
+static void drawOriginalOrbs(int centerX, int centerY, int radiusX,
+                              int radiusY, uint32_t now, int trailZ) {
+  static const int entryColor[ORB_ORBIT_COUNT][3] = {
+      {0x00, 0x00, 0x80}, {0x00, 0x80, 0x00},
+      {0x00, 0x80, 0x80}, {0x80, 0x00, 0x00},
+      {0x80, 0x00, 0x44}, {0x80, 0x44, 0x00},
+      {0x80, 0x80, 0x80}};
+  const uint32_t elapsed = now >= originalClockAnchorMs ?
+                           now - originalClockAnchorMs : 0;
+  const float entry = elapsed >= 2135U ? 0.0f :
+                      1.0f - elapsed / 2135.0f;
+  gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 2, 0, 1, 0), 0);
+  for (int i = 0; i < ORB_ORBIT_COUNT; i++) {
+    const int red = (int)(0x30 + (entryColor[i][0] - 0x30) * entry);
+    const int green = (int)(0x62 + (entryColor[i][1] - 0x62) * entry);
+    const int blue = (int)(0x80 + (entryColor[i][2] - 0x80) * entry);
+    float headX, headY, headDepth;
+    originalOrbPoint(i, now, centerX, centerY, radiusX, radiusY,
+                     &headX, &headY, &headDepth);
+    float newerX = headX, newerY = headY;
+    for (int segment = 1; segment <= 43; segment++) {
+      const uint32_t age = (uint32_t)segment * 50U;
+      const uint32_t sampleNow = age < elapsed ? now - age :
+                                  originalClockAnchorMs;
+      float olderX, olderY, olderDepth;
+      originalOrbPoint(i, sampleNow, centerX, centerY, radiusX, radiusY,
+                       &olderX, &olderY, &olderDepth);
+      const float oldFade = segment < 43 ? 1.0f - segment / 43.0f : 0.0f;
+      const float newFade = 1.0f - (segment - 1) / 43.0f;
+      const int oldRed = (int)(red * oldFade * oldFade * oldFade * oldFade);
+      const int oldGreen = (int)(green * oldFade * oldFade);
+      const int oldBlue = (int)(blue * oldFade);
+      const int newRed = (int)(red * newFade * newFade * newFade * newFade);
+      const int newGreen = (int)(green * newFade * newFade);
+      const int newBlue = (int)(blue * newFade);
+      drawOrbTrailSegment(olderX, olderY, newerX, newerY,
+                          1.2f, 1.6f, trailZ,
+                          GS_SETREG_RGBA(oldRed, oldGreen, oldBlue,
+                                          (int)(0x40 * oldFade)),
+                          GS_SETREG_RGBA(newRed, newGreen, newBlue,
+                                          (int)(0x40 * newFade)));
+      newerX = olderX;
+      newerY = olderY;
+    }
+    const float size = 1.0f / (1.0f + headDepth * 0.23f);
+    if (ambientOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL &&
+        originalMasksLoaded) {
+      drawOriginalOrbSprite(headX, headY, size, trailZ + 1,
+                            red, green, blue, 1.0f);
+    } else {
+      drawOriginalOrbDisc(headX, headY, 30.0f * size, 15.0f * size,
+                           trailZ + 1,
+                           glassLightColor(red, green, blue, 0x3C),
+                           glassLightColor(red, green, blue, 0));
+      drawOriginalOrbDisc(headX, headY, 4.5f * size, 2.25f * size,
+                           trailZ + 1,
+                           glassLightColor(0x80, 0x80, 0x80, 0x80),
+                           glassLightColor(0x80, 0x80, 0x80, 0));
+    }
+  }
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+}
+
 static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
                               uint32_t elapsedMs, uint32_t movementMs,
                               int movementSpeed, int glowScale, int trailZ,
                               int scrollFocusX, int formationMode) {
+  if (ambientOrbsTheme == ORBS_THEME_PS2_ORIGINAL) {
+    drawOriginalOrbs(centerX, centerY, radiusX, radiusY,
+                     glassStartMs + elapsedMs, trailZ);
+    return;
+  }
   OrbFormation *formation = orbFormationAt(elapsedMs, formationMode);
   const float selectionPulse = orbSelectionPulse(elapsedMs);
   OrbMotion motion[ORB_TRAIL_SEGMENTS + 1];
@@ -1237,12 +1557,19 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
                       glassLightColor(0x30, 0x68, 0xA8,
                                        (int)(coreAlpha * letterBlend[0] * 0.28f)),
                       glassLightColor(0x30, 0x68, 0xA8, 0));
-    drawOrbGlowDisc(x, y, haloRadius, trailZ + 1,
-                    glassLightColor(0x70, 0xA8, 0xE8, haloAlpha),
-                    glassLightColor(0x70, 0xA8, 0xE8, 0));
-    drawOrbGlowDisc(x, y, coreRadius, trailZ + 1,
-                    glassLightColor(0xE0, 0xF0, 0xFF, coreAlpha),
-                    glassLightColor(0xE0, 0xF0, 0xFF, 0));
+    if (ambientOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL &&
+        originalMasksLoaded) {
+      const float originalSize = 1.0f / (1.0f + depth / 640.0f);
+      drawOriginalOrbSprite(x, y, originalSize, trailZ + 1,
+                            0x30, 0x62, 0x80, opacity);
+    } else {
+      drawOrbGlowDisc(x, y, haloRadius, trailZ + 1,
+                      glassLightColor(0x70, 0xA8, 0xE8, haloAlpha),
+                      glassLightColor(0x70, 0xA8, 0xE8, 0));
+      drawOrbGlowDisc(x, y, coreRadius, trailZ + 1,
+                      glassLightColor(0xE0, 0xF0, 0xFF, coreAlpha),
+                      glassLightColor(0xE0, 0xF0, 0xFF, 0));
+    }
   }
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
 }

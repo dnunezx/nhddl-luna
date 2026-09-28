@@ -13,3 +13,7 @@ mkdir -p "$build_dir"
   src/ui/game_options.c tests/test_game_options.c \
   -o "$build_dir/test_game_options"
 "$build_dir/test_game_options"
+"${CC:-cc}" -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror \
+  -Iinclude src/vmc_create.c tests/test_vmc_create.c \
+  -o "$build_dir/test_vmc_create"
+"$build_dir/test_vmc_create"

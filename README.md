@@ -17,6 +17,17 @@ Since NHDDL only launches Neutrino, PADEMU, IGR, IGS, cheats and other features 
 
 ## Usage
 
+Press **Start** in the game library to open LUNA's main menu. Choose **File
+Manager** to browse connected storage and memory cards, **Return to Library**
+to go back, or **Exit LUNA** to quit. The same menu appears automatically when
+no games are found.
+
+The file manager is read-only. **Cross** opens a device or folder, **Up/Down**
+selects an item, and **Triangle** or **Circle** goes back. It shows file sizes
+when the device reports them, including files in `/VMC`; it does not change VMC
+assignments. On an APA HDD it shows the mounted OPL metadata partition, not
+the raw game partitions.
+
 ### Classic title list controls
 
  - Press **Up** on the d-pad to select the **previous title** in the list

@@ -78,6 +78,18 @@ int main(void) {
   assert(lunaGameOptionsChange(&options, &arguments, LUNA_GAME_PS2_LOGO, 1));
   assert(!strcmp(video->value, "vendor-mode"));
 
+  assert(lunaGameOptionsSetVMC(&options, &arguments, 0,
+                               "mass0:/VMC/SLUS_123.45_0.bin"));
+  Argument *card = getArgument(&arguments, "mc0");
+  assert(card != NULL && !card->isDisabled);
+  assert(!strcmp(options.vmcSlotLabel[0], "SLUS_123.45_0.bin"));
+  assert(lunaGameOptionsSetVMC(&options, &arguments, 1,
+                               "mass0:/VMC/shared.bin"));
+  assert(!strcmp(options.vmcSlotLabel[1], "shared.bin"));
+  assert(lunaGameOptionsSetVMC(&options, &arguments, 0, ""));
+  assert(card->isDisabled);
+  assert(!strcmp(options.vmcSlotLabel[0], "Physical card"));
+
   freeArguments(&arguments);
   puts("game options: ok");
   return 0;

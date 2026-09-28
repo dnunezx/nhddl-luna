@@ -7,6 +7,7 @@
 #include "ui/ambient.h"
 #include "ui/ambient_orbs.h"
 #include "ui/art_cache.h"
+#include "ui/file_manager.h"
 #include "ui/graphics.h"
 #include "ui/handoff.h"
 #include "ui/navigation.h"
@@ -41,6 +42,8 @@ void uiSplashThread();
 GSGLOBAL *gsGlobal;
 char lineBuffer[255];
 static int ambientOrbsBackground = 0;
+static int orbsThemeSetting = ORBS_THEME_LUNA;
+static int orbsAppearanceSetting = ORBS_APPEARANCE_LUNA;
 static int glassColorSetting = GLASS_COLOR_ORIGINAL;
 static uint32_t splashVisibleStartMs;
 
@@ -183,6 +186,13 @@ int uiLoop(TargetList *titles) {
   // Init gamepad inputs
   initPad();
 
+  if (titles->total == 0) {
+    uiMainMenuLoop(0);
+    closePad();
+    closeUI();
+    return 0;
+  }
+
   int isCoverUninitialized = 1;
   int isDiscUninitialized = 1;
   int selectedTitleIdx = 0;
@@ -282,6 +292,11 @@ int uiLoop(TargetList *titles) {
     resetAmbientOrbsOrbit(uiNowMs());
   ambientOrbsBackground = loadAmbientOrbsBackground(curTarget);
   setAmbientOrbsBackgroundStyle(ambientOrbsBackground);
+  orbsThemeSetting = loadAmbientOrbsTheme(curTarget);
+  setAmbientOrbsTheme((AmbientOrbsTheme)orbsThemeSetting, uiNowMs());
+  orbsAppearanceSetting = loadAmbientOrbsAppearance(curTarget);
+  if (setAmbientOrbsAppearance((AmbientOrbsAppearance)orbsAppearanceSetting))
+    orbsAppearanceSetting = ORBS_APPEARANCE_LUNA;
   glassColorSetting = loadGlassColorPreset(curTarget);
   setGlassColorPreset((GlassColorPreset)glassColorSetting);
   ambientEnabled = loadAmbientSoundEnabled(curTarget);
@@ -1218,7 +1233,9 @@ int uiLoop(TargetList *titles) {
       // Enter title options screen
       if ((res = uiTitleOptionsLoop(curTarget, &classicArtOverlap,
                                     &ambientOrbsBackground, &glassColorSetting,
-                                    &ambientEnabled, &enabledViews,
+                                    &ambientEnabled, &orbsThemeSetting,
+                                    &orbsAppearanceSetting,
+                                    &enabledViews,
                                     view == UI_VIEW_PSBBN)) < 0) {
         // Something went wrong, main loop must exit immediately
         ambientStop();
@@ -1233,8 +1250,14 @@ int uiLoop(TargetList *titles) {
       optionsTriangleHeld = (pollInput() & PAD_TRIANGLE) != 0;
       input = 0;
     } else if (input & PAD_START) {
-      // Quit
-      break;
+      if (uiMainMenuLoop(1))
+        break;
+      // Prevent the menu selection press from acting on a library title.
+      while (pollInput() & (PAD_CROSS | PAD_CIRCLE | PAD_TRIANGLE | PAD_START))
+        usleep(1000);
+      prevInput = 0;
+      frameCount = 0;
+      input = 0;
     }
   }
 

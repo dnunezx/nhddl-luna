@@ -36,6 +36,9 @@ int buildConfigFilePath(char *targetPath, size_t targetSize, const char *targetM
 int buildLegacyConfigFilePath(char *targetPath, size_t targetSize, const char *targetMountpoint,
                               const char *targetFileName);
 
+// Packed date/time from the PS2 real-time clock; zero if unavailable.
+uint32_t getTimestamp(void);
+
 // Gets last launched title path into titlePath
 // Searches for the latest file across all mounted BDM devices
 int getLastLaunchedTitle(char *titlePath, size_t titlePathSize);

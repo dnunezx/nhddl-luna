@@ -133,9 +133,7 @@ int main(int argc, char *argv[]) {
   }
 
   if (titles->total == 0) {
-    freeTargetList(titles);
-    uiSplashLogString(LEVEL_WARN, "No targets found\n");
-    goto fail;
+    uiSplashLogString(LEVEL_INFO_NODELAY, "No targets found; file manager available\n");
   }
 
   // Let the audio worker preempt long cover decodes in the UI thread.
@@ -144,21 +142,23 @@ int main(int argc, char *argv[]) {
 
   // Start the soundtrack as soon as the library drive is ready, while the
   // splash is still visible. Use the restored title for its audio preference.
-  Target *audioTarget = titles->first;
-  char lastAudioTitle[PATH_MAX + 1];
-  if (!getLastLaunchedTitle(lastAudioTitle, sizeof(lastAudioTitle))) {
-    for (Target *candidate = titles->first; candidate != NULL;
-         candidate = candidate->next) {
-      int relative = getRelativePathIdx(candidate->fullPath);
-      if (relative < 0)
-        relative = 0;
-      if (!strcmp(lastAudioTitle, candidate->fullPath + relative)) {
-        audioTarget = candidate;
-        break;
+  if (titles->total > 0) {
+    Target *audioTarget = titles->first;
+    char lastAudioTitle[PATH_MAX + 1];
+    if (!getLastLaunchedTitle(lastAudioTitle, sizeof(lastAudioTitle))) {
+      for (Target *candidate = titles->first; candidate != NULL;
+           candidate = candidate->next) {
+        int relative = getRelativePathIdx(candidate->fullPath);
+        if (relative < 0)
+          relative = 0;
+        if (!strcmp(lastAudioTitle, candidate->fullPath + relative)) {
+          audioTarget = candidate;
+          break;
+        }
       }
     }
+    ambientStart(loadAmbientSoundEnabled(audioTarget));
   }
-  ambientStart(loadAmbientSoundEnabled(audioTarget));
 
   stopUISplashThread();
   if ((res = uiLoop(titles))) {
