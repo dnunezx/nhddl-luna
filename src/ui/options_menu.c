@@ -281,11 +281,6 @@ static void drawTitleOptionsFrame(Target *target,
   }
   drawIconWindow(middle + 215, tabY, middle + 245, tabY + lineHeight, 0,
                  FontMainColor, ALIGN_VCENTER, ICON_R1);
-  int underlineX = middle + tabOffsets[page];
-  int underlineWidth = getLineWidth(tabLabels[page]);
-  gsKit_prim_sprite(gsGlobal, underlineX, tabY + lineHeight,
-                    underlineX + underlineWidth, tabY + lineHeight + 1, 0, ColorSelected);
-
   const int menuTop = headerHeight + 2 * lineHeight + 8;
   const int menuBottom = gsGlobal->Height - footerHeight - lineHeight;
   const int rowStep = lineHeight + lineHeight / 2;

@@ -19,11 +19,10 @@
 #define ORB_TRAIL_STEP_MS 40
 #define ORB_TRAIL_SEGMENTS 6
 #define ORB_FORMATION_PERIOD_MS 4600
-#define ORB_SPLASH_FORMATION_PERIOD_MS 1500
+#define ORB_SPLASH_FORMATION_PERIOD_MS 1800
 #define ORB_FORMATION_MORPH_MS 1000
 #define ORB_SPLASH_FORMATION_MORPH_MS 550
 #define ORB_FORMATION_TRAVEL_MS 3600
-#define ORB_SQUARE_TRAVEL_MS 9000
 #define ORB_INFINITY_WOBBLE_MS 5200
 #define ORB_INFINITY_WOBBLE_PIXELS 7.0f
 #define ORB_CUBE_ROTATION_MS 8000
@@ -566,7 +565,6 @@ static void orbPosition(const OrbPath *path, const OrbMotion *motion,
 
 typedef enum {
   ORB_SHAPE_ORBIT,
-  ORB_SHAPE_SQUARE,
   ORB_SHAPE_DIAMOND,
   ORB_SHAPE_CUBE,
   ORB_SHAPE_OCTAHEDRON,
@@ -678,16 +676,16 @@ static OrbFormation *orbFormationAt(uint32_t elapsedMs, int formationMode) {
     formation->random = glassStartMs ^ 0xA341316CU;
     formation->startMs = glassStartMs;
     formation->epochMs = epochMs;
-    formation->from = formationMode == 2 || formationMode == 1 ?
-                      ORB_SHAPE_CUBE : ORB_SHAPE_ORBIT;
+    formation->from = formationMode == 2 ? ORB_SHAPE_LUNA :
+                      formationMode == 1 ? ORB_SHAPE_CUBE : ORB_SHAPE_ORBIT;
     formation->to = formation->from;
     formation->initialized = 1;
   }
   while (formation->cycle < cycle) {
     formation->from = formation->to;
     if (formationMode == 2) {
-      formation->to = formation->to == ORB_SHAPE_CUBE ?
-                      ORB_SHAPE_LUNA : ORB_SHAPE_CUBE;
+      formation->to = formation->to == ORB_SHAPE_LUNA ?
+                      ORB_SHAPE_CUBE : ORB_SHAPE_LUNA;
     } else if (formationMode == 1) {
       formation->to = orbitShapes[(formation->cycle + 1) %
                                   (sizeof(orbitShapes) / sizeof(orbitShapes[0]))];
@@ -873,13 +871,11 @@ static void orbPatternPosition(OrbShape shape, int index, uint32_t elapsedMs,
   const uint32_t basePhase = (uint32_t)(((uint64_t)index << 16) / ORB_COUNT);
   const int spread = (int)(orbWave(basePhase + (2 << 11)) * motion->breath *
                            1100.0f / (127.0f * 127.0f));
-  const uint32_t travelMs = shape == ORB_SHAPE_SQUARE ?
-                            ORB_SQUARE_TRAVEL_MS : ORB_FORMATION_TRAVEL_MS;
-  const uint32_t phase = (glassPhase(elapsedMs, travelMs, 0) +
+  const uint32_t phase = (glassPhase(elapsedMs, ORB_FORMATION_TRAVEL_MS, 0) +
                           basePhase + spread) & 0xFFFFU;
   float px = 0.0f;
   float py = 0.0f;
-  if (shape == ORB_SHAPE_SQUARE || shape == ORB_SHAPE_DIAMOND) {
+  if (shape == ORB_SHAPE_DIAMOND) {
     const int side = phase >> 14;
     const float along = (phase & 0x3FFFU) / 16384.0f;
     float sx, sy;
@@ -896,13 +892,8 @@ static void orbPatternPosition(OrbShape shape, int index, uint32_t elapsedMs,
       sx = -0.82f;
       sy = 0.82f - 1.64f * along;
     }
-    if (shape == ORB_SHAPE_DIAMOND) {
-      px = (sx - sy) * 0.82f;
-      py = (sx + sy) * 0.82f;
-    } else {
-      px = sx;
-      py = sy;
-    }
+    px = (sx - sy) * 0.82f;
+    py = (sx + sy) * 0.82f;
   } else { // Infinity loop.
     orbInfinityPoint(phase, elapsedMs, motion, centerX, centerY,
                      radiusX, radiusY, x, y);
@@ -916,29 +907,11 @@ static void orbPatternPosition(OrbShape shape, int index, uint32_t elapsedMs,
   *depth = 65.0f + orbWave(phase) * 30.0f / 127.0f;
 }
 
-static void orbFormationPatternPosition(OrbShape shape, int index,
-                                         uint32_t animationMs,
-                                         const OrbMotion *motion,
-                                         int centerX, int centerY, int radiusX,
-                                         int radiusY, int splashLogoCenterY,
-                                         int splashLogoWidth, float *x, float *y,
-                                         float *depth) {
-  orbPatternPosition(shape, index, animationMs, motion,
-                     centerX, centerY, radiusX, radiusY, x, y, depth);
-  if (shape == ORB_SHAPE_LUNA && splashLogoWidth > 0) {
-    const float sourceScale = orbLogoScale(radiusX, motion);
-    const float targetScale = splashLogoWidth / 710.0f;
-    *x = centerX + (*x - centerX) * targetScale / sourceScale;
-    *y = splashLogoCenterY + (*y - centerY) * targetScale / sourceScale;
-  }
-}
-
 static void orbFormationPosition(const OrbFormation *formation, int index,
                                   uint32_t sampleMs, uint32_t animationMs,
                                   const OrbMotion *motion,
                                   int centerX, int centerY, int radiusX,
-                                  int radiusY, int splashLogoCenterY,
-                                  int splashLogoWidth, float *x, float *y,
+                                  int radiusY, float *x, float *y,
                                   float *depth, float *opacity) {
   const uint32_t cycleStart = formation->epochMs +
       formation->cycle * formation->periodMs;
@@ -948,25 +921,19 @@ static void orbFormationPosition(const OrbFormation *formation, int index,
     blend = 1.0f;
   blend = blend * blend * (3.0f - 2.0f * blend);
   if (blend <= 0.0f) {
-    orbFormationPatternPosition(formation->from, index, animationMs, motion,
-                                centerX, centerY, radiusX, radiusY,
-                                splashLogoCenterY, splashLogoWidth,
-                                x, y, depth);
+    orbPatternPosition(formation->from, index, animationMs, motion,
+                       centerX, centerY, radiusX, radiusY, x, y, depth);
   } else if (blend >= 1.0f) {
-    orbFormationPatternPosition(formation->to, index, animationMs, motion,
-                                centerX, centerY, radiusX, radiusY,
-                                splashLogoCenterY, splashLogoWidth,
-                                x, y, depth);
+    orbPatternPosition(formation->to, index, animationMs, motion,
+                       centerX, centerY, radiusX, radiusY, x, y, depth);
   } else {
     float fromX, fromY, fromDepth, toX, toY, toDepth;
-    orbFormationPatternPosition(formation->from, index, animationMs, motion,
-                                centerX, centerY, radiusX, radiusY,
-                                splashLogoCenterY, splashLogoWidth,
-                                &fromX, &fromY, &fromDepth);
-    orbFormationPatternPosition(formation->to, index, animationMs, motion,
-                                centerX, centerY, radiusX, radiusY,
-                                splashLogoCenterY, splashLogoWidth,
-                                &toX, &toY, &toDepth);
+    orbPatternPosition(formation->from, index, animationMs, motion,
+                       centerX, centerY, radiusX, radiusY,
+                       &fromX, &fromY, &fromDepth);
+    orbPatternPosition(formation->to, index, animationMs, motion,
+                       centerX, centerY, radiusX, radiusY,
+                       &toX, &toY, &toDepth);
     *x = fromX + (toX - fromX) * blend;
     *y = fromY + (toY - fromY) * blend;
     *depth = fromDepth + (toDepth - fromDepth) * blend;
@@ -1137,22 +1104,13 @@ static void drawOrbFormationEdges(OrbShape shape, float extent,
   for (int i = 0; i < ORB_COUNT; i++)
     orbPatternPosition(shape, i, animationMs, motion, centerX, centerY,
                        radiusX, radiusY, &x[i], &y[i], &depth);
-  if (shape == ORB_SHAPE_CUBE || shape == ORB_SHAPE_OCTAHEDRON) {
-    const int (*edges)[2] = shape == ORB_SHAPE_CUBE ? cubeEdges : octaEdges;
-    const int edgeCount = shape == ORB_SHAPE_CUBE ?
-                          (int)(sizeof(cubeEdges) / sizeof(cubeEdges[0])) :
-                          (int)(sizeof(octaEdges) / sizeof(octaEdges[0]));
-    for (int i = 0; i < edgeCount; i++) {
-      const int a = edges[i][0], b = edges[i][1];
-      drawOrbTailStroke(x[a], y[a], x[b], y[b], extent, 3.5f, alpha, z);
-    }
-  } else {
-    // In the slower square, each moving orb leaves a tail toward the one behind.
-    for (int i = 0; i < ORB_COUNT; i++) {
-      const int previous = (i + ORB_COUNT - 1) % ORB_COUNT;
-      drawOrbTailStroke(x[i], y[i], x[previous], y[previous], extent, 3.5f,
-                        alpha, z);
-    }
+  const int (*edges)[2] = shape == ORB_SHAPE_CUBE ? cubeEdges : octaEdges;
+  const int edgeCount = shape == ORB_SHAPE_CUBE ?
+                         (int)(sizeof(cubeEdges) / sizeof(cubeEdges[0])) :
+                         (int)(sizeof(octaEdges) / sizeof(octaEdges[0]));
+  for (int i = 0; i < edgeCount; i++) {
+    const int a = edges[i][0], b = edges[i][1];
+    drawOrbTailStroke(x[a], y[a], x[b], y[b], extent, 3.5f, alpha, z);
   }
 }
 
@@ -1384,8 +1342,7 @@ static void drawOriginalOrbs(int centerX, int centerY, int radiusX,
 static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
                               uint32_t elapsedMs, uint32_t movementMs,
                               int movementSpeed, int glowScale, int trailZ,
-                              int scrollFocusX, int formationMode,
-                              int splashLogoCenterY, int splashLogoWidth) {
+                              int scrollFocusX, int formationMode) {
   if (ambientOrbsTheme == ORBS_THEME_PS2_ORIGINAL) {
     drawOriginalOrbs(centerX, centerY, radiusX, radiusY,
                      glassStartMs + elapsedMs, trailZ);
@@ -1417,7 +1374,6 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
   for (int i = 0; i < ORB_COUNT; i++) {
     orbFormationPosition(formation, i, elapsedMs, animationTime[0], &motion[0],
                          centerX, centerY, radiusX, radiusY,
-                         splashLogoCenterY, splashLogoWidth,
                          &positionsX[i], &positionsY[i],
                          &depths[i], &opacities[i]);
     if (scrollFocusX) {
@@ -1465,15 +1421,12 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
     drawOrbSphereGuides(centerX, centerY, radiusX, radiusY,
                         animationTime[0], &motion[0], trailZ,
                         (int)(edgeAlpha * toExtent), toExtent);
-  const int logoCenterY = splashLogoWidth > 0 ? splashLogoCenterY : centerY;
-  const float logoScale = splashLogoWidth > 0 ?
-                          splashLogoWidth / 710.0f :
-                          orbLogoScale(radiusX, &motion[0]);
+  const float logoScale = orbLogoScale(radiusX, &motion[0]);
   if (formation->from == ORB_SHAPE_LUNA)
-    drawOrbLogoWordmark(centerX, logoCenterY, logoScale, trailZ,
+    drawOrbLogoWordmark(centerX, centerY, logoScale, trailZ,
                         (int)(logoAlpha * fromExtent), fromExtent);
   if (formation->to == ORB_SHAPE_LUNA)
-    drawOrbLogoWordmark(centerX, logoCenterY, logoScale, trailZ,
+    drawOrbLogoWordmark(centerX, centerY, logoScale, trailZ,
                         (int)(logoAlpha * toExtent), toExtent);
   const float logoStrength = letterBlend[0] +
       (formation->from == ORB_SHAPE_LUNA ? fromExtent : 0.0f) +
@@ -1498,7 +1451,6 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
       orbFormationPosition(formation, i, elapsedMs > age ? elapsedMs - age : 0,
                            animationTime[segment],
                            &motion[segment], centerX, centerY, radiusX, radiusY,
-                           splashLogoCenterY, splashLogoWidth,
                            &oldX, &oldY, &oldDepth, &oldOpacity);
       if (scrollFocusX) {
         blendScrollLetterOrb(i, letterBlend[segment], glyphBlend[segment],
@@ -1619,7 +1571,7 @@ int drawAmbientOrbsBackground(uint32_t now) {
                           width, height, 0, black, black, black, black);
   drawAmbientOrbs(width * 65 / 100, height * 52 / 100,
                   width * 20 / 100, height * 30 / 100,
-                  elapsedMs, elapsedMs, 1, 100, 0, 0, 0, 0, 0);
+                  elapsedMs, elapsedMs, 1, 100, 0, 0, 0);
   return 1;
 }
 
@@ -1627,16 +1579,14 @@ void drawAmbientOrbsOrbit(int centerX, int centerY, int radiusX,
                           int radiusY, uint32_t now, int trailZ) {
   const uint32_t elapsedMs = glassElapsedMs(now);
   drawAmbientOrbs(centerX, centerY, radiusX, radiusY, elapsedMs,
-                  elapsedMs, 1, 100, trailZ, 0, 1, 0, 0);
+                  elapsedMs, 1, 100, trailZ, 0, 1);
 }
 
 void drawAmbientOrbsSplash(int centerX, int centerY, int radiusX,
-                           int radiusY, int logoCenterY, int logoWidth,
-                           uint32_t now, int trailZ) {
+                           int radiusY, uint32_t now, int trailZ) {
   const uint32_t elapsedMs = glassElapsedMs(now);
   drawAmbientOrbs(centerX, centerY, radiusX, radiusY, elapsedMs,
-                  elapsedMs, 1, 100, trailZ, 0, 2,
-                  logoCenterY, logoWidth);
+                  elapsedMs, 1, 100, trailZ, 0, 2);
 }
 
 void drawAmbientOrbsScroll(int centerX, int centerY, int radiusX,
@@ -1654,5 +1604,5 @@ void drawAmbientOrbsScroll(int centerX, int centerY, int radiusX,
   scrollOrbLastFrameMs = elapsedMs;
   drawAmbientOrbs(centerX, centerY, radiusX, radiusY, elapsedMs,
                   scrollOrbClockMs, fastScroll ? 3 : 1, 100,
-                  trailZ, scrollFocusX, 0, 0, 0);
+                  trailZ, scrollFocusX, 0);
 }

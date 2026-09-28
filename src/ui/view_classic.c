@@ -298,9 +298,8 @@ static void drawClassicDisc(GSTEXTURE *disc, uint32_t frameNowMs) {
   const float lowerRightX = centerX + half * (cosine - sine);
   const float lowerRightY = centerY + half * (sine + cosine);
 
-  // Disc labels are decoded to a true RGBA texture. Apply the same GS alpha
-  // test used by the boot logo so transparent PNG corners remain invisible
-  // while the textured quad rotates.
+  // Disc labels are decoded to a true RGBA texture. Reject fully transparent
+  // texels so their PNG corners remain invisible while the quad rotates.
   const int previousAlphaTest = gsGlobal->Test->ATST;
   const int previousAlphaReference = gsGlobal->Test->AREF;
   const int previousAlphaFail = gsGlobal->Test->AFAIL;

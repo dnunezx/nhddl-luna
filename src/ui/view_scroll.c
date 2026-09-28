@@ -268,15 +268,18 @@ void drawGlassDiamond(int centerX, int centerY, int radius, int z, uint64_t colo
 void drawGlassPanel(int x1, int y1, int x2, int y2, int z) {
   const uint64_t glass = glassPresetColor(0x05, 0x0D, 0x22, 0x54);
   const uint64_t glassInner = glassPresetColor(0x18, 0x46, 0x70, 0x14);
-  const uint64_t shine = glassPresetColor(0x88, 0xD8, 0xFF, 0x4A);
-  const uint64_t edge = glassPresetColor(0x24, 0x68, 0x98, 0x38);
+  const uint64_t rim = glassPresetColor(0x58, 0xA0, 0xC8, 0x28);
+  const uint64_t rimFade = glassPresetColor(0x38, 0x78, 0xA0, 0x14);
+  const uint64_t edge = glassPresetColor(0x24, 0x68, 0x98, 0x24);
 
   gsKit_prim_sprite(gsGlobal, x1, y1, x2, y2, z, glass);
-  gsKit_prim_sprite(gsGlobal, x1 + 2, y1 + 2, x2 - 2, y1 + 5, z + 1, glassInner);
-  gsKit_prim_sprite(gsGlobal, x1, y1, x2, y1 + 1, z + 2, shine);
-  gsKit_prim_sprite(gsGlobal, x1, y1, x1 + 1, y2, z + 2, shine);
-  gsKit_prim_sprite(gsGlobal, x1, y2 - 1, x2, y2, z + 1, edge);
-  gsKit_prim_sprite(gsGlobal, x2 - 1, y1, x2, y2, z + 1, edge);
+  gsKit_prim_sprite(gsGlobal, x1 + 4, y1 + 4, x2 - 4, y1 + 8, z + 1, glassInner);
+  // Two matching scanlines per band keep the rim stable in interlaced output.
+  gsKit_prim_sprite(gsGlobal, x1, y1, x2, y1 + 2, z + 2, rim);
+  gsKit_prim_sprite(gsGlobal, x1 + 2, y1 + 2, x2 - 2, y1 + 4, z + 2, rimFade);
+  gsKit_prim_sprite(gsGlobal, x1, y1 + 2, x1 + 2, y2, z + 2, rim);
+  gsKit_prim_sprite(gsGlobal, x1, y2 - 2, x2, y2, z + 1, edge);
+  gsKit_prim_sprite(gsGlobal, x2 - 2, y1, x2, y2, z + 1, edge);
 }
 
 static void projectCrystalPointRotated(GlassPoint *point, float centerX, float centerY,

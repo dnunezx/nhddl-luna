@@ -30,7 +30,6 @@ static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *b
 GSTEXTURE **fontPages;
 // Graphics textures
 GSTEXTURE *icons;
-GSTEXTURE *logo;
 static GSTEXTURE *classicScrollbar;
 GSTEXTURE *gridSelector;
 static GSTEXTURE cardArtTextures[CARD_ART_COUNT];
@@ -138,14 +137,6 @@ int initGraphics() {
     return -1;
   }
 
-  // Upload logo texture to GS
-  logo = calloc(sizeof(GSTEXTURE), 1);
-  if (gsKit_texture_png_mem(gsGlobal, logo, LOGO_PNG, SIZE_LOGO_PNG, 1, 1)) {
-    DPRINTF("ERROR: Failed to load logo texture\n");
-    return -1;
-  }
-  logo->Filter = GS_FILTER_LINEAR; // Enable bilinear filtering
-
   classicScrollbar = calloc(sizeof(GSTEXTURE), 1);
   if (gsKit_texture_png_mem(gsGlobal, classicScrollbar, CLASSIC_SCROLLBAR_PNG,
                             SIZE_CLASSIC_SCROLLBAR_PNG, 0, 1)) {
@@ -173,7 +164,7 @@ int initGraphics() {
   return 0;
 }
 
-// Frees memory used by font pages, logo and icon textures
+// Frees memory used by font pages and icon textures
 void closeFont() {
   for (int i = 0; i < CARD_ART_COUNT; i++) {
     free(cardArtTextures[i].Mem);
@@ -186,8 +177,6 @@ void closeFont() {
 
   free(icons->Mem);
   free(icons);
-  free(logo->Mem);
-  free(logo);
   free(classicScrollbar->Mem);
   free(classicScrollbar);
   if (gridSelector != NULL) {
@@ -314,38 +303,6 @@ void drawCardArt(CardArtType card, float x, float y, float size) {
                             GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
-}
-
-// Draws the light gray boot logo centered at x and scaled to width.
-void drawBootLogo(float centerX, float y, float width, int z) {
-  float height = width * logo->Height / logo->Width;
-  float x = centerX - width / 2;
-  int previousAlphaTest = gsGlobal->Test->ATST;
-  int previousAlphaReference = gsGlobal->Test->AREF;
-  int previousAlphaFail = gsGlobal->Test->AFAIL;
-
-  // The in-memory PNG loader converts standard alpha to the GS's inverted
-  // 0..128 range. Reject 128 (fully transparent) before blending so a texel's
-  // unused black RGB payload can never become a rectangle behind the logo.
-  gsKit_TexManager_bind(gsGlobal, logo);
-  gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-  gsGlobal->Test->ATST = 2; // LESS: draw inverted alpha values 0..127 only.
-  gsGlobal->Test->AREF = 0x80;
-  gsGlobal->Test->AFAIL = 0;
-  gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
-  gsKit_set_test(gsGlobal, GS_ATEST_ON);
-  gsKit_prim_sprite_texture(gsGlobal, logo, x, y, 0, 0, x + width, y + height, logo->Width - 1, logo->Height - 1, z,
-                            GS_SETREG_RGBA(0x60, 0x60, 0x60, 0x80));
-  gsGlobal->Test->ATST = previousAlphaTest;
-  gsGlobal->Test->AREF = previousAlphaReference;
-  gsGlobal->Test->AFAIL = previousAlphaFail;
-  gsKit_set_test(gsGlobal, GS_ATEST_ON);
-  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
-}
-
-void releaseBootLogo() {
-  if (logo != NULL)
-    gsKit_TexManager_free(gsGlobal, logo);
 }
 
 // Draws the icon in [x1,y1],[x2,y2] window.

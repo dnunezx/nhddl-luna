@@ -112,10 +112,4 @@ void drawCardArt(CardArtType card, float x, float y, float size);
 // Draws the embedded Classic scrollbar PNG at a chosen height.
 void drawClassicScrollbar(float x, float y, float height, int z);
 
-// Draws the user-supplied boot logo centered at x and scaled to width
-void drawBootLogo(float centerX, float y, float width, int z);
-
-// Releases the boot-only logo from GS VRAM after the splash screen closes.
-void releaseBootLogo();
-
 #endif

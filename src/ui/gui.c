@@ -183,9 +183,6 @@ int uiLoop(TargetList *titles) {
     goto exit;
   }
 
-  // The splash logo is never drawn in either library view. Releasing its large
-  // texture leaves stable VRAM for Classic's cover and disc pair.
-  releaseBootLogo();
   // Init gamepad inputs
   initPad();
 
@@ -1382,9 +1379,10 @@ static uint8_t threadStack[THREAD_STACK_SIZE] __attribute__((aligned(16)));
 int startSplashScreen() {
   DPRINTF("Starting UI splash thread\n");
   splashVisibleStartMs = uiNowMs();
-  // Keep the bright LUNA orbs on the boot formation. The library loads its
-  // saved appearance after the splash closes.
-  setAmbientOrbsAppearance(ORBS_APPEARANCE_LUNA);
+  // Use the PS2 ROM's original orb sprites for the boot formation. The
+  // library loads its saved appearance after the splash closes.
+  if (setAmbientOrbsAppearance(ORBS_APPEARANCE_PS2_ORIGINAL))
+    DPRINTF("WARNING: PS2 original orb masks unavailable for splash\n");
   resetAmbientOrbsSplash(splashVisibleStartMs);
   // Initialize splash semaphores
   ee_sema_t semaphore;
@@ -1431,14 +1429,9 @@ void uiSplashThread() {
     gsKit_TexManager_nextFrame(gsGlobal);
     gsKit_clear(gsGlobal, GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80));
     const uint32_t now = uiNowMs();
-    const int logoWidth = gsGlobal->Width * 57 / 100;
-    const int logoTop = gsGlobal->Height * 9 / 100;
-    const int logoCenterY = logoTop + logoWidth * 109 / (710 * 2);
-    drawBootLogo(gsGlobal->Width / 2, logoTop, logoWidth, 1);
-    drawAmbientOrbsSplash(gsGlobal->Width / 2, gsGlobal->Height * 58 / 100,
+    drawAmbientOrbsSplash(gsGlobal->Width / 2, gsGlobal->Height * 48 / 100,
                           gsGlobal->Width * 31 / 100,
-                          gsGlobal->Height * 31 / 100,
-                          logoCenterY, logoWidth, now, 2);
+                          gsGlobal->Height * 36 / 100, now, 1);
 
     // Successful boot stays intentionally minimal. Only surface a fatal error
     // so a failed initialization cannot be mistaken for endless loading.
@@ -1459,7 +1452,7 @@ void uiSplashThread() {
 
 // Stops UI splash thread
 void stopUISplashThread() {
-  // A fast scan otherwise exits before the cube reaches the upper logo.
+  // A fast scan otherwise exits before the LUNA-to-cube animation is visible.
   while ((uint32_t)(uiNowMs() - splashVisibleStartMs) < SPLASH_MIN_VISIBLE_MS)
     usleep(16000);
   SignalSema(logBuffer.doneSema);
