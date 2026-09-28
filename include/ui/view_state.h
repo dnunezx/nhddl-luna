@@ -5,6 +5,7 @@
 #include "ui/navigation.h"
 #include "ui/view_scroll.h"
 #include "ui/ambient_orbs.h"
+#include "ui/graphics.h"
 
 // The selected view is stored with the selected title's metadata on its game drive.
 // Missing or invalid state falls back to Classic.
@@ -35,6 +36,10 @@ int saveAmbientOrbsAppearance(Target *target, AmbientOrbsAppearance appearance);
 // Glass color is a library-wide preference; invalid or absent data uses Original.
 GlassColorPreset loadGlassColorPreset(Target *target);
 int saveGlassColorPreset(Target *target, GlassColorPreset preset);
+
+// The UI font defaults to DejaVu Sans when no valid preference exists.
+UIFont loadUIFont(Target *target);
+int saveUIFont(Target *target, UIFont selection);
 
 // Ambient sound is enabled when no valid preference has been saved.
 int loadAmbientSoundEnabled(Target *target);

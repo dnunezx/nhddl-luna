@@ -57,8 +57,26 @@ typedef enum {
   ICON_ENABLED,
 } IconType;
 
+typedef enum {
+  CARD_ART_NONE = -1,
+  CARD_ART_VIRTUAL,
+  CARD_ART_SLOT_1,
+  CARD_ART_SLOT_2,
+  CARD_ART_MEMORY_CARD_MENU,
+  CARD_ART_COUNT,
+} CardArtType;
+
+typedef enum {
+  UI_FONT_DEJAVU,
+  UI_FONT_PSBBN,
+  UI_FONT_COUNT,
+} UIFont;
+
 // Initializes and uploads graphics resources to GS VRAM
 int initGraphics();
+
+// Switches the UI bitmap font; leaves the current font selected on failure.
+int setUIFont(UIFont selection);
 
 // Draws the text with specified max dimensions relative to x and y
 // Returns the bottom Y coordinate of the last line that can be used to draw the next text
@@ -87,6 +105,9 @@ void drawIcon(float x, float y, int z, uint64_t color, IconType iconType);
 
 // Draws the icon in [x1,y1],[x2,y2] window.
 void drawIconWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_t alignment, IconType iconType);
+
+// Draws bundled memory-card artwork at the requested square size.
+void drawCardArt(CardArtType card, float x, float y, float size);
 
 // Draws the embedded Classic scrollbar PNG at a chosen height.
 void drawClassicScrollbar(float x, float y, float height, int z);

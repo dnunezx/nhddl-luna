@@ -2,6 +2,7 @@
 #include "ui/graphics.h"
 #include "dprintf.h"
 #include "ui/dejavu_sans.h"
+#include "ui/psbbn_font.h"
 #include "ui/icons.h"
 #include "ui/classic_scrollbar.h"
 #include "ui/grid_selector.h"
@@ -11,6 +12,15 @@
 #include <malloc.h>
 #include <png.h>
 #include <stdlib.h>
+
+extern unsigned char virtual_memory_card_png[];
+extern unsigned int size_virtual_memory_card_png;
+extern unsigned char ps1_memory_card_1_png[];
+extern unsigned int size_ps1_memory_card_1_png;
+extern unsigned char ps1_memory_card_2_png[];
+extern unsigned int size_ps1_memory_card_2_png;
+extern unsigned char memory_card_menu_png[];
+extern unsigned int size_memory_card_menu_png;
 
 // Loads 32-bit RGBA PNG texture from memory into GSTEXTURE and uploads it to GS VRAM.
 static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *buf, size_t size, int whiteTransparentRgb,
@@ -23,6 +33,9 @@ GSTEXTURE *icons;
 GSTEXTURE *logo;
 static GSTEXTURE *classicScrollbar;
 GSTEXTURE *gridSelector;
+static GSTEXTURE cardArtTextures[CARD_ART_COUNT];
+static uint8_t cardArtAttempted[CARD_ART_COUNT];
+static uint8_t cardArtLoaded[CARD_ART_COUNT];
 
 // The supplied selector is opaque, with its glow composited on black. Convert
 // it once into a transparent overlay so grid covers remain visible beneath it.
@@ -58,25 +71,65 @@ static void prepareGridSelector(GSTEXTURE *texture) {
   }
 }
 
-// Used font
-const struct BMFont font = BMFONT_DEJAVU_SANS;
+// Keep only the selected font's texture decoded and resident.
+static const BMFont *font = &BMFONT_DEJAVU_SANS;
+static UIFont activeUIFont = UI_FONT_DEJAVU;
 
-// Initializes and uploads graphics resources to GS VRAM
-int initGraphics() {
-  if (font.pageCount == 0) {
-    DPRINTF("ERROR: Invalid number of font pages\n");
-    return -1;
+static void releaseFontPages(void) {
+  if (fontPages == NULL)
+    return;
+  for (int i = 0; i < font->pageCount; i++) {
+    if (fontPages[i] == NULL)
+      continue;
+    if (fontPages[i]->Vram != 0)
+      gsKit_TexManager_free(gsGlobal, fontPages[i]);
+    free(fontPages[i]->Mem);
+    free(fontPages[i]);
   }
-  fontPages = calloc(sizeof(GSTEXTURE *), font.pageCount);
+  free(fontPages);
+  fontPages = NULL;
+}
 
-  // Upload font pages to GS
-  for (int i = 0; i < font.pageCount; i++) {
-    fontPages[i] = calloc(sizeof(GSTEXTURE), 1);
-    if (gsKit_texture_png_mem(gsGlobal, fontPages[i], font.pages[i].data, font.pages[i].size, 0, 1)) {
-      DPRINTF("ERROR: Failed to load page %d\n", i);
+int setUIFont(UIFont selection) {
+  if (selection < UI_FONT_DEJAVU || selection >= UI_FONT_COUNT)
+    return -1;
+  if (selection == activeUIFont && fontPages != NULL)
+    return 0;
+  const BMFont *next = selection == UI_FONT_PSBBN ?
+                           &BMFONT_PSBBN : &BMFONT_DEJAVU_SANS;
+  GSTEXTURE **nextPages = calloc(next->pageCount, sizeof(*nextPages));
+  if (nextPages == NULL)
+    return -1;
+  for (int i = 0; i < next->pageCount; i++) {
+    nextPages[i] = calloc(1, sizeof(*nextPages[i]));
+    if (nextPages[i] == NULL ||
+        gsKit_texture_png_mem(gsGlobal, nextPages[i], next->pages[i].data,
+                              next->pages[i].size, 0, 0)) {
+      for (int j = 0; j <= i; j++) {
+        if (nextPages[j] != NULL) {
+          free(nextPages[j]->Mem);
+          free(nextPages[j]);
+        }
+      }
+      free(nextPages);
       return -1;
     }
   }
+  releaseFontPages();
+  font = next;
+  fontPages = nextPages;
+  activeUIFont = selection;
+  return 0;
+}
+
+// Initializes and uploads graphics resources to GS VRAM
+int initGraphics() {
+  if (font->pageCount == 0) {
+    DPRINTF("ERROR: Invalid number of font pages\n");
+    return -1;
+  }
+  if (setUIFont(activeUIFont))
+    return -1;
 
   // Upload icons texture to GS
   icons = calloc(sizeof(GSTEXTURE), 1);
@@ -122,11 +175,14 @@ int initGraphics() {
 
 // Frees memory used by font pages, logo and icon textures
 void closeFont() {
-  for (int i = 0; i < font.pageCount; i++) {
-    free(fontPages[0]->Mem);
-    free(fontPages[i]);
+  for (int i = 0; i < CARD_ART_COUNT; i++) {
+    free(cardArtTextures[i].Mem);
+    cardArtTextures[i].Mem = NULL;
+    cardArtTextures[i].Vram = 0;
+    cardArtLoaded[i] = 0;
+    cardArtAttempted[i] = 0;
   }
-  free(fontPages);
+  releaseFontPages();
 
   free(icons->Mem);
   free(icons);
@@ -197,7 +253,70 @@ void drawIcon(float x, float y, int z, uint64_t color, IconType iconType) {
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
 }
 
-// Draws the user-supplied boot logo centered at x and scaled to width.
+void drawCardArt(CardArtType card, float x, float y, float size) {
+  static const unsigned char *const pngData[] = {
+      virtual_memory_card_png, ps1_memory_card_1_png,
+      ps1_memory_card_2_png, memory_card_menu_png};
+  static const unsigned int *const pngSizes[] = {
+      &size_virtual_memory_card_png, &size_ps1_memory_card_1_png,
+      &size_ps1_memory_card_2_png, &size_memory_card_menu_png};
+  if (card < CARD_ART_VIRTUAL || card >= CARD_ART_COUNT || size <= 0)
+    return;
+
+  GSTEXTURE *texture = &cardArtTextures[card];
+  if (!cardArtAttempted[card]) {
+    cardArtAttempted[card] = 1;
+    texture->Delayed = 1;
+    if (gsKit_texture_png_mem(gsGlobal, texture, (void *)pngData[card],
+                              *pngSizes[card], 0, 0) == 0) {
+      // The main-menu artwork is displayed at 200 pixels. Keep its texture
+      // within 256 pixels to avoid spending a quarter of PS2 VRAM on mc.png.
+      if (texture->Width > 256 || texture->Height > 256) {
+        int sourceWidth = texture->Width;
+        int sourceHeight = texture->Height;
+        int width = sourceWidth > 256 ? 256 : sourceWidth;
+        int height = sourceHeight > 256 ? 256 : sourceHeight;
+        u32 *source = texture->Mem;
+        u32 *scaled = memalign(128, gsKit_texture_size(width, height,
+                                                       texture->PSM));
+        if (scaled == NULL) {
+          free(texture->Mem);
+          texture->Mem = NULL;
+          return;
+        }
+        for (int row = 0; row < height; row++)
+          for (int column = 0; column < width; column++)
+            scaled[row * width + column] =
+                source[(row * sourceHeight / height) * sourceWidth +
+                       column * sourceWidth / width];
+        free(texture->Mem);
+        texture->Mem = scaled;
+        texture->Width = width;
+        texture->Height = height;
+      }
+      texture->Filter = GS_FILTER_LINEAR;
+      gsKit_TexManager_bind(gsGlobal, texture);
+      cardArtLoaded[card] = 1;
+    } else {
+      free(texture->Mem);
+      texture->Mem = NULL;
+    }
+  }
+  if (!cardArtLoaded[card])
+    return;
+
+  gsKit_TexManager_bind(gsGlobal, texture);
+  gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
+  gsKit_set_test(gsGlobal, GS_ATEST_OFF);
+  gsKit_prim_sprite_texture(gsGlobal, texture, x, y, 0, 0, x + size,
+                            y + size, texture->Width - 1,
+                            texture->Height - 1, 0,
+                            GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
+  gsKit_set_test(gsGlobal, GS_ATEST_ON);
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+}
+
+// Draws the light gray boot logo centered at x and scaled to width.
 void drawBootLogo(float centerX, float y, float width, int z) {
   float height = width * logo->Height / logo->Width;
   float x = centerX - width / 2;
@@ -216,7 +335,7 @@ void drawBootLogo(float centerX, float y, float width, int z) {
   gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
   gsKit_prim_sprite_texture(gsGlobal, logo, x, y, 0, 0, x + width, y + height, logo->Width - 1, logo->Height - 1, z,
-                            GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
+                            GS_SETREG_RGBA(0x60, 0x60, 0x60, 0x80));
   gsGlobal->Test->ATST = previousAlphaTest;
   gsGlobal->Test->AREF = previousAlphaReference;
   gsGlobal->Test->AFAIL = previousAlphaFail;
@@ -255,13 +374,13 @@ void drawIconWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8
 }
 
 // Returns line height for used font
-uint8_t getFontLineHeight() { return font.lineHeight; }
+uint8_t getFontLineHeight() { return font->lineHeight; }
 
 // Returns pointer to the glyph or NULL if the font doesn't have a glyph for this character
 const BMFontChar *getGlyph(uint32_t character) {
-  for (int i = 0; i < font.bucketCount; i++) {
-    if ((font.buckets[i].startChar <= character) && (font.buckets[i].endChar >= character)) {
-      return &font.buckets[i].chars[character - font.buckets[i].startChar];
+  for (int i = 0; i < font->bucketCount; i++) {
+    if ((font->buckets[i].startChar <= character) && (font->buckets[i].endChar >= character)) {
+      return &font->buckets[i].chars[character - font->buckets[i].startChar];
     }
   }
   return NULL;
@@ -304,7 +423,7 @@ int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, c
   for (int i = 0; text[i] != '\0'; i++) {
     if (text[i] == '\n') {
       curX = x;
-      curHeight += font.lineHeight;
+      curHeight += font->lineHeight;
       continue;
     }
 
@@ -317,7 +436,7 @@ int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, c
       continue;
     }
 
-    if (maxHeight && ((curHeight + font.lineHeight) > maxHeight)) {
+    if (maxHeight && ((curHeight + font->lineHeight) > maxHeight)) {
       break;
     }
 
@@ -341,7 +460,7 @@ int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, c
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
 
-  return (y + curHeight + font.lineHeight);
+  return (y + curHeight + font->lineHeight);
 }
 
 // Gets the line width for the first line in text
@@ -387,10 +506,10 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
   const int previousAlphaFail = gsGlobal->Test->AFAIL;
 
   // Determine text height
-  int maxHeight = font.lineHeight;
+  int maxHeight = font->lineHeight;
   for (int i = 0; text[i] != '\0'; i++) {
     if (text[i] == '\n')
-      maxHeight += font.lineHeight;
+      maxHeight += font->lineHeight;
   }
 
   // Apply vertical alignment if text fits within set y2
@@ -425,7 +544,7 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
   for (int i = 0; text[i] != '\0'; i++) {
     if (text[i] == '\n') {
       curX = x1;
-      curY += font.lineHeight;
+      curY += font->lineHeight;
       // Get the width of the next line
       lineWidth = getLineWidth(&text[i + 1]);
       // Set line offset according to alignment
@@ -444,7 +563,7 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
       continue;
     }
 
-    if (y2 && ((curY + font.lineHeight) > y2)) {
+    if (y2 && ((curY + font->lineHeight) > y2)) {
       // If window bottom border has been reached, break
       break;
     }
@@ -472,7 +591,7 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
 
-  return curY + font.lineHeight;
+  return curY + font->lineHeight;
 }
 
 // Loads a 32-bit RGBA PNG texture from memory. Callers that are going to

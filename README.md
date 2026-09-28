@@ -19,14 +19,33 @@ Since NHDDL only launches Neutrino, PADEMU, IGR, IGS, cheats and other features 
 
 Press **Start** in the game library to open LUNA's main menu. Choose **File
 Manager** to browse connected storage and memory cards, **Return to Library**
-to go back, or **Exit LUNA** to quit. The same menu appears automatically when
-no games are found.
+to go back, **Exit LUNA** to quit, or **Shutdown** to power off the console.
+The same menu appears automatically when no games are found.
 
-The file manager is read-only. **Cross** opens a device or folder, **Up/Down**
-selects an item, and **Triangle** or **Circle** goes back. It shows file sizes
-when the device reports them, including files in `/VMC`; it does not change VMC
-assignments. On an APA HDD it shows the mounted OPL metadata partition, not
-the raw game partitions.
+The file manager has two independent panes for copying files and folders between
+devices. **L1/R1** or **Left/Right** widens and selects a pane; press the same
+direction again to restore equal widths. **Up/Down** selects an item,
+**Cross** opens a device or folder, and **Triangle** goes up. Mark up to 128
+source items with **Square**, including items in different folders. Open the
+destination folder in the other pane, then press **Start** and **Cross** to
+confirm a copy. **R2** opens actions for Details, Rename, New Folder, and Move
+marked items. The on-screen keyboard uses **Up/Down/Left/Right** to choose a
+character, **Cross** to type, **Square** for a space, **Triangle** to delete,
+**R1** to change case, and **Start** to save. In the portable PCSX2 profile,
+use the arrow keys to choose characters, **K** to type, and **Enter** to save;
+typing letters directly on the PC keyboard does not enter a filename.
+When a destination name exists, choose Skip, Keep Both, or Replace. Skip leaves
+the item marked. A move verifies the copied data before removing its source.
+**Select** clears the queue after confirmation. The transfer shows overall
+percentage, copied size, speed, and estimated time remaining.
+**Circle** cancels measurement or copying and leaves unfinished items queued;
+outside a transfer it exits the file manager. Completed items leave the queue.
+Copies are staged on the destination; Replace keeps a temporary backup until
+the new copy is installed. Details shows the full path, size, and available
+space on PFS partitions and memory cards. Other drivers may not report free
+space. File sizes appear when the device reports them, including files in `/VMC`;
+copying does not change VMC assignments. On an APA HDD it shows the mounted OPL
+metadata partition, not the raw game partitions.
 
 ### Classic title list controls
 

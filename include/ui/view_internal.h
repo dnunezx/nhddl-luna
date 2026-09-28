@@ -15,6 +15,7 @@ extern const int headerHeight;
 extern const int footerHeight;
 uint32_t uiNowMs(void);
 int discWave(uint32_t phase);
+void holdClassicDiscRotation(uint32_t resumeMs);
 int psbbnFieldStableY(int y);
 int psbbnFieldStableHeight(void);
 void drawGlassDiamond(int centerX, int centerY, int radius, int z, uint64_t color);

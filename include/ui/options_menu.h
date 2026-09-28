@@ -6,9 +6,8 @@
 
 int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
                        int *ambientOrbsBackgroundSetting, int *glassColorPreset,
-                       int *ambientEnabled, int *orbsThemeSetting,
+                       int *fontSetting, int *ambientEnabled, int *orbsThemeSetting,
                        int *orbsAppearanceSetting,
-                       uint32_t *enabledViews,
-                       int panToTop);
+                       uint32_t *enabledViews);
 
 #endif

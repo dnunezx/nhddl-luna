@@ -33,6 +33,7 @@
 #define GRID_LEFT_SHOULDERS (PAD_L1 | PAD_L2)
 #define GRID_RIGHT_SHOULDERS (PAD_R1 | PAD_R2)
 #define SPLASH_MIN_VISIBLE_MS 3400
+#define LIBRARY_RETURN_FADE_MS 180
 
 void closeUI();
 int uiLoop(TargetList *titles);
@@ -45,7 +46,9 @@ static int ambientOrbsBackground = 0;
 static int orbsThemeSetting = ORBS_THEME_LUNA;
 static int orbsAppearanceSetting = ORBS_APPEARANCE_LUNA;
 static int glassColorSetting = GLASS_COLOR_ORIGINAL;
+static int fontSetting = UI_FONT_DEJAVU;
 static uint32_t splashVisibleStartMs;
+static uint32_t libraryReturnFadeStartMs;
 
 const int keepoutArea = 20;
 const int headerHeight = 40;
@@ -299,6 +302,9 @@ int uiLoop(TargetList *titles) {
     orbsAppearanceSetting = ORBS_APPEARANCE_LUNA;
   glassColorSetting = loadGlassColorPreset(curTarget);
   setGlassColorPreset((GlassColorPreset)glassColorSetting);
+  fontSetting = loadUIFont(curTarget);
+  if (setUIFont((UIFont)fontSetting))
+    fontSetting = UI_FONT_DEJAVU;
   ambientEnabled = loadAmbientSoundEnabled(curTarget);
   ambientSetEnabled(ambientEnabled);
   classicArtOverlap = loadClassicArtOverlap(curTarget);
@@ -698,6 +704,22 @@ int uiLoop(TargetList *titles) {
     }
 
   library_view_drawn:
+    if (libraryReturnFadeStartMs != 0) {
+      uint32_t fadeElapsed = uiNowMs() - libraryReturnFadeStartMs;
+      if (fadeElapsed >= LIBRARY_RETURN_FADE_MS) {
+        libraryReturnFadeStartMs = 0;
+      } else {
+        int alpha = (int)((LIBRARY_RETURN_FADE_MS - fadeElapsed) * 0x80 /
+                          LIBRARY_RETURN_FADE_MS);
+        gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
+        gsGlobal->PrimAlphaEnable = alpha >= 0x80 ? GS_SETTING_OFF : GS_SETTING_ON;
+        gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+        gsKit_prim_sprite(gsGlobal, 0, 0, gsGlobal->Width, gsGlobal->Height,
+                          0, GS_SETREG_RGBA(0, 0, 0, alpha));
+        gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
+        gsKit_set_test(gsGlobal, GS_ZTEST_ON);
+      }
+    }
     gsKit_queue_exec(gsGlobal);
     gsKit_finish();
     gsKit_sync_flip(gsGlobal);
@@ -1233,16 +1255,18 @@ int uiLoop(TargetList *titles) {
       // Enter title options screen
       if ((res = uiTitleOptionsLoop(curTarget, &classicArtOverlap,
                                     &ambientOrbsBackground, &glassColorSetting,
-                                    &ambientEnabled, &orbsThemeSetting,
+                                    &fontSetting, &ambientEnabled, &orbsThemeSetting,
                                     &orbsAppearanceSetting,
-                                    &enabledViews,
-                                    view == UI_VIEW_PSBBN)) < 0) {
+                                    &enabledViews)) < 0) {
         // Something went wrong, main loop must exit immediately
         ambientStop();
         freeTargetList(favoriteTitles);
         free(favoriteFlags);
         return -1;
       }
+      if (view == UI_VIEW_CLASSIC)
+        holdClassicDiscRotation(uiNowMs());
+      libraryReturnFadeStartMs = uiNowMs();
       setAmbientOrbsBackgroundStyle(ambientOrbsBackground);
       setGlassColorPreset((GlassColorPreset)glassColorSetting);
       if (!(enabledViews & (1U << view)))
@@ -1358,6 +1382,9 @@ static uint8_t threadStack[THREAD_STACK_SIZE] __attribute__((aligned(16)));
 int startSplashScreen() {
   DPRINTF("Starting UI splash thread\n");
   splashVisibleStartMs = uiNowMs();
+  // Keep the bright LUNA orbs on the boot formation. The library loads its
+  // saved appearance after the splash closes.
+  setAmbientOrbsAppearance(ORBS_APPEARANCE_LUNA);
   resetAmbientOrbsSplash(splashVisibleStartMs);
   // Initialize splash semaphores
   ee_sema_t semaphore;
@@ -1404,9 +1431,14 @@ void uiSplashThread() {
     gsKit_TexManager_nextFrame(gsGlobal);
     gsKit_clear(gsGlobal, GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80));
     const uint32_t now = uiNowMs();
-    drawAmbientOrbsSplash(gsGlobal->Width / 2, gsGlobal->Height * 48 / 100,
+    const int logoWidth = gsGlobal->Width * 57 / 100;
+    const int logoTop = gsGlobal->Height * 9 / 100;
+    const int logoCenterY = logoTop + logoWidth * 109 / (710 * 2);
+    drawBootLogo(gsGlobal->Width / 2, logoTop, logoWidth, 1);
+    drawAmbientOrbsSplash(gsGlobal->Width / 2, gsGlobal->Height * 58 / 100,
                           gsGlobal->Width * 31 / 100,
-                          gsGlobal->Height * 36 / 100, now, 1);
+                          gsGlobal->Height * 31 / 100,
+                          logoCenterY, logoWidth, now, 2);
 
     // Successful boot stays intentionally minimal. Only surface a fatal error
     // so a failed initialization cannot be mistaken for endless loading.
@@ -1427,7 +1459,7 @@ void uiSplashThread() {
 
 // Stops UI splash thread
 void stopUISplashThread() {
-  // A fast scan otherwise exits before the LUNA-to-cube animation is visible.
+  // A fast scan otherwise exits before the cube reaches the upper logo.
   while ((uint32_t)(uiNowMs() - splashVisibleStartMs) < SPLASH_MIN_VISIBLE_MS)
     usleep(16000);
   SignalSema(logBuffer.doneSema);

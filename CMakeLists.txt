@@ -53,6 +53,20 @@ set(SOURCES
     src/devices/title_id.c
 )
 
+# Bundle menu artwork so it is available on both HostFS and real hardware.
+foreach(CARD_ICON virtual_memory_card ps1_memory_card_1 ps1_memory_card_2 memory_card_menu)
+  add_custom_command(
+      OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${CARD_ICON}_png.c"
+      COMMAND ${PS2SDK}/bin/bin2c
+              "${CMAKE_CURRENT_SOURCE_DIR}/res/gfx/card-icons/${CARD_ICON}.png"
+              "${CMAKE_CURRENT_BINARY_DIR}/${CARD_ICON}_png.c"
+              "${CARD_ICON}_png"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/res/gfx/card-icons/${CARD_ICON}.png"
+      COMMENT "Embedding ${CARD_ICON}.png"
+  )
+  list(APPEND SOURCES "${CMAKE_CURRENT_BINARY_DIR}/${CARD_ICON}_png.c")
+endforeach()
+
 include(irx.cmake)
 
 # Get git version for build info
@@ -105,6 +119,7 @@ target_link_options(${EE_BIN}
 # Link libraries
 target_link_libraries(${EE_BIN}
     pad
+    mc
     poweroff
     patches
     fileXio

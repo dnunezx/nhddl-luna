@@ -101,8 +101,18 @@ static void drawFavoriteMarker(int centerX, int centerY, int z) {
   drawFavoriteDot(centerX, centerY + 3, z, color);
 }
 
+static uint32_t classicDiscPausedMs;
+static uint32_t classicDiscLastFrameMs;
+
 static uint32_t discRotationPhase(uint32_t frameNowMs) {
-  return (uint32_t)(((uint64_t)frameNowMs << 16) / DISC_ROTATION_PERIOD_MS);
+  return (uint32_t)(((uint64_t)(frameNowMs - classicDiscPausedMs) << 16) /
+                    DISC_ROTATION_PERIOD_MS);
+}
+
+void holdClassicDiscRotation(uint32_t resumeMs) {
+  // Options displays the last library frame as a still image. Keep the next
+  // live disc frame at that same angle instead of advancing while hidden.
+  classicDiscPausedMs += resumeMs - classicDiscLastFrameMs;
 }
 
 static int classicGlowInitialized;
@@ -337,6 +347,8 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
                    GSTEXTURE *selectedTitleDisc, const uint8_t *favoriteFlags,
                    int favoritesOnly, int coverPending, int coverTransitionProgress,
                    uint32_t frameNowMs) {
+
+  classicDiscLastFrameMs = frameNowMs;
 
   int favoriteTotal = lunaNavMarkedCount(favoriteFlags, titles->total);
   int displayTotal = favoritesOnly ? favoriteTotal : titles->total;

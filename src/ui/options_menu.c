@@ -16,7 +16,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#define OPTIONS_PAN_DURATION_MS 300
+#define OPTIONS_OPEN_DURATION_MS 360
+#define OPTIONS_CLOSE_DURATION_MS 180
 #define OPTIONS_SELECTION_GLOW_DURATION_MS 110
 #define OPTIONS_GLOW_ROW_SCALE 256
 
@@ -87,34 +88,45 @@ static void drawOptionsSheet(void) {
   drawGlassPanel(30, 78, width - 30, height - footerHeight + 3, 2);
 }
 
-// The library frame stays in the other screen buffer. Moving it down reveals
-// Options from the top in Collection; other views reveal it from the left.
-static void drawOptionsPanCover(const GSTEXTURE *libraryFrame, int offset,
-                                int panToTop) {
-  const int width = gsGlobal->Width;
-  const int height = gsGlobal->Height;
-  if (offset >= (panToTop ? height : width))
+static int optionsTransitionProgress(uint32_t elapsed, uint32_t duration) {
+  int progress = elapsed >= duration ? 1000 : (int)(elapsed * 1000U / duration);
+  return (int)((int64_t)progress * progress *
+               (3000 - 2 * progress) / 1000000);
+}
+
+static void drawOptionsBlackout(int alpha) {
+  if (alpha <= 0)
     return;
-  gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
+  gsGlobal->PrimAlphaEnable = alpha >= 0x80 ? GS_SETTING_OFF : GS_SETTING_ON;
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
   gsKit_set_test(gsGlobal, GS_ATEST_OFF);
-  gsKit_prim_sprite_texture(gsGlobal, libraryFrame,
-                            panToTop ? 0 : offset, panToTop ? offset : 0,
-                            0, 0, width, height,
-                            width - (panToTop ? 0 : offset),
-                            height - (panToTop ? offset : 0), 0,
-                            GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
+  gsKit_prim_sprite(gsGlobal, 0, 0, gsGlobal->Width, gsGlobal->Height, 0,
+                    GS_SETREG_RGBA(0x00, 0x00, 0x00, alpha));
   gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
 }
 
-static int optionsPanOffset(uint32_t elapsed, int opening, int panToTop) {
-  int progress = elapsed >= OPTIONS_PAN_DURATION_MS
-                     ? 1000 : (int)(elapsed * 1000U / OPTIONS_PAN_DURATION_MS);
-  int eased = (int)((int64_t)progress * progress *
-                    (3000 - 2 * progress) / 1000000);
-  int span = panToTop ? gsGlobal->Height : gsGlobal->Width;
-  int offset = span * (opening ? eased : 1000 - eased) / 1000;
-  return panToTop ? psbbnFieldStableY(offset) : offset;
+// A dark midpoint hides the switch from the captured library image to the
+// live Options scene. The shared wallpaper keeps running throughout.
+static void drawOptionsTransition(const GSTEXTURE *libraryFrame,
+                                  int progress, int closing) {
+  if (closing) {
+    drawOptionsBlackout(progress * 0x80 / 1000);
+    return;
+  }
+  if (progress < 500) {
+    gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
+    gsKit_set_test(gsGlobal, GS_ATEST_OFF);
+    gsKit_prim_sprite_texture(gsGlobal, libraryFrame, 0, 0, 0, 0,
+                              gsGlobal->Width, gsGlobal->Height,
+                              gsGlobal->Width, gsGlobal->Height, 0,
+                              GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
+    gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
+    gsKit_set_test(gsGlobal, GS_ATEST_ON);
+    drawOptionsBlackout(progress * 0x80 / 500);
+  } else {
+    drawOptionsBlackout((1000 - progress) * 0x80 / 500);
+  }
 }
 
 static void presentOptionsFrame(void) {
@@ -206,7 +218,7 @@ static void drawOptionsTextRow(int x, int y, int right, int selected,
 }
 
 static int optionsGlobalRowY(int index, int firstY, int rowStep, int lineHeight) {
-  return firstY + index * rowStep + (index == 2 ? lineHeight : 0);
+  return firstY + index * rowStep + (index == 3 ? lineHeight : 0);
 }
 
 static int optionsViewRowForLibraryView(int view) {
@@ -252,14 +264,15 @@ static void drawTitleOptionsFrame(Target *target,
                                   int selectedGlobal, int selectedView,
                                   int pendingOverlap, uint32_t pendingViews,
                                   int pendingBackground,
-                                  int pendingGlassColor, int pendingAmbient,
+                                  int pendingGlassColor, int pendingFont,
+                                  int pendingAmbient,
                                   int pendingOrbsTheme, int pendingOrbsAppearance,
                                   int selectedOrbsRow,
                                   const LunaGameOptions *gameOptions, int gameDirty,
                                   int systemDirty, int viewsDirty, int orbsDirty,
                                   int saveError,
-                                  const GSTEXTURE *libraryFrame, int panOffset,
-                                  int panToTop,
+                                  const GSTEXTURE *libraryFrame,
+                                  int transitionProgress, int transitionMode,
                                   OptionsSelector *selector) {
   int baseX = keepoutArea + 10;
   const int lineHeight = getFontLineHeight();
@@ -309,13 +322,17 @@ static void drawTitleOptionsFrame(Target *target,
     drawOptionsTextRow(baseX, firstY + rowStep, gsGlobal->Width - baseX,
                        selectedGlobal == 1, selectorY, "Glass color",
                        glassColorLabels[pendingGlassColor]);
-    drawOptionsSection(firstY + 2 * rowStep, "Audio", 1);
-    drawOptionsTextRow(baseX, optionsGlobalRowY(2, firstY, rowStep, lineHeight),
-                       gsGlobal->Width - baseX, selectedGlobal == 2, selectorY,
+    drawOptionsTextRow(baseX, firstY + 2 * rowStep, gsGlobal->Width - baseX,
+                       selectedGlobal == 2, selectorY, "Font",
+                       pendingFont == UI_FONT_PSBBN ? "PSBBN" : "DejaVu Sans");
+    drawOptionsSection(firstY + 3 * rowStep, "Audio", 1);
+    drawOptionsTextRow(baseX, optionsGlobalRowY(3, firstY, rowStep, lineHeight),
+                       gsGlobal->Width - baseX, selectedGlobal == 3, selectorY,
                        "Ambient sound", pendingAmbient ? "On" : "Off");
     static const char *const descriptions[] = {
         "Choose Ambient Orbs or the stars and cubes background.",
         "Change the tint of the glass interface.",
+        "Use LUNA's font or the PSBBN keyboard lettering.",
         "Play ambient music while browsing."};
     drawTextWindow(baseX + 18, menuBottom - lineHeight,
                    gsGlobal->Width - baseX, menuBottom, 0,
@@ -373,6 +390,12 @@ static void drawTitleOptionsFrame(Target *target,
                    HeaderTextColor, ALIGN_HCENTER, lineBuffer);
     const int contentTop = menuTop + lineHeight + 5;
     const int gameStep = lineHeight + lineHeight / 3;
+    CardArtType selectedCardArt = selectedGameRow == LUNA_GAME_VMC_SLOT1 ?
+                                  CARD_ART_SLOT_1 :
+                                  selectedGameRow == LUNA_GAME_VMC_SLOT2 ?
+                                  CARD_ART_SLOT_2 : CARD_ART_NONE;
+    int gameRight = gsGlobal->Width - baseX -
+                    (selectedCardArt == CARD_ART_NONE ? 0 : 128);
     int selectedY = optionsGameRowY(selectedGameRow, contentTop, gameStep);
     int scrollOffset = selectedY + lineHeight > menuBottom
                            ? selectedY + lineHeight - menuBottom : 0;
@@ -392,11 +415,14 @@ static void drawTitleOptionsFrame(Target *target,
       int y = optionsGameRowY(row, contentTop, gameStep) - scrollOffset;
       if (y < contentTop || y + lineHeight > menuBottom)
         continue;
-      drawOptionsTextRow(baseX, y, gsGlobal->Width - baseX,
+      drawOptionsTextRow(baseX, y, gameRight,
                          row == selectedGameRow, selectorY,
                          gameRowLabels[row],
                          lunaGameOptionsValue(gameOptions, (LunaGameRow)row));
     }
+    if (selectedCardArt != CARD_ART_NONE)
+      drawCardArt(selectedCardArt, gsGlobal->Width - baseX - 116,
+                  contentTop + 8, 108);
     drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
                    gsGlobal->Height - footerHeight, 0, HeaderTextColor,
                    ALIGN_LEFT, gameRowDescriptions[selectedGameRow]);
@@ -411,17 +437,19 @@ static void drawTitleOptionsFrame(Target *target,
                    page == OPTIONS_VIEWS ? "Could not save views" :
                    page == OPTIONS_ORBS ? "Could not save orb theme" :
                                            "Could not save game settings");
-  if (libraryFrame != NULL)
-    drawOptionsPanCover(libraryFrame, panOffset, panToTop);
+  if (transitionMode != 0)
+    drawOptionsTransition(libraryFrame, transitionProgress,
+                          transitionMode == 2);
   gsKit_set_test(gsGlobal, GS_ZTEST_ON);
   presentOptionsFrame();
 }
 
 static int optionsGlobalDirty(int pendingBackground, int pendingGlassColor,
-                              int pendingAmbient,
-                              int background, int glassColor, int ambient) {
+                              int pendingFont, int pendingAmbient,
+                              int background, int glassColor, int fontSetting,
+                              int ambient) {
   return pendingBackground != background || pendingGlassColor != glassColor ||
-         pendingAmbient != ambient;
+         pendingFont != fontSetting || pendingAmbient != ambient;
 }
 
 #define VMC_PICKER_MAX_FILES 128
@@ -475,6 +503,9 @@ static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
     const int menuTop = headerHeight + 2 * lineHeight + 8;
     const int menuBottom = gsGlobal->Height - footerHeight - lineHeight;
     const int rowStep = lineHeight + lineHeight / 3;
+    const int showCardPreview = selected == 0;
+    const int rowRight = gsGlobal->Width - baseX -
+                         (showCardPreview ? 128 : 0);
     const int focusY = menuTop + selected * rowStep;
     const int scrollOffset = focusY + lineHeight > menuBottom
                                  ? focusY + lineHeight - menuBottom : 0;
@@ -489,10 +520,13 @@ static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
       int y = menuTop + index * rowStep - scrollOffset;
       if (y < menuTop || y + lineHeight > menuBottom)
         continue;
-      drawOptionsTextRow(baseX, y, gsGlobal->Width - baseX,
+      drawOptionsTextRow(baseX, y, rowRight,
                          index == selected, y,
                          index == 0 ? "Physical card" : files[index - 1], NULL);
     }
+    if (showCardPreview)
+      drawCardArt(slot == 0 ? CARD_ART_SLOT_1 : CARD_ART_SLOT_2,
+                  gsGlobal->Width - baseX - 116, menuTop + 8, 108);
     drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
                    gsGlobal->Height - footerHeight, 0, HeaderTextColor,
                    ALIGN_LEFT, count ? "Select a card from /VMC on this drive."
@@ -532,15 +566,15 @@ static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
 // Returns -1 if error occurs
 int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
                        int *ambientOrbsBackgroundSetting, int *glassColorSetting,
-                       int *ambientEnabled, int *orbsThemeSetting,
+                       int *fontSetting, int *ambientEnabled, int *orbsThemeSetting,
                        int *orbsAppearanceSetting,
-                       uint32_t *enabledViews,
-                       int panToTop) {
+                       uint32_t *enabledViews) {
   int res = 0;
   int saveError = 0;
   int pendingOverlap = *classicArtOverlap;
   int pendingBackground = *ambientOrbsBackgroundSetting;
   int pendingGlassColor = *glassColorSetting;
+  int pendingFont = *fontSetting;
   int pendingAmbient = *ambientEnabled;
   int pendingOrbsTheme = *orbsThemeSetting;
   int pendingOrbsAppearance = *orbsAppearanceSetting;
@@ -567,44 +601,47 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
   libraryFrame.Vram = gsGlobal->ScreenBuffer[(gsGlobal->ActiveBuffer ^ 1) & 1];
   libraryFrame.Filter = GS_FILTER_NEAREST;
 
-  uint32_t panStart = uiNowMs();
-  int panOffset;
+  uint32_t transitionStart = uiNowMs();
+  int transitionProgress;
   do {
-    panOffset = optionsPanOffset(uiNowMs() - panStart, 1, panToTop);
+    transitionProgress = optionsTransitionProgress(
+        uiNowMs() - transitionStart, OPTIONS_OPEN_DURATION_MS);
     int systemDirty = optionsGlobalDirty(
-        pendingBackground, pendingGlassColor, pendingAmbient,
+        pendingBackground, pendingGlassColor, pendingFont, pendingAmbient,
         *ambientOrbsBackgroundSetting,
-        *glassColorSetting, *ambientEnabled);
+        *glassColorSetting, *fontSetting, *ambientEnabled);
     int viewsDirty = pendingViews != *enabledViews ||
                      pendingOverlap != *classicArtOverlap;
     int orbsDirty = pendingOrbsTheme != *orbsThemeSetting ||
                     pendingOrbsAppearance != *orbsAppearanceSetting;
     drawTitleOptionsFrame(target, page, selectedGameRow,
                           selectedGlobal, selectedView, pendingOverlap, pendingViews,
-                          pendingBackground, pendingGlassColor, pendingAmbient,
+                          pendingBackground, pendingGlassColor, pendingFont,
+                          pendingAmbient,
                           pendingOrbsTheme, pendingOrbsAppearance, selectedOrbsRow,
                           &gameOptions, titleArgumentsChanged,
                           systemDirty, viewsDirty, orbsDirty, saveError,
-                          &libraryFrame, panOffset, panToTop, &selector);
+                          &libraryFrame, transitionProgress, 1, &selector);
     pollInput();
-  } while (panOffset < (panToTop ? gsGlobal->Height : gsGlobal->Width));
+  } while (transitionProgress < 1000);
 
   while (1) {
     int systemDirty = optionsGlobalDirty(
-        pendingBackground, pendingGlassColor, pendingAmbient,
+        pendingBackground, pendingGlassColor, pendingFont, pendingAmbient,
         *ambientOrbsBackgroundSetting,
-        *glassColorSetting, *ambientEnabled);
+        *glassColorSetting, *fontSetting, *ambientEnabled);
     int viewsDirty = pendingViews != *enabledViews ||
                      pendingOverlap != *classicArtOverlap;
     int orbsDirty = pendingOrbsTheme != *orbsThemeSetting ||
                     pendingOrbsAppearance != *orbsAppearanceSetting;
     drawTitleOptionsFrame(target, page, selectedGameRow,
                           selectedGlobal, selectedView, pendingOverlap, pendingViews,
-                          pendingBackground, pendingGlassColor, pendingAmbient,
+                          pendingBackground, pendingGlassColor, pendingFont,
+                          pendingAmbient,
                           pendingOrbsTheme, pendingOrbsAppearance, selectedOrbsRow,
                           &gameOptions, titleArgumentsChanged,
                           systemDirty, viewsDirty, orbsDirty, saveError,
-                          NULL, 0, panToTop, &selector);
+                          NULL, 0, 0, &selector);
 
     // Process user inputs
     input = readInput();
@@ -692,14 +729,16 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
     }
     if (page == OPTIONS_GLOBAL) {
       if (input & PAD_UP) {
-        selectedGlobal = (selectedGlobal + 2) % 3;
+        selectedGlobal = (selectedGlobal + 3) % 4;
       } else if (input & PAD_DOWN) {
-        selectedGlobal = (selectedGlobal + 1) % 3;
+        selectedGlobal = (selectedGlobal + 1) % 4;
       } else if (input & (PAD_CROSS | PAD_CIRCLE)) {
         if (selectedGlobal == 0)
           pendingBackground = !pendingBackground;
         else if (selectedGlobal == 1)
           pendingGlassColor = (pendingGlassColor + 1) % GLASS_COLOR_COUNT;
+        else if (selectedGlobal == 2)
+          pendingFont = (pendingFont + 1) % UI_FONT_COUNT;
         else
           pendingAmbient = !pendingAmbient;
       } else if (input & PAD_START) {
@@ -713,6 +752,17 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
           saveError = saveGlassColorPreset(target, (GlassColorPreset)pendingGlassColor);
           if (!saveError)
             *glassColorSetting = pendingGlassColor;
+        }
+        if (!saveError && pendingFont != *fontSetting) {
+          if (setUIFont((UIFont)pendingFont)) {
+            saveError = -1;
+          } else {
+            saveError = saveUIFont(target, (UIFont)pendingFont);
+            if (!saveError)
+              *fontSetting = pendingFont;
+            else
+              setUIFont((UIFont)*fontSetting);
+          }
         }
         if (!saveError && pendingAmbient != *ambientEnabled) {
           saveError = saveAmbientSoundEnabled(target, pendingAmbient);
@@ -770,16 +820,18 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
   }
 exit:
   if (res >= 0) {
-    panStart = uiNowMs();
+    transitionStart = uiNowMs();
     do {
-      panOffset = optionsPanOffset(uiNowMs() - panStart, 0, panToTop);
+      transitionProgress = optionsTransitionProgress(
+          uiNowMs() - transitionStart, OPTIONS_CLOSE_DURATION_MS);
       drawTitleOptionsFrame(target, page, selectedGameRow,
                             selectedGlobal, selectedView, pendingOverlap, pendingViews,
-                            pendingBackground, pendingGlassColor, pendingAmbient,
+                            pendingBackground, pendingGlassColor, pendingFont,
+                            pendingAmbient,
                             *orbsThemeSetting, *orbsAppearanceSetting,
                             selectedOrbsRow, &gameOptions, 0, 0, 0, 0, 0,
-                            &libraryFrame, panOffset, panToTop, &selector);
-    } while (panOffset > 0);
+                            NULL, transitionProgress, 2, &selector);
+    } while (transitionProgress < 1000);
   }
   freeArgumentList(titleArguments);
   return res;

@@ -125,9 +125,7 @@ int loadModule(ModuleListEntry *mod);
 uint32_t loadedModules = 0;
 uint8_t isWarmReboot = 0;
 
-static void powerButtonPressed(void *arg) {
-  (void)arg;
-
+void powerOffConsole(void) {
   // Finish metadata writes before shutting down the HDD and DEV9.
   if (LAUNCHER_OPTIONS.mode & MODE_HDL) {
     fileXioDevctl("pfs:", PDIOC_CLOSEALL, NULL, 0, NULL, 0);
@@ -138,6 +136,11 @@ static void powerButtonPressed(void *arg) {
     fileXioDevctl("dev9x:", DDIOC_OFF, NULL, 0, NULL, 0);
 
   poweroffShutdown();
+}
+
+static void powerButtonPressed(void *arg) {
+  (void)arg;
+  powerOffConsole();
 }
 
 // Initializes IOP modules

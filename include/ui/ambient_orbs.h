@@ -27,10 +27,12 @@ void resetAmbientOrbsOrbit(uint32_t now);
 void drawAmbientOrbsOrbit(int centerX, int centerY, int radiusX,
                           int radiusY, uint32_t now, int trailZ);
 
-// Boot splash alternates LUNA and the rotating cube, beginning with LUNA.
+// Boot splash alternates the lower cube and a trace over the upper LUNA logo.
+// Its orb sprites use the bright LUNA appearance.
 void resetAmbientOrbsSplash(uint32_t now);
 void drawAmbientOrbsSplash(int centerX, int centerY, int radiusX,
-                           int radiusY, uint32_t now, int trailZ);
+                           int radiusY, int logoCenterY, int logoWidth,
+                           uint32_t now, int trailZ);
 
 // The alphabet formation and navigation reaction belong only to Scroll view.
 void resetAmbientOrbsScroll(void);
