@@ -690,7 +690,7 @@ int uiLoop(TargetList *titles) {
 
     // Keep rendering after options close, while ignoring the Triangle press
     // that closed them until the button is released.
-    input = view == UI_VIEW_ORBS ? pollScrollInput() : pollInput();
+    input = pollInput();
     if (optionsTriangleHeld) {
       if (input & PAD_TRIANGLE)
         input &= ~PAD_TRIANGLE;

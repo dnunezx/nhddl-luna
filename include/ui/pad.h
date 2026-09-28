@@ -14,10 +14,7 @@ int waitForInput(int button);
 // Returns newly pressed buttons on either gamepad without blocking.
 int readInput(void);
 
-// Returns inputs on both gamepads
+// Returns digital buttons and left-stick directions on both gamepads.
 int pollInput();
-
-// Also maps the left stick to the four directions for Scroll navigation.
-int pollScrollInput(void);
 
 #endif
