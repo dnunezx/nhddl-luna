@@ -92,8 +92,7 @@ static void presentBrowserFrame(void) {
   gsKit_set_test(gsGlobal, GS_ZTEST_ON);
   gsKit_queue_exec(gsGlobal);
   gsKit_finish();
-  gsKit_vsync_wait();
-  gsKit_display_buffer(gsGlobal);
+  gsKit_sync_flip(gsGlobal);
   usleep(1000);
 }
 
@@ -1769,6 +1768,7 @@ static void uiVMCManagerLoop(void) {
     return;
   }
   int rootCount = 0, rootSelected = 0, activeRoot = -1;
+  int apaDriveFound = 0;
   int count = 0, selected = 0;
   char directory[PATH_MAX + 1] = "";
   char status[96] = "Choose the drive that holds your games.";
@@ -1776,15 +1776,22 @@ static void uiVMCManagerLoop(void) {
     struct DeviceMapEntry *device = &deviceModeMap[index];
     if (device->mode == MODE_NONE || device->mountpoint == NULL)
       break;
+    if (device->mode == MODE_HDL) {
+      apaDriveFound = 1;
+      continue;
+    }
     if (device->mode == MODE_ATA || device->mode == MODE_USB ||
         device->mode == MODE_MX4SIO || device->mode == MODE_ILINK)
       rootCount = addRoot(roots, rootCount, device->mountpoint,
                           device->mode == MODE_ATA ? "ATA HDD" : "Local storage");
   }
+  if (apaDriveFound)
+    snprintf(status, sizeof(status), "APA VMC is not supported yet; use exFAT storage.");
   while (1) {
     if (activeRoot < 0)
       drawBrowserFrame("Virtual Memory Cards", "Choose a drive",
-                       rootCount ? status : "No supported local drives found.",
+                       rootCount || apaDriveFound ? status :
+                                                    "No supported local drives found.",
                        "X Open                         Triangle Back",
                        rootCount, rootSelected, browserFirstRow(rootSelected), 0,
                        rootRow, roots);
@@ -1800,7 +1807,9 @@ static void uiVMCManagerLoop(void) {
       clearEntries(entries, count);
       count = 0;
       activeRoot = -1;
-      snprintf(status, sizeof(status), "Choose the drive that holds your games.");
+      snprintf(status, sizeof(status), "%s", apaDriveFound ?
+               "APA VMC is not supported yet; use exFAT storage." :
+               "Choose the drive that holds your games.");
     } else if (input & PAD_UP) {
       int total = activeRoot < 0 ? rootCount : count + 1;
       int *focus = activeRoot < 0 ? &rootSelected : &selected;

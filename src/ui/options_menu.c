@@ -106,35 +106,16 @@ static void drawOptionsBlackout(int alpha) {
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
 }
 
-// A dark midpoint hides the switch from the captured library image to the
-// live Options scene. The shared wallpaper keeps running throughout.
-static void drawOptionsTransition(const GSTEXTURE *libraryFrame,
-                                  int progress, int closing) {
-  if (closing) {
-    drawOptionsBlackout(progress * 0x80 / 1000);
-    return;
-  }
-  if (progress < 500) {
-    gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
-    gsKit_set_test(gsGlobal, GS_ATEST_OFF);
-    gsKit_prim_sprite_texture(gsGlobal, libraryFrame, 0, 0, 0, 0,
-                              gsGlobal->Width, gsGlobal->Height,
-                              gsGlobal->Width, gsGlobal->Height, 0,
-                              GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
-    gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-    gsKit_set_test(gsGlobal, GS_ATEST_ON);
-    drawOptionsBlackout(progress * 0x80 / 500);
-  } else {
-    drawOptionsBlackout((1000 - progress) * 0x80 / 500);
-  }
+// Fade the completed Options frame in without sampling a framebuffer that
+// double buffering will reuse on the next frame.
+static void drawOptionsTransition(int progress, int closing) {
+  drawOptionsBlackout((closing ? progress : 1000 - progress) * 0x80 / 1000);
 }
 
 static void presentOptionsFrame(void) {
   gsKit_queue_exec(gsGlobal);
   gsKit_finish();
-  gsKit_vsync_wait();
-  // Keep ActiveBuffer fixed while redrawing the options screen.
-  gsKit_display_buffer(gsGlobal);
+  gsKit_sync_flip(gsGlobal);
   usleep(1000);
 }
 
@@ -271,7 +252,6 @@ static void drawTitleOptionsFrame(Target *target,
                                   const LunaGameOptions *gameOptions, int gameDirty,
                                   int systemDirty, int viewsDirty, int orbsDirty,
                                   int saveError,
-                                  const GSTEXTURE *libraryFrame,
                                   int transitionProgress, int transitionMode,
                                   OptionsSelector *selector) {
   int baseX = keepoutArea + 10;
@@ -438,8 +418,7 @@ static void drawTitleOptionsFrame(Target *target,
                    page == OPTIONS_ORBS ? "Could not save orb theme" :
                                            "Could not save game settings");
   if (transitionMode != 0)
-    drawOptionsTransition(libraryFrame, transitionProgress,
-                          transitionMode == 2);
+    drawOptionsTransition(transitionProgress, transitionMode == 2);
   gsKit_set_test(gsGlobal, GS_ZTEST_ON);
   presentOptionsFrame();
 }
@@ -593,14 +572,6 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
   lunaGameOptionsRead(&gameOptions, titleArguments);
   int input = 0;
 
-  GSTEXTURE libraryFrame = {0};
-  libraryFrame.Width = gsGlobal->Width;
-  libraryFrame.Height = gsGlobal->Height;
-  libraryFrame.PSM = gsGlobal->PSM;
-  libraryFrame.TBW = gsGlobal->Width / 64;
-  libraryFrame.Vram = gsGlobal->ScreenBuffer[(gsGlobal->ActiveBuffer ^ 1) & 1];
-  libraryFrame.Filter = GS_FILTER_NEAREST;
-
   uint32_t transitionStart = uiNowMs();
   int transitionProgress;
   do {
@@ -621,7 +592,7 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
                           pendingOrbsTheme, pendingOrbsAppearance, selectedOrbsRow,
                           &gameOptions, titleArgumentsChanged,
                           systemDirty, viewsDirty, orbsDirty, saveError,
-                          &libraryFrame, transitionProgress, 1, &selector);
+                          transitionProgress, 1, &selector);
     pollInput();
   } while (transitionProgress < 1000);
 
@@ -641,7 +612,7 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
                           pendingOrbsTheme, pendingOrbsAppearance, selectedOrbsRow,
                           &gameOptions, titleArgumentsChanged,
                           systemDirty, viewsDirty, orbsDirty, saveError,
-                          NULL, 0, 0, &selector);
+                          0, 0, &selector);
 
     // Process user inputs
     input = readInput();
@@ -830,7 +801,7 @@ exit:
                             pendingAmbient,
                             *orbsThemeSetting, *orbsAppearanceSetting,
                             selectedOrbsRow, &gameOptions, 0, 0, 0, 0, 0,
-                            NULL, transitionProgress, 2, &selector);
+                            transitionProgress, 2, &selector);
     } while (transitionProgress < 1000);
   }
   freeArgumentList(titleArguments);
