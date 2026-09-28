@@ -349,8 +349,7 @@ int uiLoop(TargetList *titles) {
         orbitRandomNextStep = uiNowMs() + ORBIT_RANDOM_STEP_MS;
       }
     }
-    if (view != UI_VIEW_ORBS)
-      observeAmbientOrbsSelection(selectedTitleIdx, uiNowMs());
+    observeAmbientOrbsSelection(selectedTitleIdx, uiNowMs());
 
     // Reload target if index has changed
     if (curTarget->idx != selectedTitleIdx) {
@@ -416,7 +415,7 @@ int uiLoop(TargetList *titles) {
       } else if (psbbnAnimationTargetIdx != flowSelectedTitleIdx) {
         int currentOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart, psbbnAnimationDuration, now);
         int direction = lunaNavDirection(flowTitles->total, psbbnAnimationTargetIdx, flowSelectedTitleIdx);
-        if (view == UI_VIEW_ORBS && scrollFast.active)
+        if (view == UI_VIEW_ORBS)
           triggerAmbientOrbsScrollReaction(direction, now);
         psbbnOutgoingTitleIdx = psbbnAnimationTargetIdx;
         psbbnAnimationStartOffset = currentOffset + direction * 1000;
