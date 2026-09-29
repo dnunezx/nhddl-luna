@@ -20,6 +20,7 @@
 
 #define OPTIONS_OPEN_DURATION_MS 360
 #define OPTIONS_CLOSE_DURATION_MS 180
+#define OPTIONS_GLASS_FADE_DURATION_MS 180
 #define OPTIONS_SELECTION_GLOW_DURATION_MS 110
 #define OPTIONS_GLOW_ROW_SCALE 256
 
@@ -469,10 +470,14 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                                                      firstY, rowStep, lineHeight));
     drawOptionsSection(menuTop, "Enabled views", 0);
     for (int row = 0; row <= UI_VIEW_SAVE_ICONS; row++) {
+      const UILibraryView view = lunaViewCycleOrder[row];
+      const char *label = view == UI_VIEW_ORBS ? "Scroll (Experimental)" :
+                          view == UI_VIEW_SAVE_ICONS ? "Save Icons (Experimental)" :
+                          lunaNavViewLabel(view);
       drawOptionsTextRow(baseX, firstY + row * rowStep,
                          gsGlobal->Width - baseX, state->selectedView == row,
-                         selectorY, lunaNavViewLabel(lunaViewCycleOrder[row]),
-                         state->pendingViews & (1U << lunaViewCycleOrder[row]) ? "On" : "Off");
+                         selectorY, label,
+                         state->pendingViews & (1U << view) ? "On" : "Off");
     }
     drawOptionsSection(firstY + OPTIONS_VIEW_ART_LAYOUT_ROW * rowStep,
                        "List view", 0);
@@ -621,6 +626,28 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
     drawOptionsTransition(transitionProgress, transitionMode == 2);
   gsKit_set_test(gsGlobal, GS_ZTEST_ON);
   presentOptionsFrame();
+}
+
+static void changeOptionsGlassColor(OptionsMenuState *state, int color) {
+  uint32_t transitionStart = uiNowMs();
+  int progress;
+  do {
+    progress = optionsTransitionProgress(
+        uiNowMs() - transitionStart, OPTIONS_GLASS_FADE_DURATION_MS);
+    drawTitleOptionsFrame(state, progress, 2);
+    pollInput();
+  } while (progress < 1000);
+
+  state->pendingGlassColor = color;
+  setGlassColorPreset((GlassColorPreset)color);
+
+  transitionStart = uiNowMs();
+  do {
+    progress = optionsTransitionProgress(
+        uiNowMs() - transitionStart, OPTIONS_GLASS_FADE_DURATION_MS);
+    drawTitleOptionsFrame(state, progress, 1);
+    pollInput();
+  } while (progress < 1000);
 }
 
 static int optionsGlobalDirty(int pendingBackground, int pendingGlassColor,
@@ -927,7 +954,8 @@ static int handleSystemInput(OptionsMenuState *state, int input) {
                                   direction + LIBRARY_BACKGROUND_COUNT) %
                                  LIBRARY_BACKGROUND_COUNT;
     else if (state->selectedGlobal == 1)
-      state->pendingGlassColor = (state->pendingGlassColor + direction + GLASS_COLOR_COUNT) % GLASS_COLOR_COUNT;
+      changeOptionsGlassColor(state,
+          (state->pendingGlassColor + direction + GLASS_COLOR_COUNT) % GLASS_COLOR_COUNT);
     else if (state->selectedGlobal == 2)
       state->pendingFont = (state->pendingFont + direction + UI_FONT_COUNT) % UI_FONT_COUNT;
     else if (state->selectedGlobal == 3)
@@ -1229,6 +1257,8 @@ exit:
       drawTitleOptionsFrame(&state, transitionProgress, 2);
     } while (transitionProgress < 1000);
   }
+  // Restore the saved color while the closing frame is fully black.
+  setGlassColorPreset((GlassColorPreset)*state.glassColorSetting);
   freeArgumentList(state.titleArguments);
   return res;
 }
