@@ -4,18 +4,11 @@
 
 #include "neutrino.h"
 #include "target.h"
-#include <gsKit.h>
 
-typedef struct {
-  Target *target;
-  GSTEXTURE *cover;
-} UILaunchHandoff;
+// Fades the library away, shows the moving background, then fades to black.
+void uiPlayLaunchTransition(void);
 
-// Draws and presents the launch handoff immediately. There is deliberately no
-// minimum display duration; launch work resumes as soon as the frame is shown.
-void uiPresentLaunchHandoff(Target *target, GSTEXTURE *cover, LaunchStage stage);
-
-// LaunchProgressCallback adapter used by the Neutrino handoff.
+// Keeps the final black frame through loader progress.
 void uiLaunchHandoffProgress(LaunchStage stage, void *userdata);
 
 #endif

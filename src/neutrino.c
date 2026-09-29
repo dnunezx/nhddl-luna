@@ -107,6 +107,22 @@ void launchTitleWithProgress(Target *target, ArgumentList *arguments,
   case MODE_HDL:
     bsdValue = BSD_ATA;
     appendArgument(arguments, newArgument(bsdfsArgument, BSDFS_HDL));
+    {
+      Argument *mc0 = getArgument(arguments, "mc0");
+      Argument *mc1 = getArgument(arguments, "mc1");
+      int pfsCard = (mc0 && !mc0->isDisabled && mc0->value &&
+                     !strncmp(mc0->value, "pfs0:", 5)) ||
+                    (mc1 && !mc1->isDisabled && mc1->value &&
+                     !strncmp(mc1->value, "pfs0:", 5));
+      if (pfsCard) {
+        const char *partition = getMountedPFSPartition();
+        if (partition == NULL) {
+          DPRINTF("ERROR: PFS VMC partition is not mounted\n");
+          return;
+        }
+        appendArgument(arguments, newArgument("pfs", (char *)partition));
+      }
+    }
     break;
   default:
     DPRINTF("ERROR: Unsupported mode\n");

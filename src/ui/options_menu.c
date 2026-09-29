@@ -427,7 +427,8 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
   const int rowStep = lineHeight + lineHeight / 2;
   if (state->page == OPTIONS_GLOBAL) {
     static const char *const backgroundLabels[LIBRARY_BACKGROUND_COUNT] = {
-        "Stars & cubes", "Ambient Orbs", "Red Clouds", "Midnight Cubes"};
+        "Stars & cubes", "Ambient Orbs", "Red Clouds", "Midnight Cubes",
+        "System Configuration"};
     const int firstY = menuTop + lineHeight + 4;
     int selectorY = optionsSelectorY(&state->selector, state->page, state->selectedGlobal,
                                      optionsGlobalRowY(state->selectedGlobal, firstY, rowStep, lineHeight));
@@ -634,7 +635,9 @@ static int optionsGlobalDirty(int pendingBackground, int pendingGlassColor,
 #define VMC_PICKER_MAX_FILES 128
 
 static int gameVMCDirectory(Target *target, char *path, size_t pathSize) {
-  const char *mountpoint = target->device->mountpoint;
+  const char *mountpoint = target->device->metadev ?
+                           target->device->metadev->mountpoint :
+                           target->device->mountpoint;
   size_t mountLength = strlen(mountpoint);
   int written = snprintf(path, pathSize, "%s%sVMC", mountpoint,
                          mountLength > 0 && mountpoint[mountLength - 1] == '/' ?
@@ -667,7 +670,7 @@ static void drawGameVMCProgress(int percent, void *context) {
 static int createNextGameVMC(OptionsMenuState *state, char *created,
                              size_t createdSize) {
   const int mode = state->target->device->mode;
-  if (mode != MODE_ATA && mode != MODE_USB && mode != MODE_MX4SIO &&
+  if (mode != MODE_ATA && mode != MODE_HDL && mode != MODE_USB && mode != MODE_MX4SIO &&
       mode != MODE_ILINK)
     return 0;
   char directory[PATH_MAX + 1];
@@ -1009,7 +1012,7 @@ static int handleSystemInput(OptionsMenuState *state, int input) {
 static int handleGameInput(OptionsMenuState *state, int input) {
   if (input & PAD_SQUARE) {
     // Launch title without saving arguments
-    uiLaunchTitle(state->target, state->titleArguments, NULL);
+    uiLaunchTitle(state->target, state->titleArguments);
     return -1;
   }
   if (input & PAD_START) {
@@ -1286,7 +1289,7 @@ static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments) {
 
     int input = waitForInput(-1);
     if (input & PAD_SQUARE) {
-      uiLaunchTitle(target, titleArguments, NULL);
+      uiLaunchTitle(target, titleArguments);
       return -1;
     } else if (input & PAD_START) {
       saveError = updateTitleLaunchArguments(target, titleArguments);

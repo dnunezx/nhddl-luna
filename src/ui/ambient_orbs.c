@@ -64,6 +64,7 @@ static int originalMasksLoaded;
 static uint32_t originalClockAnchorMs;
 static uint32_t originalClockStartMs;
 static uint32_t originalScatterPhase;
+static int systemConfigClockReady;
 static uint32_t orbSelectionEvents[ORB_SELECTION_EVENT_COUNT];
 static uint32_t orbLastSelectionEventMs;
 static int orbSelectionEventNext;
@@ -146,6 +147,7 @@ static void projectCrystalPoint(GlassPoint *point, float centerX, float centerY,
 
 void resetAmbientOrbs(uint32_t startMs) {
   glassStartMs = startMs;
+  systemConfigClockReady = 0;
   orbitStartMs = 0;
   splashStartMs = 0;
   resetAmbientOrbsScroll();
@@ -283,6 +285,10 @@ static int originalLoadMasks(void) {
   originalInitTexture(&originalCoreTexture, originalCorePixels);
   originalMasksLoaded = 1;
   return 0;
+}
+
+int loadAmbientOrbsSystemConfigAssets(void) {
+  return originalLoadMasks();
 }
 
 int setAmbientOrbsAppearance(AmbientOrbsAppearance appearance) {
@@ -1407,7 +1413,8 @@ static void drawOriginalOrbSprite(float x, float y, float size, int z,
 }
 
 static void drawOriginalOrbs(int centerX, int centerY, int radiusX,
-                              int radiusY, uint32_t now, int trailZ) {
+                              int radiusY, uint32_t now, int trailZ,
+                              int forceBiosMasks) {
   static const int entryColor[ORB_ORBIT_COUNT][3] = {
       {0x00, 0x00, 0x80}, {0x00, 0x80, 0x00},
       {0x00, 0x80, 0x80}, {0x80, 0x00, 0x00},
@@ -1454,7 +1461,7 @@ static void drawOriginalOrbs(int centerX, int centerY, int radiusX,
       newerY = olderY;
     }
     const float size = 1.0f / (1.0f + headDepth * 0.23f);
-    if (ambientOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL &&
+    if ((forceBiosMasks || ambientOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL) &&
         originalMasksLoaded) {
       drawOriginalOrbSprite(headX, headY, size, trailZ + 1,
                             red, green, blue, 1.0f);
@@ -1484,7 +1491,7 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
   orbBackgroundColorsActive = formationMode == 0;
   if (formationMode != 2 && ambientOrbsTheme == ORBS_THEME_PS2_ORIGINAL) {
     drawOriginalOrbs(centerX, centerY, radiusX, radiusY,
-                     glassStartMs + elapsedMs, trailZ);
+                     glassStartMs + elapsedMs, trailZ, 0);
     return;
   }
   OrbFormation *formation = orbFormationAt(formationMs, formationMode);
@@ -1749,6 +1756,27 @@ void drawAmbientOrbsOrbit(int centerX, int centerY, int radiusX,
   const uint32_t elapsedMs = glassElapsedMs(now);
   drawAmbientOrbs(centerX, centerY, radiusX, radiusY, elapsedMs,
                    elapsedMs, elapsedMs, 1, 1, 100, trailZ, 0, 1);
+}
+
+void drawAmbientOrbsSystemConfig(int centerX, int centerY, int radiusX,
+                                 int radiusY, uint32_t now, int trailZ) {
+  if (!systemConfigClockReady) {
+    const uint32_t stamp = getTimestamp();
+    const uint32_t hour = (stamp >> 12) & 31U;
+    const uint32_t minute = (stamp >> 6) & 63U;
+    const uint32_t second = stamp & 63U;
+    originalClockStartMs =
+        ((hour < 24 ? hour : 0) * 3600U +
+         (minute < 60 ? minute : 0) * 60U +
+         (second < 60 ? second : 0)) * 1000U;
+    originalClockAnchorMs = now;
+    originalScatterPhase = stamp & 0xFFFFU;
+    systemConfigClockReady = 1;
+  }
+  const int oldBackgroundColors = orbBackgroundColorsActive;
+  orbBackgroundColorsActive = 0;
+  drawOriginalOrbs(centerX, centerY, radiusX, radiusY, now, trailZ, 1);
+  orbBackgroundColorsActive = oldBackgroundColors;
 }
 
 void drawAmbientOrbsSplash(int centerX, int centerY, int radiusX,

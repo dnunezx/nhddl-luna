@@ -175,7 +175,15 @@ To skip all other devices, `mode: mmce` must be present in `nhddl.yaml`.
 
 #### HD Loader (APA-formatted HDD with HDL partitions)
 
-Note that HDL backend **does not support** VMCs and virtual HDDs.  
+The HDL backend can use an existing 8 MiB VMC file in the mounted APA/PFS
+metadata partition's `/VMC` folder. Create or assign one from a game's VMC
+options. This requires a matching Neutrino build with PFS VMC support, an
+8 KiB PFS zone size, and a file with at most 64 total mapped extents across
+the game and card images. Neutrino checks the file mapping before boot and
+stops if it cannot validate it. APA/PFS VMC save writes still need a test on
+an APA-formatted disk image or console before this is considered verified.
+Virtual HDDs are not supported by the HDL backend.
+
 Cover art, `nhddl.yaml` title options will be loaded from the OPL partition set in
 `hdd0:__common/OPL/conf_hdd.cfg`, with `+OPL` or `__common/OPL` used as a fallback.
 

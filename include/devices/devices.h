@@ -31,6 +31,9 @@ int initDeviceMap();
 // Uses MMCE devctl calls to switch memory card to given title ID
 void mmceMountVMC(char *titleID);
 
+// Name of the APA/PFS metadata partition currently mounted at pfs0:.
+const char *getMountedPFSPartition(void);
+
 //
 // Device-specific scanning functions
 //

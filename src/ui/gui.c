@@ -39,7 +39,6 @@
 
 void closeUI();
 int uiLoop(TargetList *titles);
-void drawGameID(const char *game_id);
 void uiSplashThread();
 
 GSGLOBAL *gsGlobal;
@@ -453,8 +452,6 @@ int uiLoop(TargetList *titles) {
       } else if (psbbnAnimationTargetIdx != flowSelectedTitleIdx) {
         int currentOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart, psbbnAnimationDuration, now);
         int direction = lunaNavDirection(flowTitles->total, psbbnAnimationTargetIdx, flowSelectedTitleIdx);
-        if (view == UI_VIEW_ORBS)
-          triggerAmbientOrbsScrollReaction(direction, now);
         psbbnOutgoingTitleIdx = psbbnAnimationTargetIdx;
         psbbnAnimationStartOffset = currentOffset + direction * 1000;
         if (view == UI_VIEW_PSBBN && collectionScan.active) {
@@ -1092,17 +1089,7 @@ int uiLoop(TargetList *titles) {
       free(favoriteFlags);
       favoriteFlags = NULL;
       freeTargetList(titles);
-      GSTEXTURE *handoffCover = NULL;
-      if (view == UI_VIEW_CLASSIC && !isCoverUninitialized) {
-        handoffCover = coverTexture;
-      } else if (IS_GRID_VIEW(view) && gridSelectedActiveBuffer >= 0 &&
-                 gridSelectedLoaded[gridSelectedActiveBuffer]) {
-        handoffCover = gridSelectedTextures[gridSelectedActiveBuffer];
-      } else if ((view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT) &&
-                 psbbnCoverLoaded[collectionActionCoverIdx]) {
-        handoffCover = psbbnCoverTextures[collectionActionCoverIdx];
-      }
-      uiLaunchTitle(target, NULL, handoffCover);
+      uiLaunchTitle(target, NULL);
       // Something went wrong, main loop must exit immediately
       return -1;
     } else if (input & PAD_CIRCLE) {
@@ -1389,77 +1376,22 @@ exit:
   return res;
 }
 // Displays Game ID and launches the title
-void uiLaunchTitle(Target *target, ArgumentList *arguments, GSTEXTURE *cover) {
-  UILaunchHandoff handoff = {.target = target, .cover = cover};
-
-  // Present immediately, then continue with real launch work. There is no
-  // minimum display time or transition delay.
-  uiPresentLaunchHandoff(target, cover, LAUNCH_STAGE_PREPARING);
+void uiLaunchTitle(Target *target, ArgumentList *arguments) {
+  uiPlayLaunchTransition();
   closePad();
 
   if (arguments == NULL)
     arguments = loadLaunchArgumentLists(target);
 
-  // Keep the final framebuffer resident while Neutrino loads. The process
-  // replacement reclaims these UI resources without exposing a black frame.
-  launchTitleWithProgress(target, arguments, uiLaunchHandoffProgress, &handoff);
+  // Keep the black framebuffer resident while Neutrino loads.
+  launchTitleWithProgress(target, arguments, uiLaunchHandoffProgress, NULL);
 
   // launchTitleWithProgress normally never returns. Retain cleanup for an
   // unsupported target mode or another pre-exec failure.
   closeUI();
 }
 
-//
-// GameID code based on https://github.com/CosmicScale/Retro-GEM-PS2-Disc-Launcher
-//
-
-static uint8_t calculateCRC(const uint8_t *data, int len) {
-  uint8_t crc = 0x00;
-  for (int i = 0; i < len; i++) {
-    crc += data[i];
-  }
-  return 0x100 - crc;
-}
-
-void drawGameID(const char *gameID) {
-  uint8_t data[64] = {0};
-  int gidlen = strnlen(gameID, 11); // Ensure the length does not exceed 11 characters
-
-  int dpos = 0;
-  data[dpos++] = 0xA5; // detect word
-  data[dpos++] = 0x00; // address offset
-  dpos++;
-  data[dpos++] = gidlen;
-
-  memcpy(&data[dpos], gameID, gidlen);
-  dpos += gidlen;
-
-  data[dpos++] = 0x00;
-  data[dpos++] = 0xD5; // end word
-  data[dpos++] = 0x00; // padding
-
-  int data_len = dpos;
-  data[2] = calculateCRC(&data[3], data_len - 3);
-
-  int xstart = (gsGlobal->Width / 2) - (data_len * 8);
-  int ystart = gsGlobal->Height - (((gsGlobal->Height / 8) * 2) + 20);
-  int height = 2;
-
-  for (int i = 0; i < data_len; i++) {
-    for (int j = 7; j >= 0; j--) {
-      int x = xstart + (i * 16 + ((7 - j) * 2));
-      int x1 = x + 1;
-      gsKit_prim_sprite(gsGlobal, x, ystart, x1, ystart + height, 0, GS_SETREG_RGBA(0xFF, 0x00, 0xFF, 0x80));
-
-      uint32_t color = (data[i] >> j) & 1 ? GS_SETREG_RGBA(0x00, 0xFF, 0xFF, 0x80) : GS_SETREG_RGBA(0xFF, 0xFF, 0x00, 0x80);
-      gsKit_prim_sprite(gsGlobal, x1, ystart, x1 + 1, ystart + height, 0, color);
-    }
-  }
-}
-
-//
 // Splash screen functions
-//
 
 struct {
   int32_t doneSema;          // Used to signal UI splash thread to exit

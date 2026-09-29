@@ -43,6 +43,11 @@ int drawAmbientOrbsBackground(uint32_t now);
 void resetAmbientOrbsOrbit(uint32_t now);
 void drawAmbientOrbsOrbit(int centerX, int centerY, int radiusX,
                           int radiusY, uint32_t now, int trailZ);
+// The System Configuration scene always uses the BIOS orb masks and the
+// retail seven-orb clock motion, independent of LUNA's orb preferences.
+int loadAmbientOrbsSystemConfigAssets(void);
+void drawAmbientOrbsSystemConfig(int centerX, int centerY, int radiusX,
+                                 int radiusY, uint32_t now, int trailZ);
 
 // Boot splash alternates centered LUNA and rotating cube formations.
 // Its orb sprites use the bright LUNA appearance.
@@ -50,9 +55,8 @@ void resetAmbientOrbsSplash(uint32_t now);
 void drawAmbientOrbsSplash(int centerX, int centerY, int radiusX,
                            int radiusY, uint32_t now, int trailZ);
 
-// The alphabet formation and navigation reaction belong only to Scroll view.
+// The alphabet formation belongs only to Scroll view.
 void resetAmbientOrbsScroll(void);
-void triggerAmbientOrbsScrollReaction(int direction, uint32_t now);
 void drawAmbientOrbsScroll(int centerX, int centerY, int radiusX,
                            int radiusY, uint32_t elapsedMs, int fastScroll,
                            const char *title, int trailZ, int scrollFocusX);

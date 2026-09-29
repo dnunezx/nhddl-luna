@@ -3,107 +3,30 @@
 #include "ui/graphics.h"
 #include "ui/view_internal.h"
 
-void drawGameID(const char *gameID);
+#define LAUNCH_LIBRARY_FADE_MS 200
+#define LAUNCH_BACKGROUND_IN_MS 180
+#define LAUNCH_BACKGROUND_HOLD_MS 300
+#define LAUNCH_FADE_MS 240
 
-static const char *launchStageName(LaunchStage stage) {
-  switch (stage) {
-  case LAUNCH_STAGE_SYNCING:
-    return "SYNCING DRIVE";
-  case LAUNCH_STAGE_STARTING:
-    return "STARTING GAME";
-  case LAUNCH_STAGE_PREPARING:
-  default:
-    return "PREPARING GAME";
-  }
+static void presentFrame(void) {
+  gsKit_queue_exec(gsGlobal);
+  gsKit_finish();
+  gsKit_sync_flip(gsGlobal);
 }
 
-static void drawHandoffCover(GSTEXTURE *cover, float x, float y, float maxWidth,
-                             float maxHeight) {
-  float width;
-  float height;
-  int previousAlphaTest;
-  int previousAlphaReference;
-  int previousAlphaFail;
-
-  if (cover == NULL || cover->Width <= 0 || cover->Height <= 0) {
-    drawGlassDiamond((int)(x + maxWidth / 2), (int)(y + maxHeight / 2), 28, 6,
-                     HeaderTextColor);
-    drawTextWindow((int)x, (int)(y + maxHeight / 2 + 38),
-                   (int)(x + maxWidth), (int)(y + maxHeight), 7,
-                   HeaderTextColor, ALIGN_HCENTER, "ART UNAVAILABLE");
-    return;
-  }
-
-  width = maxWidth;
-  height = width * cover->Height / cover->Width;
-  if (height > maxHeight) {
-    height = maxHeight;
-    width = height * cover->Width / cover->Height;
-  }
-  x += (maxWidth - width) / 2;
-  y += (maxHeight - height) / 2;
-
-  previousAlphaTest = gsGlobal->Test->ATST;
-  previousAlphaReference = gsGlobal->Test->AREF;
-  previousAlphaFail = gsGlobal->Test->AFAIL;
-  gsKit_TexManager_bind(gsGlobal, cover);
-  gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-  gsGlobal->Test->ATST = 2;
-  gsGlobal->Test->AREF = 0x80;
-  gsGlobal->Test->AFAIL = 0;
-  gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
-  gsKit_set_test(gsGlobal, GS_ATEST_ON);
-  gsKit_prim_sprite_texture(gsGlobal, cover, x, y, 0.0f, 0.0f, x + width,
-                            y + height, cover->Width - 1, cover->Height - 1, 6,
-                            GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
-  gsGlobal->Test->ATST = previousAlphaTest;
-  gsGlobal->Test->AREF = previousAlphaReference;
-  gsGlobal->Test->AFAIL = previousAlphaFail;
-  gsKit_set_test(gsGlobal, GS_ATEST_ON);
+static void drawBlack(int alpha) {
+  gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
+  gsGlobal->PrimAlphaEnable = alpha < 0x80 ? GS_SETTING_ON : GS_SETTING_OFF;
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+  gsKit_prim_sprite(gsGlobal, 0, 0, gsGlobal->Width, gsGlobal->Height, 0,
+                    GS_SETREG_RGBA(0, 0, 0, alpha));
+  gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
+  gsKit_set_test(gsGlobal, GS_ZTEST_ON);
 }
 
-static void drawStageRail(LaunchStage stage, int left, int right, int y) {
-  static const char *labels[] = {"PREPARE", "SYNC", "START"};
-  int spacing = (right - left) / 2;
-
-  gsKit_prim_sprite(gsGlobal, left, y, right, y + 1, 5, ColorPanelEdge);
-  for (int i = 0; i < 3; i++) {
-    int x = left + i * spacing;
-    uint64_t color = (i <= (int)stage) ? ColorSelected : HeaderTextColor;
-    drawGlassDiamond(x, y, (i == (int)stage) ? 6 : 4, 6, color);
-    drawTextWindow(x - 44, y + 12, x + 44, y + 36, 6, color,
-                   ALIGN_HCENTER, labels[i]);
-  }
-}
-
-static void presentLaunchHandoff(Target *target, GSTEXTURE *cover,
-                                 LaunchStage stage, int waitForVSync) {
-  const int width = gsGlobal->Width;
-  const int height = gsGlobal->Height;
-  const int panelTop = 64;
-  const int panelBottom = height - 56;
-  const int coverTop = panelTop + 28;
-  const int coverHeight = panelBottom - coverTop - 30;
-
-  gsKit_clear(gsGlobal, BGColor);
+static void presentBlack(int waitForVSync) {
   gsKit_TexManager_nextFrame(gsGlobal);
-  drawSharedLibraryBackground(uiNowMs());
-  drawGlassPanel(42, panelTop, width - 42, panelBottom, 2);
-  drawTextWindow(0, 22, width, 0, 5, FontMainColor, ALIGN_HCENTER,
-                 "L  U  N  A");
-
-  drawHandoffCover(cover, 66, coverTop, 176, coverHeight);
-  drawTextWindow(278, panelTop + 42, width - 68, panelTop + 112, 6,
-                 FontMainColor, ALIGN_VCENTER, target->name);
-  drawTextWindow(278, panelTop + 112, width - 68, panelTop + 142, 6,
-                 HeaderTextColor, ALIGN_LEFT, target->id);
-  drawTextWindow(278, panelTop + 145, width - 68, panelTop + 180, 6,
-                 FontMainColor, ALIGN_HCENTER, launchStageName(stage));
-  drawStageRail(stage, 302, width - 84, panelTop + 196);
-
-  // Retain the exact signal encoding used by the previous launch screen.
-  drawGameID(target->id);
+  drawBlack(0x80);
   gsKit_queue_exec(gsGlobal);
   gsKit_finish();
   if (waitForVSync)
@@ -112,17 +35,75 @@ static void presentLaunchHandoff(Target *target, GSTEXTURE *cover,
     gsKit_setactive(gsGlobal);
 }
 
-void uiPresentLaunchHandoff(Target *target, GSTEXTURE *cover, LaunchStage stage) {
-  // This replaces the single synchronized frame used by the previous launch
-  // screen; it does not add another timed transition.
-  presentLaunchHandoff(target, cover, stage, 1);
+void uiPlayLaunchTransition(void) {
+  uint32_t start = uiNowMs();
+  uint32_t elapsed;
+  int bufferFade[2] = {0, 0};
+
+  // Fade the still library frame in each display buffer. Track its existing
+  // opacity so repeated overlays stay linear instead of darkening too fast.
+  do {
+    elapsed = uiNowMs() - start;
+    if (elapsed > LAUNCH_LIBRARY_FADE_MS)
+      elapsed = LAUNCH_LIBRARY_FADE_MS;
+    const int fade = (int)(elapsed * 1000U / LAUNCH_LIBRARY_FADE_MS);
+    const int buffer = gsGlobal->ActiveBuffer;
+    const int previous = bufferFade[buffer];
+    const int alpha = (fade >= 1000) ? 0x80 :
+        ((fade - previous) * 0x80) / (1000 - previous);
+    gsKit_TexManager_nextFrame(gsGlobal);
+    if (alpha > 0)
+      drawBlack(alpha);
+    bufferFade[buffer] = fade;
+    presentFrame();
+  } while (elapsed < LAUNCH_LIBRARY_FADE_MS);
+
+  // Bring the moving background through black after the library disappears.
+  start = uiNowMs();
+  do {
+    elapsed = uiNowMs() - start;
+    if (elapsed > LAUNCH_BACKGROUND_IN_MS)
+      elapsed = LAUNCH_BACKGROUND_IN_MS;
+    gsKit_TexManager_nextFrame(gsGlobal);
+    gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
+    drawSharedLibraryBackground(uiNowMs());
+    gsKit_set_test(gsGlobal, GS_ZTEST_ON);
+    drawBlack((int)((LAUNCH_BACKGROUND_IN_MS - elapsed) * 0x80U /
+                    LAUNCH_BACKGROUND_IN_MS));
+    presentFrame();
+  } while (elapsed < LAUNCH_BACKGROUND_IN_MS);
+
+  // Leave the background playing alone before it fades away.
+  start = uiNowMs();
+  do {
+    elapsed = uiNowMs() - start;
+    gsKit_TexManager_nextFrame(gsGlobal);
+    gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
+    drawSharedLibraryBackground(uiNowMs());
+    gsKit_set_test(gsGlobal, GS_ZTEST_ON);
+    presentFrame();
+  } while (elapsed < LAUNCH_BACKGROUND_HOLD_MS);
+
+  start = uiNowMs();
+  do {
+    elapsed = uiNowMs() - start;
+    if (elapsed > LAUNCH_FADE_MS)
+      elapsed = LAUNCH_FADE_MS;
+    gsKit_TexManager_nextFrame(gsGlobal);
+    gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
+    drawSharedLibraryBackground(uiNowMs());
+    gsKit_set_test(gsGlobal, GS_ZTEST_ON);
+    drawBlack((int)(elapsed * 0x80U / LAUNCH_FADE_MS));
+    presentFrame();
+  } while (elapsed < LAUNCH_FADE_MS);
+
+  // Fill both display buffers before the loader takes control.
+  presentBlack(1);
+  presentBlack(1);
 }
 
 void uiLaunchHandoffProgress(LaunchStage stage, void *userdata) {
-  UILaunchHandoff *handoff = (UILaunchHandoff *)userdata;
-  if (handoff == NULL || handoff->target == NULL)
-    return;
-  // Later stage changes flip directly after their real work boundary. Waiting
-  // for another VSync here would extend the launch solely for presentation.
-  presentLaunchHandoff(handoff->target, handoff->cover, stage, 0);
+  (void)stage;
+  (void)userdata;
+  presentBlack(0);
 }

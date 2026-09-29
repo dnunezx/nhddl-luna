@@ -14,6 +14,11 @@
 
 #define OPL_CONF_PARTITION_ARG "hdd_partition"
 #define PFS_MOUNTPOINT "pfs0:"
+static char mountedPFSPartition[PATH_MAX + 1];
+
+const char *getMountedPFSPartition(void) {
+  return mountedPFSPartition[0] ? mountedPFSPartition : NULL;
+}
 
 // Checks and returns 0 if hdd0 contains APA partition table
 int checkAPAHeader() {
@@ -130,6 +135,7 @@ struct DeviceMapEntry *mountPFS() {
       DPRINTF("WARN: failed to mount %s, will try to use fallbacks\n", oplPartition);
     else {
       DPRINTF("Mounted %s as pfs0:\n", oplPartition);
+      snprintf(mountedPFSPartition, sizeof(mountedPFSPartition), "%s", oplPartition);
       struct DeviceMapEntry *dev = createMetadataEntry(oplPartition);
       free(oplPartition);
       return dev;
@@ -144,6 +150,7 @@ struct DeviceMapEntry *mountPFS() {
     }
 
     DPRINTF("Mounted %s as pfs0:\n", pfsPartitions[i]);
+    snprintf(mountedPFSPartition, sizeof(mountedPFSPartition), "%s", pfsPartitions[i]);
     return createMetadataEntry(pfsPartitions[i]);
   }
 
@@ -160,6 +167,7 @@ int initHDL(int deviceIdx) {
   char mountpoint[] = "hdd0:";
   DIR *directory;
 
+  mountedPFSPartition[0] = '\0';
   deviceModeMap[deviceIdx].mode = MODE_NONE;
 
   // Wait for IOP to initialize device driver

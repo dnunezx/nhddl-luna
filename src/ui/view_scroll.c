@@ -2,8 +2,10 @@
 #include "ui/view_internal.h"
 #include "ui/view_scroll.h"
 #include "ui/ambient_orbs.h"
+#include "options.h"
 #include "dprintf.h"
 #include <gsInline.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,12 +24,31 @@ static GSTEXTURE openingBlpTexture;
 static GSTEXTURE openingBlprTexture;
 static GSTEXTURE openingCaptureTexture;
 static GSTEXTURE openingWorkTexture;
+static u32 configWallPixels[128 * 128] __attribute__((aligned(128)));
+static u32 configFlowPixels[64 * 64] __attribute__((aligned(128)));
+static u32 configRefPixels[64 * 64] __attribute__((aligned(128)));
+static GSTEXTURE configWallTexture;
+static GSTEXTURE configFlowTexture;
+static GSTEXTURE configRefTexture;
+static u32 configInversePixels[64 * 64] __attribute__((aligned(128)));
+static GSTEXTURE configInverseTexture;
+static GSTEXTURE configCaptureTexture;
+static int configCaptureReady;
+static float configRodVerts[16][4][4];
+static float configRodNormals[16][4];
+static float configRodUvs[16][4][4];
 static int biosFogTextureLoaded;
 static int biosCubeTextureLoaded;
 static int biosOpeningCubeTexturesLoaded;
+static int biosConfigTexturesLoaded;
+static int biosConfigGeometryLoaded;
+static int configClockInitialized;
+static uint32_t configClockAnchorMs;
+static uint32_t configClockStartMs;
 static int openingCaptureReady;
 
 #define OPENING_CAPTURE_SIZE 128
+#define CONFIG_CAPTURE_SIZE 256
 
 void initOpeningCubeCapture(void) {
   memset(&openingCaptureTexture, 0, sizeof(openingCaptureTexture));
@@ -83,7 +104,7 @@ static int tunnelFindResource(FILE *rom, const char *name,
 // The OSDSYS expand format uses 30 literal/back-reference flags per word.
 static int tunnelExpandResource(FILE *rom, long offset, uint32_t size,
                                 unsigned char *output, uint32_t outputSize) {
-  if (size < 8 || size > 65536 || fseek(rom, offset, SEEK_SET))
+  if (size < 8 || size > 1024 * 1024 || fseek(rom, offset, SEEK_SET))
     return -1;
   unsigned char *source = malloc(size);
   if (source == NULL)
@@ -211,6 +232,153 @@ static int loadBiosCubeTexture(void) {
   return 0;
 }
 
+// The System Configuration tunnel and rod passes sample the console's own
+// TEXIMAGE resources. No BIOS pixels are copied into the LUNA executable.
+static int loadBiosConfigTextures(void) {
+  if (biosConfigTexturesLoaded)
+    return 0;
+  if (loadBiosCubeTexture())
+    return -1;
+  FILE *rom = fopen("rom0:TEXIMAGE", "rb");
+  if (rom == NULL)
+    return -1;
+  static unsigned char expanded[64 * 64 * 3];
+  static const char *const names[3] = {"TEXCKABE", "TEXCFLOW", "TEXCREFA"};
+  u32 *const pixels[3] = {configWallPixels, configFlowPixels, configRefPixels};
+  int result = 0;
+  for (int resource = 0; resource < 3; resource++) {
+    long offset;
+    uint32_t size;
+    const uint32_t expandedSize = resource == 0 ? sizeof(expanded) : 64 * 64;
+    if (tunnelFindResource(rom, names[resource], &offset, &size) ||
+        tunnelExpandResource(rom, offset, size, expanded, expandedSize)) {
+      result = -1;
+      break;
+    }
+    if (resource == 0) {
+      // The original TEXCKABE decoder repeats each 64x64 RGB pixel into a
+      // 2x2 tile of a 128x128 page.
+      for (int y = 0; y < 128; y++) {
+        for (int x = 0; x < 128; x++) {
+          const int source = ((y & 63) * 64 + (x & 63)) * 3;
+          pixels[resource][y * 128 + x] =
+              (u32)expanded[source] | (u32)expanded[source + 1] << 8 |
+              (u32)expanded[source + 2] << 16 | 0x7f000000U;
+        }
+      }
+    } else {
+      for (int i = 0; i < 64 * 64; i++) {
+        const u32 gray = expanded[i];
+        pixels[resource][i] = gray | gray << 8 | gray << 16 | 0x7f000000U;
+      }
+    }
+  }
+  fclose(rom);
+  if (result) {
+    DPRINTF("LUNA: failed to load BIOS System Configuration textures\n");
+    return -1;
+  }
+  tunnelInitTexture(&configWallTexture, configWallPixels, 128, 128);
+  tunnelInitTexture(&configFlowTexture, configFlowPixels, 64, 64);
+  tunnelInitTexture(&configRefTexture, configRefPixels, 64, 64);
+  for (int i = 0; i < 64 * 64; i++) {
+    const u32 gray = 255U - (bumpPixels[i] & 255U);
+    configInversePixels[i] = gray | gray << 8 | gray << 16 | 0x7f000000U;
+  }
+  tunnelInitTexture(&configInverseTexture, configInversePixels, 64, 64);
+  biosConfigTexturesLoaded = 1;
+  DPRINTF("LUNA: loaded BIOS TEXCKABE, TEXCFLOW, TEXCBUMP, TEXCREFA\n");
+  return 0;
+}
+
+// OSDSYS carries the original 16-face rod model in its compressed .data.
+// Locate its scene descriptor by face count and the three adjacent arrays,
+// since their absolute addresses vary between BIOS versions.
+static int findBiosRodGeometry(const unsigned char *image, uint32_t imageSize) {
+  const uint32_t base = 0x200000U;
+  for (uint32_t i = 0; i + 20 < imageSize; i += 4) {
+    if (tunnelReadLE32(image + i) != 16)
+      continue;
+    const uint32_t verts = tunnelReadLE32(image + i + 4);
+    const uint32_t normals = tunnelReadLE32(image + i + 8);
+    const uint32_t uvs = tunnelReadLE32(image + i + 12);
+    if (verts < base || uvs != verts + sizeof(configRodVerts) ||
+        normals != uvs + sizeof(configRodUvs) ||
+        normals - base > imageSize - sizeof(configRodNormals))
+      continue;
+    memcpy(configRodVerts, image + verts - base, sizeof(configRodVerts));
+    memcpy(configRodNormals, image + normals - base, sizeof(configRodNormals));
+    memcpy(configRodUvs, image + uvs - base, sizeof(configRodUvs));
+    if (configRodVerts[0][0][1] > 25.0f &&
+        configRodVerts[0][0][1] < 27.0f)
+      return 0;
+  }
+  return -1;
+}
+
+static int loadBiosConfigGeometry(void) {
+  if (biosConfigGeometryLoaded)
+    return 0;
+  FILE *rom = fopen("rom0:OSDSYS", "rb");
+  if (rom == NULL || fseek(rom, 0, SEEK_END)) {
+    if (rom != NULL)
+      fclose(rom);
+    DPRINTF("LUNA: failed to open BIOS OSDSYS geometry\n");
+    return -1;
+  }
+  const long fileSize = ftell(rom);
+  int result = -1;
+  if (fileSize > 0 && fileSize < 1024 * 1024) {
+    unsigned char header[4];
+    for (long offset = 0; offset < 0x2000 && offset + 4 < fileSize; offset += 16) {
+      if (fseek(rom, offset, SEEK_SET) || fread(header, 1, 4, rom) != 4)
+        break;
+      const uint32_t expandedSize = tunnelReadLE32(header);
+      if (expandedSize < 0x80000 || expandedSize > 0x180000)
+        continue;
+      unsigned char *expanded = malloc(expandedSize);
+      if (expanded == NULL)
+        break;
+      if (!tunnelExpandResource(rom, offset, fileSize - offset,
+                                expanded, expandedSize) &&
+          !findBiosRodGeometry(expanded, expandedSize)) {
+        result = 0;
+        free(expanded);
+        break;
+      }
+      free(expanded);
+    }
+  }
+  fclose(rom);
+  if (result) {
+    DPRINTF("LUNA: failed to extract BIOS OSDSYS rod mesh\n");
+    return -1;
+  }
+  biosConfigGeometryLoaded = 1;
+  DPRINTF("LUNA: loaded 16-face BIOS OSDSYS rod mesh\n");
+  return 0;
+}
+
+static void initConfigRodCapture(void) {
+  if (configCaptureReady)
+    return;
+  const u32 bytes = gsKit_texture_size(CONFIG_CAPTURE_SIZE,
+                                       CONFIG_CAPTURE_SIZE, GS_PSM_CT24);
+  const u32 vram = gsKit_vram_alloc(gsGlobal, bytes, GSKIT_ALLOC_SYSBUFFER);
+  if (vram == GSKIT_ALLOC_ERROR) {
+    DPRINTF("LUNA: no VRAM for System Configuration refraction\n");
+    return;
+  }
+  memset(&configCaptureTexture, 0, sizeof(configCaptureTexture));
+  configCaptureTexture.Width = CONFIG_CAPTURE_SIZE;
+  configCaptureTexture.Height = CONFIG_CAPTURE_SIZE;
+  configCaptureTexture.PSM = GS_PSM_CT24;
+  configCaptureTexture.TBW = CONFIG_CAPTURE_SIZE / 64;
+  configCaptureTexture.Vram = vram;
+  configCaptureTexture.Filter = GS_FILTER_LINEAR;
+  configCaptureReady = 1;
+}
+
 // The opening cube is built from these three ROM textures in osdbits/opening.c.
 // Keep them in the BIOS at runtime; no Sony texture data is stored in LUNA.
 static int loadBiosOpeningCubeTextures(void) {
@@ -267,6 +435,12 @@ int setLibraryBackground(LibraryBackground background) {
     return -1;
   if (background == LIBRARY_BACKGROUND_MIDNIGHT_CUBES && loadBiosCubeTexture())
     return -1;
+  if (background == LIBRARY_BACKGROUND_SYSTEM_CONFIG &&
+      (loadBiosConfigTextures() || loadBiosConfigGeometry() ||
+       loadAmbientOrbsSystemConfigAssets()))
+    return -1;
+  if (background == LIBRARY_BACKGROUND_SYSTEM_CONFIG)
+    initConfigRodCapture();
   libraryBackground = background >= LIBRARY_BACKGROUND_STARS &&
                       background < LIBRARY_BACKGROUND_COUNT ?
                       background : LIBRARY_BACKGROUND_STARS;
@@ -687,19 +861,19 @@ static void drawGlassCube(float centerX, float centerY, int size, uint32_t yawPh
 // Snapshot the current cloud frame before drawing glass. osdbits/opening.c
 // captures the screen for each cube; a 128x128 local copy covers LUNA's one
 // cube without reserving another full framebuffer in the PS2's 4 MB VRAM.
-static void copyOpeningCubePixels(u32 sourceVram, int sourceWidth,
-                                  int left, int top, u32 destVram) {
+static void copyCapturePixels(u32 sourceVram, int sourceWidth,
+                              int left, int top, u32 destVram, int size) {
   u64 *packet = gsKit_heap_alloc(gsGlobal, 5, 5 * 16, GIF_AD);
   packet[0] = GIF_TAG_AD(5);
   packet[1] = GIF_AD;
   packet[2] = GS_SETREG_BITBLTBUF(sourceVram / 256,
                                   sourceWidth / 64, GS_PSM_CT24,
                                   destVram / 256,
-                                  OPENING_CAPTURE_SIZE / 64, GS_PSM_CT24);
+                                  size / 64, GS_PSM_CT24);
   packet[3] = GS_BITBLTBUF;
   packet[4] = GS_SETREG_TRXPOS(left, top, 0, 0, 0);
   packet[5] = GS_TRXPOS;
-  packet[6] = GS_SETREG_TRXREG(OPENING_CAPTURE_SIZE, OPENING_CAPTURE_SIZE);
+  packet[6] = GS_SETREG_TRXREG(size, size);
   packet[7] = GS_TRXREG;
   packet[8] = GS_SETREG_TRXDIR(2);
   packet[9] = GS_TRXDIR;
@@ -804,11 +978,11 @@ static void drawOpeningGlassCube(uint32_t elapsedMs, int width, int height) {
     }
   }
 
-  copyOpeningCubePixels(gsGlobal->ScreenBuffer[gsGlobal->ActiveBuffer],
-                        width, captureLeft, captureTop,
-                        openingCaptureTexture.Vram);
-  copyOpeningCubePixels(openingCaptureTexture.Vram, OPENING_CAPTURE_SIZE,
-                        0, 0, openingWorkTexture.Vram);
+  copyCapturePixels(gsGlobal->ScreenBuffer[gsGlobal->ActiveBuffer],
+                    width, captureLeft, captureTop,
+                    openingCaptureTexture.Vram, OPENING_CAPTURE_SIZE);
+  copyCapturePixels(openingCaptureTexture.Vram, OPENING_CAPTURE_SIZE,
+                    0, 0, openingWorkTexture.Vram, OPENING_CAPTURE_SIZE);
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
   for (int stage = 0; stage < 2; stage++) {
     if (stage == 0)
@@ -1088,11 +1262,315 @@ static void drawMidnightCubes(uint32_t frameNowMs) {
                 11, glassPhase(elapsedMs, 26000, 17000), 0x68, 0x83, 0xB8, 0, &bumpTexture, 0);
 }
 
+typedef struct {
+  float x, y, z;
+  float cameraX, cameraY;
+  float u, v;
+} ConfigRodVertex;
+
+typedef struct {
+  ConfigRodVertex vertex[4];
+  float normalX, normalY, normalZ;
+  float fresnel;
+  int nearFace;
+} ConfigRodFace;
+
+typedef struct {
+  float slotS, slotC, orbitS, orbitC, tiltS, tiltC, spinS, spinC;
+} ConfigRodRotation;
+
+static float configSin(uint32_t phase) {
+  return orbWave(phase) / 127.0f;
+}
+
+static float configCos(uint32_t phase) {
+  return orbWave(phase + 16384U) / 127.0f;
+}
+
+static float configWrapUv(float value) {
+  value = fmodf(value, 64.0f);
+  return value < 0.0f ? value + 64.0f : value;
+}
+
+static void configTransform(float *x, float *y, float *z,
+                            const ConfigRodRotation *rotation, int normal) {
+  float a = *x * rotation->spinC + *z * rotation->spinS;
+  float b = *z * rotation->spinC - *x * rotation->spinS;
+  float c = *y + (normal ? 0.0f : 20.0f);
+  float d = a * rotation->slotC - c * rotation->slotS;
+  float e = a * rotation->slotS + c * rotation->slotC;
+  a = d * rotation->orbitC + b * rotation->orbitS;
+  b = b * rotation->orbitC - d * rotation->orbitS;
+  d = a * rotation->tiltC - e * rotation->tiltS;
+  e = a * rotation->tiltS + e * rotation->tiltC;
+  // Inverse of the ROM's camera yaw 0.145 and pitch 0.031, with its
+  // camera at (10.436, 0, -103). Normals omit the camera translation.
+  a = d * 0.989506f - b * 0.144492f;
+  b = d * 0.144492f + b * 0.989506f;
+  if (!normal) {
+    a -= 10.436f;
+    b += 103.0f;
+  }
+  *x = a;
+  *y = e * 0.999520f + b * 0.030995f;
+  *z = b * 0.999520f - e * 0.030995f;
+}
+
+static float configRodDepth(int slot, uint32_t tilt, uint32_t orbit,
+                            uint32_t spin) {
+  const uint32_t slotAngle = slot * (65536U / 12U) - 32768U;
+  const ConfigRodRotation rotation = {
+      configSin(slotAngle), configCos(slotAngle),
+      configSin(orbit), configCos(orbit),
+      configSin(tilt), configCos(tilt),
+      configSin(spin), configCos(spin)};
+  float x = 0.0f, y = 0.0f, z = 0.0f;
+  configTransform(&x, &y, &z, &rotation, 0);
+  return z;
+}
+
+static void drawBiosTunnel(uint32_t elapsedMs, int centerX, int centerY) {
+  // The ROM emits 16 ribbons with 33 axial rings on a radius-6000 wall.
+  // Every second ring is sufficient for gsKit's independent quads.
+  gsKit_TexManager_bind(gsGlobal, &configWallTexture);
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+  const uint32_t frame = elapsedMs * 60U / 1000U;
+  for (int ring = 4; ring < 32; ring += 2) {
+    const int next = ring + 2;
+    const float z0 = ring * 1250.0f - 2500.0f + 103.0f;
+    const float z1 = next * 1250.0f - 2500.0f + 103.0f;
+    const float wave0 = 1.0f + configSin(frame * 100U + ring * 5120U) * 0.05f;
+    const float wave1 = 1.0f + configSin(frame * 100U + next * 5120U) * 0.05f;
+    const float r0 = 6000.0f * 512.0f * wave0 / z0;
+    const float r1 = 6000.0f * 512.0f * wave1 / z1;
+    const float v0 = configWrapUv(((float)ring / 32.0f +
+                                  (frame % 5000U) * 0.0002f) * 384.0f);
+    const float v1 = v0 + 24.0f;
+    const int p0 = ((32 - ring) * (32 - ring) * (32 - ring)) >> 10;
+    const int p1 = ((32 - next) * (32 - next) * (32 - next)) >> 10;
+    const uint64_t color0 = GS_SETREG_RGBA(clampColor(p0 * 230 >> 5),
+                                            clampColor(p0 * 260 >> 5),
+                                            clampColor(p0 * 260 >> 5), 0x80);
+    const uint64_t color1 = GS_SETREG_RGBA(clampColor(p1 * 230 >> 5),
+                                            clampColor(p1 * 260 >> 5),
+                                            clampColor(p1 * 260 >> 5), 0x80);
+    for (int segment = 0; segment < 16; segment++) {
+      const uint32_t a0 = segment * 4096U;
+      const uint32_t a1 = (segment + 1) * 4096U;
+      const float s0 = configSin(a0), c0 = configCos(a0);
+      const float s1 = configSin(a1), c1 = configCos(a1);
+      const float u0 = (float)((segment * 24) & 63);
+      const float u1 = u0 + 24.0f;
+      const float yscale = gsGlobal->Height / 480.0f;
+      gsKit_prim_quad_goraud_texture(gsGlobal, &configWallTexture,
+                                     centerX + s0 * r0, centerY - c0 * r0 * yscale, u0, v0,
+                                     centerX + s1 * r0, centerY - c1 * r0 * yscale, u1, v0,
+                                     centerX + s0 * r1, centerY - c0 * r1 * yscale, u0, v1,
+                                     centerX + s1 * r1, centerY - c1 * r1 * yscale, u1, v1,
+                                     0, color0, color0, color1, color1);
+    }
+  }
+}
+
+static void drawBiosRod(int slot, uint32_t tilt, uint32_t orbit,
+                        uint32_t spin, int front) {
+  const uint32_t slotAngle = slot * (65536U / 12U) - 32768U;
+  const ConfigRodRotation rotation = {
+      configSin(slotAngle), configCos(slotAngle),
+      configSin(orbit), configCos(orbit),
+      configSin(tilt), configCos(tilt),
+      configSin(spin), configCos(spin)};
+  ConfigRodFace face[16];
+  float minX = 10000.0f, minY = 10000.0f;
+  float maxX = -10000.0f, maxY = -10000.0f;
+  const int centerX = gsGlobal->Width / 2;
+  const int centerY = gsGlobal->Height / 2;
+  for (int i = 0; i < 16; i++) {
+    ConfigRodFace *f = &face[i];
+    f->normalX = configRodNormals[i][0];
+    f->normalY = configRodNormals[i][1];
+    f->normalZ = configRodNormals[i][2];
+    configTransform(&f->normalX, &f->normalY, &f->normalZ,
+                    &rotation, 1);
+    for (int j = 0; j < 4; j++) {
+      ConfigRodVertex *v = &f->vertex[j];
+      float x = configRodVerts[i][j][0];
+      float y = configRodVerts[i][j][1];
+      float z = configRodVerts[i][j][2];
+      configTransform(&x, &y, &z, &rotation, 0);
+      if (z < 10.0f)
+        z = 10.0f;
+      v->cameraX = x;
+      v->cameraY = y;
+      v->z = z;
+      v->x = centerX + x * 512.0f / z;
+      v->y = centerY - y * 512.0f * gsGlobal->Height / (480.0f * z);
+      v->u = configRodUvs[i][j][0];
+      v->v = configRodUvs[i][j][1];
+      if (v->x < minX) minX = v->x;
+      if (v->x > maxX) maxX = v->x;
+      if (v->y < minY) minY = v->y;
+      if (v->y > maxY) maxY = v->y;
+    }
+    const float e2x = f->vertex[2].x - f->vertex[0].x;
+    const float e2y = f->vertex[2].y - f->vertex[0].y;
+    const float e1x = f->vertex[1].x - f->vertex[0].x;
+    const float e1y = f->vertex[1].y - f->vertex[0].y;
+    f->nearFace = e2x * e1y - e2y * e1x <= 0.0f;
+    const ConfigRodVertex *v = &f->vertex[0];
+    const float length = sqrtf(v->cameraX * v->cameraX +
+                               v->cameraY * v->cameraY + v->z * v->z);
+    const float dot = (v->cameraX * f->normalX +
+                       v->cameraY * f->normalY + v->z * f->normalZ) / length;
+    f->fresnel = 1.0f - fabsf(dot);
+    if (f->fresnel < 0.0f) f->fresnel = 0.0f;
+    if (f->fresnel > 1.0f) f->fresnel = 1.0f;
+  }
+  int left = (int)((minX + maxX) * 0.5f) - CONFIG_CAPTURE_SIZE / 2;
+  int top = (int)((minY + maxY) * 0.5f) - CONFIG_CAPTURE_SIZE / 2;
+  if (left < 0) left = 0;
+  if (top < 0) top = 0;
+  if (left > gsGlobal->Width - CONFIG_CAPTURE_SIZE)
+    left = gsGlobal->Width - CONFIG_CAPTURE_SIZE;
+  if (top > gsGlobal->Height - CONFIG_CAPTURE_SIZE)
+    top = gsGlobal->Height - CONFIG_CAPTURE_SIZE;
+  if (configCaptureReady)
+    copyCapturePixels(gsGlobal->ScreenBuffer[gsGlobal->ActiveBuffer],
+                      gsGlobal->Width, left, top,
+                      configCaptureTexture.Vram, CONFIG_CAPTURE_SIZE);
+  for (int layer = 0; layer < 2; layer++) {
+    for (int i = 0; i < 16; i++) {
+      ConfigRodFace *f = &face[i];
+      if (f->nearFace != layer)
+        continue;
+      const float fres = f->fresnel;
+      const int bright = (int)((front ? 200.0f : 160.0f) * 10.0f *
+                               fres * fres * fres * fres);
+      const int red = clampColor((front ? 0x76 : 0x2D) + bright);
+      const int green = clampColor((front ? 0x97 : 0x55) + bright);
+      const int blue = clampColor((front ? 0xB2 : 0x66) + bright);
+      gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+      if (configCaptureReady) {
+        float u[4], v[4];
+        for (int j = 0; j < 4; j++) {
+          const ConfigRodVertex *p = &f->vertex[j];
+          u[j] = openingCubeUv(p->x - left - f->normalX * 1000.0f / p->z,
+                                CONFIG_CAPTURE_SIZE);
+          v[j] = openingCubeUv(p->y - top + f->normalY * 500.0f / p->z,
+                                CONFIG_CAPTURE_SIZE);
+        }
+        gsKit_TexManager_bind(gsGlobal, &configCaptureTexture);
+        gsKit_prim_quad_texture(gsGlobal, &configCaptureTexture,
+                                f->vertex[0].x, f->vertex[0].y, u[0], v[0],
+                                f->vertex[1].x, f->vertex[1].y, u[1], v[1],
+                                f->vertex[2].x, f->vertex[2].y, u[2], v[2],
+                                f->vertex[3].x, f->vertex[3].y, u[3], v[3], 0,
+                                GS_SETREG_RGBA(red, green, blue,
+                                               layer ? 0x58 : 0x2A));
+      } else {
+        gsKit_prim_quad_gouraud(gsGlobal,
+                                f->vertex[0].x, f->vertex[0].y,
+                                f->vertex[1].x, f->vertex[1].y,
+                                f->vertex[2].x, f->vertex[2].y,
+                                f->vertex[3].x, f->vertex[3].y, 0,
+                                GS_SETREG_RGBA(red, green, blue, 0x28),
+                                GS_SETREG_RGBA(red, green, blue, 0x28),
+                                GS_SETREG_RGBA(red, green, blue, 0x28),
+                                GS_SETREG_RGBA(red, green, blue, 0x28));
+      }
+      if (!layer)
+        continue;
+      float ru[4], rv[4], bu[4], bv[4];
+      for (int j = 0; j < 4; j++) {
+        const ConfigRodVertex *p = &f->vertex[j];
+        const float length = sqrtf(p->cameraX * p->cameraX +
+                                   p->cameraY * p->cameraY + p->z * p->z);
+        const float dot = fabsf(2.0f *
+            (p->cameraX * f->normalX + p->cameraY * f->normalY +
+             p->z * f->normalZ) / length);
+        ru[j] = configWrapUv(((p->cameraX / length +
+                               f->normalX * dot) + 1.0f) * 32.0f);
+        rv[j] = configWrapUv(((p->cameraY / length +
+                               f->normalY * dot) + 1.0f) * 16.0f);
+        bu[j] = configWrapUv((p->u + slot * 0.1f + i * 0.1f) * 64.0f);
+        bv[j] = configWrapUv((p->v + slot * 0.1f + i * 0.1f) * 64.0f);
+      }
+      GSTEXTURE *const texture[4] = {&configRefTexture, &bumpTexture,
+                                     &configInverseTexture, &configFlowTexture};
+      for (int pass = 0; pass < 4; pass++) {
+        gsKit_TexManager_bind(gsGlobal, texture[pass]);
+        gsKit_set_primalpha(gsGlobal, pass == 1 ?
+                            GS_SETREG_ALPHA(2, 0, 0, 1, 0) :
+                            GS_SETREG_ALPHA(0, 2, 0, 1, 0), 0);
+        const float *u = pass == 1 || pass == 2 ? bu : ru;
+        const float *v = pass == 1 || pass == 2 ? bv : rv;
+        gsKit_prim_quad_texture(gsGlobal, texture[pass],
+                                f->vertex[0].x, f->vertex[0].y, u[0], v[0],
+                                f->vertex[1].x, f->vertex[1].y, u[1], v[1],
+                                f->vertex[2].x, f->vertex[2].y, u[2], v[2],
+                                f->vertex[3].x, f->vertex[3].y, u[3], v[3], 0,
+                                GS_SETREG_RGBA(pass == 1 || pass == 2 ? 0x28 : 0x6A,
+                                               pass == 1 || pass == 2 ? 0x28 : 0x9A,
+                                               pass == 1 || pass == 2 ? 0x28 : 0xC2,
+                                               pass == 1 || pass == 2 ? 0x10 : 0x1B));
+      }
+    }
+  }
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+}
+
+static void drawBiosSystemConfiguration(uint32_t frameNowMs) {
+  const int width = gsGlobal->Width;
+  const int height = gsGlobal->Height;
+  if (!configClockInitialized) {
+    const uint32_t stamp = getTimestamp();
+    const uint32_t hour = (stamp >> 12) & 31U;
+    const uint32_t minute = (stamp >> 6) & 63U;
+    const uint32_t second = stamp & 63U;
+    configClockStartMs = ((hour < 24 ? hour : 0) * 3600U +
+                          (minute < 60 ? minute : 0) * 60U +
+                          (second < 60 ? second : 0)) * 1000U;
+    configClockAnchorMs = frameNowMs;
+    configClockInitialized = 1;
+  }
+  const uint32_t elapsedMs = frameNowMs - configClockAnchorMs;
+  const uint32_t clockMs = configClockStartMs + elapsedMs;
+  const uint32_t hour = (clockMs / 3600000U) % 12U;
+  const uint32_t orbit = (uint32_t)(((uint64_t)(clockMs % 60000U) << 16) / 60000U);
+  const uint32_t tilt = hour * (65536U / 12U);
+  const uint32_t spin = orbit * 4U;
+  gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 0,
+                    GS_SETREG_RGBA(0, 0, 0, 0x80));
+  drawBiosTunnel(elapsedMs, width / 2, height / 2);
+  int order[12];
+  float depth[12];
+  for (int i = 0; i < 12; i++) {
+    order[i] = i;
+    depth[i] = configRodDepth(i, tilt, orbit, spin);
+  }
+  for (int i = 0; i < 11; i++) {
+    for (int j = i + 1; j < 12; j++) {
+      if (depth[order[i]] < depth[order[j]]) {
+        const int swap = order[i];
+        order[i] = order[j];
+        order[j] = swap;
+      }
+    }
+  }
+  for (int i = 0; i < 12; i++)
+    drawBiosRod(order[i], tilt, orbit, spin, order[i] == 0);
+  drawAmbientOrbsSystemConfig(width / 2, height / 2,
+                               width * 19 / 100, height * 24 / 100,
+                               frameNowMs, 2);
+}
+
 void drawSharedLibraryBackground(uint32_t frameNowMs) {
   if (libraryBackground == LIBRARY_BACKGROUND_RED_CLOUDS)
     drawRedClouds(frameNowMs);
   else if (libraryBackground == LIBRARY_BACKGROUND_MIDNIGHT_CUBES)
     drawMidnightCubes(frameNowMs);
+  else if (libraryBackground == LIBRARY_BACKGROUND_SYSTEM_CONFIG)
+    drawBiosSystemConfiguration(frameNowMs);
   else if (!drawAmbientOrbsBackground(frameNowMs))
     drawGlassBackground(frameNowMs);
 }
@@ -1132,6 +1610,20 @@ static void drawOrbsLogo(GSTEXTURE *texture, float x, float y,
   gsGlobal->Test->AFAIL = previousAlphaFail;
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+}
+
+static void scrollWheelGeometry(int position, int centerY, int listHeight,
+                                int logoCenterX, int entryOffset,
+                                float *x, float *y, float *width,
+                                float *height) {
+  const int distance = abs(position);
+  const float steps = distance / 1000.0f;
+  const float scale = 1.0f / (1.0f + 0.20f * steps * steps);
+  *width = 232.0f * scale;
+  *height = 76.0f * scale;
+  *x = logoCenterX + entryOffset + 12.0f * steps * steps;
+  *y = centerY + position * (listHeight * 0.29f) /
+                   (1000.0f + distance * 0.23f);
 }
 
 void drawOrbsView(TargetList *titles, int selectedTitleIdx,
@@ -1216,7 +1708,6 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
         selectedTitleIdx + i - ORBS_LOGO_CACHE_FOCUS);
     int duplicate = 0;
     float steps;
-    float scale;
     float rowX;
     float logoWidth;
     float logoHeight;
@@ -1238,12 +1729,9 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
     if (duplicate)
       continue;
     steps = distance / 1000.0f;
-    scale = 1.0f / (1.0f + 0.20f * steps * steps);
-    logoWidth = 232.0f * scale;
-    logoHeight = 76.0f * scale;
-    rowX = logoCenterX + logoEntryOffset + 12.0f * steps * steps;
-    rowY = centerY + position * ((listBottom - listTop) * 0.29f) /
-                         (1000.0f + distance * 0.23f);
+    scrollWheelGeometry(position, centerY, listBottom - listTop,
+                        logoCenterX, logoEntryOffset,
+                        &rowX, &rowY, &logoWidth, &logoHeight);
     brightness = 0x80 - (int)(17.0f * steps * steps);
     if (distance > 2000)
       brightness = brightness * (2300 - distance) / 300;

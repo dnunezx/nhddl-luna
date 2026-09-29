@@ -7,7 +7,7 @@
 
 int uiInit();
 int uiLoop(TargetList *titles);
-void uiLaunchTitle(Target *target, ArgumentList *arguments, GSTEXTURE *cover);
+void uiLaunchTitle(Target *target, ArgumentList *arguments);
 
 // Splash screen log level types
 typedef enum {

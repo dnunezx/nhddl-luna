@@ -1771,7 +1771,6 @@ static void uiVMCManagerLoop(void) {
     return;
   }
   int rootCount = 0, rootSelected = 0, activeRoot = -1;
-  int apaDriveFound = 0;
   int count = 0, selected = 0;
   char directory[PATH_MAX + 1] = "";
   char status[96] = "Choose the drive that holds your games.";
@@ -1780,7 +1779,9 @@ static void uiVMCManagerLoop(void) {
     if (device->mode == MODE_NONE || device->mountpoint == NULL)
       break;
     if (device->mode == MODE_HDL) {
-      apaDriveFound = 1;
+      if (device->metadev && device->metadev->mountpoint)
+        rootCount = addRoot(roots, rootCount, device->metadev->mountpoint,
+                            "APA HDD");
       continue;
     }
     if (device->mode == MODE_ATA || device->mode == MODE_USB ||
@@ -1788,12 +1789,10 @@ static void uiVMCManagerLoop(void) {
       rootCount = addRoot(roots, rootCount, device->mountpoint,
                           device->mode == MODE_ATA ? "ATA HDD" : "Local storage");
   }
-  if (apaDriveFound)
-    snprintf(status, sizeof(status), "APA VMC is not supported yet; use exFAT storage.");
   while (1) {
     if (activeRoot < 0)
       drawBrowserFrame("Virtual Memory Cards", "Choose a drive",
-                       rootCount || apaDriveFound ? status :
+                       rootCount ? status :
                                                     "No supported local drives found.",
                        PROMPT_TWO(ICON_CROSS, "Open", ICON_TRIANGLE, "Back"),
                        rootCount, rootSelected, browserFirstRow(rootSelected), 0,
@@ -1811,9 +1810,7 @@ static void uiVMCManagerLoop(void) {
       clearEntries(entries, count);
       count = 0;
       activeRoot = -1;
-      snprintf(status, sizeof(status), "%s", apaDriveFound ?
-               "APA VMC is not supported yet; use exFAT storage." :
-               "Choose the drive that holds your games.");
+      snprintf(status, sizeof(status), "Choose the drive that holds your games.");
     } else if (input & PAD_UP) {
       int total = activeRoot < 0 ? rootCount : count + 1;
       int *focus = activeRoot < 0 ? &rootSelected : &selected;
