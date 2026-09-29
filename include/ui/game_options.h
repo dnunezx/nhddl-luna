@@ -35,8 +35,14 @@ void lunaGameOptionsRead(LunaGameOptions *options, ArgumentList *arguments);
 // Returns 1 when an option changed, 0 otherwise. Launch arguments use a separate page.
 int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
                           LunaGameRow row, int direction);
+// Cycles Inherit, the opposite of the Global default, and an explicit match.
+int lunaGameOptionsCyclePS2Logo(LunaGameOptions *options,
+                                ArgumentList *arguments,
+                                int globalEnabled, int direction);
 int lunaGameOptionsSetVMC(LunaGameOptions *options, ArgumentList *arguments,
                           int slot, const char *path);
 const char *lunaGameOptionsValue(const LunaGameOptions *options, LunaGameRow row);
+// Applies the library default without replacing a title-specific logo choice.
+int lunaApplyGlobalPS2Logo(ArgumentList *arguments, int enabled);
 
 #endif

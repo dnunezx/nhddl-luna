@@ -20,8 +20,10 @@ typedef enum {
 } LibraryBackground;
 
 void resetGlassVisuals(uint32_t startMs);
+void initOpeningCubeCapture(void);
 void initGlassStarAtlas(void);
 int setLibraryBackground(LibraryBackground background);
+LibraryBackground getLibraryBackground(void);
 void setGlassColorPreset(GlassColorPreset preset);
 GlassColorPreset getGlassColorPreset(void);
 uint64_t glassPresetColor(int red, int green, int blue, int alpha);
@@ -33,6 +35,7 @@ uint64_t glassMissingCoverDiamondColor(int alpha);
 int orbsVisualCacheIndex(int flowOffset);
 void drawOrbsView(TargetList *titles, int selectedTitleIdx,
                   int flowOffset, int visualFocus, int fastScroll,
-                  int entryProgress, uint32_t now);
+                  int entryProgress, uint32_t now,
+                  const char *nextViewLabel);
 
 #endif

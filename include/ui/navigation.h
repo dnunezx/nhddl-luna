@@ -41,7 +41,8 @@ typedef struct {
   uint32_t nextStepMs;
 } LunaCollectionScan;
 
-int lunaCollectionScanUpdate(LunaCollectionScan *scan, int direction, uint32_t now);
+int lunaCollectionScanUpdate(LunaCollectionScan *scan, int direction, uint32_t now,
+                             uint32_t stepMs);
 
 typedef struct {
   int heldDirection;
@@ -63,9 +64,12 @@ typedef enum {
   UI_VIEW_GRID = 2,
   UI_VIEW_ORBIT = 3,
   UI_VIEW_ORBS = 4,
+  UI_VIEW_SAVE_ICONS = 5,
 } UILibraryView;
 
-#define UI_VIEW_ALL_MASK ((1U << (UI_VIEW_ORBS + 1)) - 1U)
+#define UI_VIEW_ALL_MASK ((1U << (UI_VIEW_SAVE_ICONS + 1)) - 1U)
+
+extern const UILibraryView lunaViewCycleOrder[UI_VIEW_SAVE_ICONS + 1];
 
 int lunaNavWrap(int total, int index);
 int lunaNavRepeatStep(LunaNavRepeatState *state, int direction, uint32_t now,
@@ -89,5 +93,6 @@ int lunaNavMarkedStep(const uint8_t *marked, int total, int index, int direction
 int lunaNavMarkedPage(const uint8_t *marked, int total, int index, int pageSize,
                       int direction);
 UILibraryView lunaNavNextView(UILibraryView view, uint32_t enabledViews);
+const char *lunaNavViewLabel(UILibraryView view);
 
 #endif

@@ -31,7 +31,7 @@ static const char uiFontTempPath[] = "/uiFont.txt.tmp";
 static const char ambientSoundPath[] = "/ambientSound.txt";
 static const char ambientSoundTempPath[] = "/ambientSound.txt.tmp";
 static const char *const viewNames[] = {
-    "classic", "collection", "grid", "orbit", "orbs"};
+    "classic", "collection", "grid", "orbit", "orbs", "save-icons"};
 static const char *const glassColorNames[GLASS_COLOR_COUNT] = {
     "original", "white-gray", "black"};
 static const char *const uiFontNames[UI_FONT_COUNT] = {
@@ -59,7 +59,7 @@ static int readViewFile(const char *path, UILibraryView *view) {
   if (name[nameLength] == '\0')
     return -EINVAL;
   name[nameLength] = '\0';
-  for (int i = UI_VIEW_CLASSIC; i <= UI_VIEW_ORBS; i++) {
+  for (int i = UI_VIEW_CLASSIC; i <= UI_VIEW_SAVE_ICONS; i++) {
     if (!strcmp(name, viewNames[i])) {
       *view = (UILibraryView)i;
       return 0;
@@ -99,7 +99,7 @@ int saveLastLibraryView(Target *target, UILibraryView view) {
   FILE *file;
 
   if (device == NULL || device->mountpoint == NULL ||
-      view < UI_VIEW_CLASSIC || view > UI_VIEW_ORBS)
+      view < UI_VIEW_CLASSIC || view > UI_VIEW_SAVE_ICONS)
     return -EINVAL;
   if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
       buildConfigFilePath(path, sizeof(path), device->mountpoint, lastViewPath) ||
@@ -118,9 +118,8 @@ int saveLastLibraryView(Target *target, UILibraryView view) {
     remove(tempPath);
     return -EIO;
   }
-  remove(path);
-  if (rename(tempPath, path)) {
-    DPRINTF("ERROR: Failed to commit last view: %d\n", errno);
+  if (commitConfigFile(tempPath, path)) {
+    DPRINTF("ERROR: Failed to commit last view\n");
     return -EIO;
   }
   DPRINTF("Saved library view %s to %s\n", viewNames[view], path);
@@ -184,9 +183,8 @@ int saveClassicArtOverlap(Target *target, int overlap) {
     remove(tempPath);
     return -EIO;
   }
-  remove(path);
-  if (rename(tempPath, path)) {
-    DPRINTF("ERROR: Failed to commit Classic layout: %d\n", errno);
+  if (commitConfigFile(tempPath, path)) {
+    DPRINTF("ERROR: Failed to commit Classic layout\n");
     return -EIO;
   }
   DPRINTF("Saved Classic artwork layout %s to %s\n",
@@ -257,8 +255,7 @@ int saveLibraryBackground(Target *target, LibraryBackground background) {
     remove(tempPath);
     return -EIO;
   }
-  remove(path);
-  if (rename(tempPath, path))
+  if (commitConfigFile(tempPath, path))
     return -EIO;
   return 0;
 }
@@ -316,8 +313,7 @@ int saveAmbientOrbsTheme(Target *target, AmbientOrbsTheme theme) {
     remove(tempPath);
     return -EIO;
   }
-  remove(path);
-  if (rename(tempPath, path))
+  if (commitConfigFile(tempPath, path))
     return -EIO;
   return 0;
 }
@@ -374,8 +370,7 @@ int saveAmbientOrbsAppearance(Target *target, AmbientOrbsAppearance appearance) 
     remove(tempPath);
     return -EIO;
   }
-  remove(path);
-  if (rename(tempPath, path))
+  if (commitConfigFile(tempPath, path))
     return -EIO;
   return 0;
 }
@@ -438,8 +433,7 @@ int saveAmbientOrbsColor(Target *target, AmbientOrbsColorPart part,
     remove(tempPath);
     return -EIO;
   }
-  remove(path);
-  if (rename(tempPath, path))
+  if (commitConfigFile(tempPath, path))
     return -EIO;
   return 0;
 }
@@ -496,8 +490,7 @@ int saveEnabledLibraryViews(Target *target, uint32_t enabledViews) {
     remove(tempPath);
     return -EIO;
   }
-  remove(path);
-  if (rename(tempPath, path))
+  if (commitConfigFile(tempPath, path))
     return -EIO;
   return 0;
 }
@@ -554,8 +547,7 @@ int saveGlassColorPreset(Target *target, GlassColorPreset preset) {
     remove(tempPath);
     return -EIO;
   }
-  remove(path);
-  if (rename(tempPath, path))
+  if (commitConfigFile(tempPath, path))
     return -EIO;
   return 0;
 }
@@ -580,8 +572,10 @@ UIFont loadUIFont(Target *target) {
       continue;
     value[strcspn(value, "\r\n")] = '\0';
     for (int selection = 0; selection < UI_FONT_COUNT; selection++)
-      if (!strcmp(value, uiFontNames[selection]))
+      if (!strcmp(value, uiFontNames[selection])) {
+        DPRINTF("Loaded UI font %s from %s\n", value, path);
         return (UIFont)selection;
+      }
   }
   return UI_FONT_DEJAVU;
 }
@@ -612,9 +606,9 @@ int saveUIFont(Target *target, UIFont selection) {
     remove(tempPath);
     return -EIO;
   }
-  remove(path);
-  if (rename(tempPath, path))
+  if (commitConfigFile(tempPath, path))
     return -EIO;
+  DPRINTF("Saved UI font %s to %s\n", uiFontNames[selection], path);
   return 0;
 }
 
@@ -670,8 +664,7 @@ int saveAmbientSoundEnabled(Target *target, int enabled) {
     remove(tempPath);
     return -EIO;
   }
-  remove(path);
-  if (rename(tempPath, path))
+  if (commitConfigFile(tempPath, path))
     return -EIO;
   return 0;
 }

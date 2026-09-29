@@ -218,9 +218,9 @@ void setClassicArtOverlap(int overlap) {
 }
 
 
-static void drawTitleListFooter(void) {
+static void drawTitleListFooter(const char *nextViewLabel) {
   const ButtonPrompt prompts[] = {
-      {ICON_CIRCLE, "Collection"}, {ICON_SQUARE, "Favorite"},
+      {ICON_CIRCLE, nextViewLabel}, {ICON_SQUARE, "Favorite"},
       {ICON_CROSS, "Launch"}, {ICON_START, "Exit"},
       {ICON_TRIANGLE, "Options"}};
   drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
@@ -327,7 +327,8 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
                    GSTEXTURE *selectedTitleCover, GSTEXTURE *previousCover,
                    GSTEXTURE *selectedTitleDisc, const uint8_t *favoriteFlags,
                    int favoritesOnly, int coverPending, int coverTransitionProgress,
-                   int entryProgress, uint32_t frameNowMs) {
+                   int entryProgress, uint32_t frameNowMs,
+                   const char *nextViewLabel) {
 
   classicDiscLastFrameMs = frameNowMs;
 
@@ -367,7 +368,7 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
   snprintf(lineBuffer, 255, "%d/%d", curPage + 1, pageCount);
   drawTextWindow(baseX, headerHeight - getFontLineHeight(), gsGlobal->Width - baseX, 0, 3, HeaderTextColor, ALIGN_RIGHT, lineBuffer);
 
-  drawTitleListFooter();
+  drawTitleListFooter(nextViewLabel);
 
   // Draw title list
   Target *curTitle = titles->first;

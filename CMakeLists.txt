@@ -54,7 +54,7 @@ set(SOURCES
 )
 
 # Bundle menu artwork so it is available on both HostFS and real hardware.
-foreach(CARD_ICON virtual_memory_card ps1_memory_card_1 ps1_memory_card_2 memory_card_menu)
+foreach(CARD_ICON virtual_memory_card ps1_memory_card_1 ps1_memory_card_2 memory_card_menu file_explorer)
   add_custom_command(
       OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${CARD_ICON}_png.c"
       COMMAND ${PS2SDK}/bin/bin2c

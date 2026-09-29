@@ -39,6 +39,8 @@ static GridThumbnailCacheEntry gridThumbnailCache[GRID_THUMBNAIL_CACHE_COUNT];
 static uint32_t gridThumbnailCacheClock;
 GSTEXTURE *gridSelectedTextures[GRID_SELECTED_BUFFERS];
 uint8_t gridSelectedLoaded[GRID_SELECTED_BUFFERS];
+GSTEXTURE *saveIconSpinTexture;
+uint8_t saveIconSpinLoaded;
 GSTEXTURE *orbsLogoTextures[ORBS_LOGO_CACHE_COUNT];
 uint8_t orbsLogoLoaded[ORBS_LOGO_CACHE_COUNT];
 GSTEXTURE *orbsBackgroundTexture;
@@ -48,6 +50,15 @@ static int orbsBackgroundTarget = -1;
 
 static const char artPath[] = "/ART";
 static const char psbbnArtPath[] = "/ART/PSBBN";
+static int gridSaveIconArtwork;
+
+void setGridSaveIconArtwork(int enabled) {
+  gridSaveIconArtwork = enabled != 0;
+}
+
+int getGridSaveIconArtwork(void) {
+  return gridSaveIconArtwork;
+}
 static const char orbsArtPath[] = "/ART/ORBS";
 static char artPathBuffer[255];
 
@@ -89,6 +100,12 @@ int artCacheInit(void) {
     }
     gridSelectedTextures[buffer]->Delayed = 1;
   }
+  saveIconSpinTexture = calloc(sizeof(GSTEXTURE), 1);
+  if (saveIconSpinTexture == NULL) {
+    artCacheShutdown();
+    return -1;
+  }
+  saveIconSpinTexture->Delayed = 1;
   orbsBackgroundTexture = calloc(sizeof(GSTEXTURE), 1);
   if (orbsBackgroundTexture == NULL) {
     artCacheShutdown();
@@ -451,7 +468,10 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
     device = device->metadev;
 
   releaseGridTexture(texture);
-  snprintf(artPathBuffer, 255, "%s%s/%s.png", device->mountpoint, psbbnArtPath, titleID);
+  if (gridSaveIconArtwork)
+    snprintf(artPathBuffer, 255, "%s/ART/SAVEICON/%s/preview.png", device->mountpoint, titleID);
+  else
+    snprintf(artPathBuffer, 255, "%s%s/%s.png", device->mountpoint, psbbnArtPath, titleID);
   if (thumbnail) {
     int cached = findGridThumbnail(artPathBuffer);
     if (cached >= 0) {
@@ -557,6 +577,26 @@ void releaseGridCovers(void) {
     releaseGridTexture(gridSelectedTextures[buffer]);
     gridSelectedLoaded[buffer] = 0;
   }
+  releaseSaveIconDetails();
+}
+
+void releaseSaveIconDetails(void) {
+  if (saveIconSpinTexture != NULL)
+    releaseGridTexture(saveIconSpinTexture);
+  saveIconSpinLoaded = 0;
+}
+
+int refreshSaveIconSpin(Target *target, int frame) {
+  struct DeviceMapEntry *device = target->device->metadev ? target->device->metadev : target->device;
+  if (frame < 0 || frame >= 12)
+    return -1;
+  releaseGridTexture(saveIconSpinTexture);
+  snprintf(artPathBuffer, sizeof(artPathBuffer), "%s/ART/SAVEICON/%s/spin/%02d.png",
+           device->mountpoint, target->id, frame);
+  saveIconSpinLoaded = loadPNGTextureRGBA(gsGlobal, saveIconSpinTexture, artPathBuffer) == 0;
+  if (saveIconSpinLoaded)
+    saveIconSpinTexture->Filter = GS_FILTER_LINEAR;
+  return saveIconSpinLoaded ? 0 : -1;
 }
 
 static void resetGridPageBuffer(int buffer) {
@@ -729,6 +769,13 @@ void updatePSBBNCoverResidency(int flowOffset) {
 }
 
 void artCacheShutdown(void) {
+  if (saveIconSpinTexture != NULL) {
+    free(saveIconSpinTexture->Mem);
+    free(saveIconSpinTexture->Clut);
+    free(saveIconSpinTexture);
+    saveIconSpinTexture = NULL;
+  }
+  saveIconSpinLoaded = 0;
   if (orbsBackgroundTexture != NULL) {
     free(orbsBackgroundTexture->Mem);
     free(orbsBackgroundTexture->Clut);

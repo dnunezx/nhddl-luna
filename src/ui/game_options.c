@@ -137,15 +137,43 @@ int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
     return 1;
   }
 
-  if (row == LUNA_GAME_PS2_LOGO || row == LUNA_GAME_DEBUG_COLORS) {
-    int *state = row == LUNA_GAME_PS2_LOGO ? &options->ps2Logo : &options->debugColors;
-    int enabled = !*state;
-    if (!setArgument(arguments, row == LUNA_GAME_PS2_LOGO ? "logo" : "dbc", "", enabled))
+  if (row == LUNA_GAME_DEBUG_COLORS) {
+    int enabled = !options->debugColors;
+    if (!setArgument(arguments, "dbc", "", enabled))
       return 0;
-    *state = enabled;
+    options->debugColors = enabled;
     return 1;
   }
   return 0;
+}
+
+int lunaGameOptionsCyclePS2Logo(LunaGameOptions *options,
+                                ArgumentList *arguments,
+                                int globalEnabled, int direction) {
+  globalEnabled = !!globalEnabled;
+  Argument *logo = getArgument(arguments, "logo");
+  int current = logo == NULL || logo->isGlobal ? 0 :
+      ((!logo->isDisabled) != globalEnabled ? 1 : 2);
+  int next = (current + (direction < 0 ? 2 : 1)) % 3;
+  if (next == 0) {
+    if (logo != NULL)
+      logo->isGlobal = 1;
+    if (!lunaApplyGlobalPS2Logo(arguments, globalEnabled))
+      return 0;
+    options->ps2Logo = globalEnabled;
+    return 1;
+  }
+  int enabled = next == 1 ? !globalEnabled : globalEnabled;
+  if (logo == NULL) {
+    logo = insertArgument(arguments, "logo", "");
+    if (logo == NULL)
+      return 0;
+  }
+  if (!setArgument(arguments, "logo", "", enabled))
+    return 0;
+  logo->isGlobal = 0;
+  options->ps2Logo = enabled;
+  return 1;
 }
 
 const char *lunaGameOptionsValue(const LunaGameOptions *options, LunaGameRow row) {
@@ -162,4 +190,20 @@ const char *lunaGameOptionsValue(const LunaGameOptions *options, LunaGameRow row
   if (row == LUNA_GAME_DEBUG_COLORS)
     return options->debugColors ? "On" : "Off";
   return ">";
+}
+
+int lunaApplyGlobalPS2Logo(ArgumentList *arguments, int enabled) {
+  Argument *logo = getArgument(arguments, "logo");
+  if (logo != NULL && !logo->isGlobal)
+    return 1;
+  if (logo == NULL) {
+    if (!enabled)
+      return 1;
+    logo = insertArgument(arguments, "logo", "");
+    if (logo == NULL)
+      return 0;
+  }
+  logo->isGlobal = 1;
+  logo->isDisabled = !enabled;
+  return 1;
 }

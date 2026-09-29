@@ -32,6 +32,7 @@
 #define PSBBN_TIMER_TICKS_PER_MS 576ULL
 #define GRID_LEFT_SHOULDERS (PAD_L1 | PAD_L2)
 #define GRID_RIGHT_SHOULDERS (PAD_R1 | PAD_R2)
+#define IS_GRID_VIEW(v) ((v) == UI_VIEW_GRID || (v) == UI_VIEW_SAVE_ICONS)
 #define SPLASH_MIN_VISIBLE_MS 3400
 #define LIBRARY_RETURN_FADE_MS 180
 #define LIBRARY_VIEW_ENTRY_MS 320
@@ -150,6 +151,7 @@ int uiInit() {
   gsKit_vram_clear(gsGlobal);
   gsKit_init_screen(gsGlobal);
   gsKit_display_buffer(gsGlobal); // Switch display buffer to avoid garbage appearing on screen
+  initOpeningCubeCapture();
   gsKit_TexManager_init(gsGlobal);
   initGlassStarAtlas();
   // Set alpha and mode, clear active buffer
@@ -237,6 +239,10 @@ int uiLoop(TargetList *titles) {
   int gridPendingSelectedCoverIdx = -1;
   int gridPageDirection = 0;
   int gridPrefetchDirection = 1;
+  int saveIconDetailIdx = -1;
+  int saveIconSpinFrame = 0;
+  int saveIconSpinUnavailable = 0;
+  uint32_t saveIconNextSpinMs = 0;
   int gridCascadeActive = 0;
   int gridCascadeDirection = 0;
   uint32_t gridCascadeStart = 0;
@@ -359,6 +365,9 @@ int uiLoop(TargetList *titles) {
   while (1) {
     gsKit_clear(gsGlobal, BGColor);
     gsKit_TexManager_nextFrame(gsGlobal);
+    const UILibraryView nextView = lunaNavNextView(view, enabledViews);
+    const char *nextViewLabel = nextView == view ? "Only view" :
+                                lunaNavViewLabel(nextView);
 
     // A random destination may be far from the current title. Move toward it
     // one adjacent cache position at a time so refreshPSBBNCovers() recycles
@@ -419,7 +428,8 @@ int uiLoop(TargetList *titles) {
         }
         drawPSBBNCollection(flowTitles, 0, psbbnCoverTextures, 0, -1,
                             collectionFavoritesOnly,
-                            libraryViewEntryProgress(entryView, view, entryStartMs, now), now);
+                            libraryViewEntryProgress(entryView, view, entryStartMs, now),
+                            now, nextViewLabel);
         goto library_view_drawn;
       }
 
@@ -488,10 +498,12 @@ int uiLoop(TargetList *titles) {
                                       : visualRank;
         drawPSBBNCollection(flowTitles, flowSelectedTitleIdx, psbbnCoverTextures,
                             flowOffset, psbbnOutgoingTitleIdx, collectionFavoritesOnly,
-                            libraryViewEntryProgress(entryView, view, entryStartMs, now), now);
+                            libraryViewEntryProgress(entryView, view, entryStartMs, now),
+                            now, nextViewLabel);
       } else if (view == UI_VIEW_ORBIT)
         drawOrbit(titles, selectedTitleIdx, psbbnCoverTextures, flowOffset,
-                  orbitRandomActive, libraryViewEntryProgress(entryView, view, entryStartMs, now), now);
+                  orbitRandomActive, libraryViewEntryProgress(entryView, view, entryStartMs, now),
+                  now, nextViewLabel);
       else {
         int visualFocus = orbsVisualCacheIndex(flowOffset);
         orbsVisualTitleIdx = lunaNavWrap(titles->total,
@@ -504,9 +516,11 @@ int uiLoop(TargetList *titles) {
           entryPending = 0;
         }
         drawOrbsView(titles, selectedTitleIdx, flowOffset, visualFocus,
-                     scrollFast.active, libraryViewEntryProgress(entryView, view, entryStartMs, now), now);
+                     scrollFast.active, libraryViewEntryProgress(entryView, view, entryStartMs, now),
+                     now, nextViewLabel);
       }
-    } else if (view == UI_VIEW_GRID) {
+    } else if (IS_GRID_VIEW(view)) {
+      setGridSaveIconArtwork(view == UI_VIEW_SAVE_ICONS);
       int didLoadArtwork = 0;
       int gridCascadeProgress = 0;
       int pendingPageBuffer = -1;
@@ -659,6 +673,29 @@ int uiLoop(TargetList *titles) {
         didLoadArtwork = 1;
       }
 
+      if (view == UI_VIEW_SAVE_ICONS) {
+        if (saveIconDetailIdx != selectedTitleIdx) {
+          releaseSaveIconDetails();
+          saveIconDetailIdx = selectedTitleIdx;
+          saveIconSpinFrame = 0;
+          saveIconSpinUnavailable = 0;
+          saveIconNextSpinMs = 0;
+        }
+      }
+      if (view == UI_VIEW_SAVE_ICONS && !gridFastTrackActive && !gridCascadeActive &&
+          gridPendingSelectedIdx < 0) {
+        Target *detailTarget = getTargetByIdx(titles, selectedTitleIdx);
+        if (!didLoadArtwork && !saveIconSpinUnavailable &&
+            uiNowMs() >= saveIconNextSpinMs) {
+          if (refreshSaveIconSpin(detailTarget, saveIconSpinFrame) == 0)
+            saveIconSpinFrame = (saveIconSpinFrame + 1) % 12;
+          else
+            saveIconSpinUnavailable = 1;
+          saveIconNextSpinMs = uiNowMs() + 180;
+          didLoadArtwork = 1;
+        }
+      }
+
         if (!didLoadArtwork && !selectorMoving && !gridCascadeActive && gridPendingSelectedIdx < 0 &&
             gridPageComplete[gridActivePageBuffer] && gridSelectedActiveIdx == gridSelectedRequestedIdx) {
           for (int prefetchPass = 0; prefetchPass < 2; prefetchPass++) {
@@ -712,17 +749,20 @@ int uiLoop(TargetList *titles) {
           destinationBuffer = -1;
         drawPSBBNGrid(titles, gridFastTrackSelectedIdx, gridFastTrackPreviousPageBase, previousBuffer,
                       gridFastTrackPageBase, destinationBuffer, -1,
-                      gridFastTrackDirection, fastTrackProgress, gridEntryProgress, now);
+                      gridFastTrackDirection, fastTrackProgress, gridEntryProgress, now,
+                      nextViewLabel);
       } else if (gridFastTrackSettling && !gridCascadeActive) {
         int destinationBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridFastTrackPageBase);
         if (destinationBuffer < 0)
           destinationBuffer = -1;
         drawPSBBNGrid(titles, gridFastTrackSelectedIdx, gridFastTrackPageBase, destinationBuffer,
-                      -1, -1, -1, gridFastTrackDirection, 0, gridEntryProgress, now);
+                      -1, -1, -1, gridFastTrackDirection, 0, gridEntryProgress, now,
+                      nextViewLabel);
       } else {
         drawPSBBNGrid(titles, selectedTitleIdx, gridActivePageBase, gridActivePageBuffer,
                       gridIncomingPageBase, gridIncomingPageBuffer, gridSelectedActiveBuffer,
-                      gridCascadeDirection, gridCascadeProgress, gridEntryProgress, now);
+                      gridCascadeDirection, gridCascadeProgress, gridEntryProgress, now,
+                      nextViewLabel);
       }
     } else {
       int favoritesEmpty = favoritesOnly && lunaNavMarkedCount(favoriteFlags, titles->total) == 0;
@@ -741,7 +781,7 @@ int uiLoop(TargetList *titles) {
                     favoriteFlags, favoritesOnly, coverPending && !favoritesEmpty,
                     coverFadeProgress,
                     libraryViewEntryProgress(entryView, view, entryStartMs, frameNowMs),
-                    frameNowMs);
+                    frameNowMs, nextViewLabel);
     }
 
   library_view_drawn:
@@ -793,7 +833,7 @@ int uiLoop(TargetList *titles) {
       scrollFastStep = lunaScrollFastUpdate(&scrollFast, direction, uiNowMs());
     }
 
-    if (view == UI_VIEW_GRID) {
+    if (IS_GRID_VIEW(view)) {
       uint32_t now = uiNowMs();
       int leftHeld = (input & GRID_LEFT_SHOULDERS) != 0;
       int rightHeld = (input & GRID_RIGHT_SHOULDERS) != 0;
@@ -917,21 +957,25 @@ int uiLoop(TargetList *titles) {
       frameCount = (frameCount + 1) % 10;
     }
 
-    if (view == UI_VIEW_PSBBN) {
+    if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT) {
       const int rawInput = input;
       const int actionButtons = PAD_CROSS | PAD_TRIANGLE | PAD_CIRCLE | PAD_SELECT | PAD_START;
+      const int shoulderButtons = PAD_L1 | PAD_L2 | PAD_R1 | PAD_R2;
       int scanDirection = 0;
+      if (view == UI_VIEW_ORBIT && (rawInput & shoulderButtons))
+        orbitRandomActive = 0;
       if (!(rawInput & actionButtons)) {
-        int left = (rawInput & PAD_L2) != 0;
-        int right = (rawInput & PAD_R2) != 0;
+        int left = (rawInput & (PAD_L1 | PAD_L2)) != 0;
+        int right = (rawInput & (PAD_R1 | PAD_R2)) != 0;
         scanDirection = right == left ? 0 : (right ? 1 : -1);
       }
-      int scanStep = lunaCollectionScanUpdate(&collectionScan, scanDirection, uiNowMs());
-      input = rawInput & ~(PAD_L2 | PAD_R2);
+      int scanStep = lunaCollectionScanUpdate(&collectionScan, scanDirection, uiNowMs(),
+                                             view == UI_VIEW_ORBIT ? ORBIT_RANDOM_STEP_MS : COLLECTION_SCAN_STEP_MS);
+      input = rawInput & ~shoulderButtons;
       if (scanDirection)
-        input &= ~(PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN | PAD_L1 | PAD_R1);
+        input &= ~(PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN);
       if (scanStep) {
-        if (collectionFavoritesOnly) {
+        if (view == UI_VIEW_PSBBN && collectionFavoritesOnly) {
           int next = lunaNavMarkedStep(favoriteFlags, titles->total, selectedTitleIdx, scanStep);
           if (next >= 0)
             selectedTitleIdx = next;
@@ -979,14 +1023,14 @@ int uiLoop(TargetList *titles) {
     }
 
     // Grid shoulders are handled by the tap/hold state machine above.
-    if (view == UI_VIEW_GRID && (input & (GRID_LEFT_SHOULDERS | GRID_RIGHT_SHOULDERS)))
+    if (IS_GRID_VIEW(view) && (input & (GRID_LEFT_SHOULDERS | GRID_RIGHT_SHOULDERS)))
       continue;
 
     // Page preparation is background work. Only the visible cascade gates
     // interaction so page loading never feels like a frozen UI.
-    if (view == UI_VIEW_GRID && gridCascadeActive)
+    if (IS_GRID_VIEW(view) && gridCascadeActive)
       continue;
-    if (view == UI_VIEW_GRID && gridFastTrackActive)
+    if (IS_GRID_VIEW(view) && gridFastTrackActive)
       continue;
 
     // Actions use the logo at the fixed Orbs marker even when the next
@@ -1051,7 +1095,7 @@ int uiLoop(TargetList *titles) {
       GSTEXTURE *handoffCover = NULL;
       if (view == UI_VIEW_CLASSIC && !isCoverUninitialized) {
         handoffCover = coverTexture;
-      } else if (view == UI_VIEW_GRID && gridSelectedActiveBuffer >= 0 &&
+      } else if (IS_GRID_VIEW(view) && gridSelectedActiveBuffer >= 0 &&
                  gridSelectedLoaded[gridSelectedActiveBuffer]) {
         handoffCover = gridSelectedTextures[gridSelectedActiveBuffer];
       } else if ((view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT) &&
@@ -1088,7 +1132,7 @@ int uiLoop(TargetList *titles) {
         releasePSBBNCovers();
       } else if (previousView == UI_VIEW_ORBS) {
         releaseOrbsArt();
-      } else if (previousView == UI_VIEW_GRID) {
+      } else if (IS_GRID_VIEW(previousView)) {
         releaseGridCovers();
       }
 
@@ -1116,6 +1160,10 @@ int uiLoop(TargetList *titles) {
       gridPendingSelectedCoverIdx = -1;
       gridPageDirection = 0;
       gridPrefetchDirection = 1;
+      saveIconDetailIdx = -1;
+      saveIconSpinFrame = 0;
+      saveIconSpinUnavailable = 0;
+      saveIconNextSpinMs = 0;
       gridCascadeActive = 0;
       gridCascadeDirection = 0;
       gridCascadeStart = 0;
@@ -1185,7 +1233,7 @@ int uiLoop(TargetList *titles) {
         orbitRandomNextStep = uiNowMs();
       }
       orbitRandomButtonHeld = 1;
-    } else if (view == UI_VIEW_GRID && (input & (PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN))) {
+    } else if (IS_GRID_VIEW(view) && (input & (PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN))) {
       int navigationIdx = (gridPendingSelectedIdx >= 0) ? gridPendingSelectedIdx : selectedTitleIdx;
       int candidate = navigationIdx;
       int direction;
@@ -1237,7 +1285,7 @@ int uiLoop(TargetList *titles) {
       }
     } else if (input & GRID_RIGHT_SHOULDERS) {
       // Switch to the next page.
-      if (view == UI_VIEW_GRID) {
+      if (IS_GRID_VIEW(view)) {
         int navigationIdx = (gridPendingSelectedIdx >= 0) ? gridPendingSelectedIdx : selectedTitleIdx;
         int candidate = lunaNavGridPage(titles->total, navigationIdx, 1);
         if ((candidate / GRID_PAGE_SIZE) * GRID_PAGE_SIZE == gridActivePageBase) {
@@ -1266,7 +1314,7 @@ int uiLoop(TargetList *titles) {
       }
     } else if (input & GRID_LEFT_SHOULDERS) {
       // Switch to the previous page.
-      if (view == UI_VIEW_GRID) {
+      if (IS_GRID_VIEW(view)) {
         int navigationIdx = (gridPendingSelectedIdx >= 0) ? gridPendingSelectedIdx : selectedTitleIdx;
         int candidate = lunaNavGridPage(titles->total, navigationIdx, -1);
         if ((candidate / GRID_PAGE_SIZE) * GRID_PAGE_SIZE == gridActivePageBase) {

@@ -3,6 +3,7 @@
 #include "common.h"
 #include "devices/devices.h"
 #include "dprintf.h"
+#include "ui/game_options.h"
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -24,6 +25,8 @@ const char LEGACY_BASE_CONFIG_PATH[] = "/nhddl";
 const char globalOptionsPath[] = "/global.yaml";
 const char lastTitlePath[] = "/lastTitle.bin";
 static const char lastTitleTempPath[] = "/lastTitle.bin.tmp";
+static const char ps2LogoPath[] = "/ps2Logo.txt";
+static const char ps2LogoTempPath[] = "/ps2Logo.txt.tmp";
 
 static int buildConfigFilePathAtBase(char *targetPath, size_t targetSize,
                                      const char *targetMountpoint, const char *basePath,
@@ -72,6 +75,51 @@ static int writeAll(int fd, const void *buffer, size_t length) {
       return -EIO;
     offset += (size_t)result;
   }
+  return 0;
+}
+
+int commitConfigFile(const char *tempPath, const char *path) {
+  // Some storage drivers cannot replace an existing file with rename.
+  remove(path);
+  if (!rename(tempPath, path))
+    return 0;
+  int renameError = errno;
+  // A failed rename may still leave the complete temporary file available.
+  int source = open(tempPath, O_RDONLY);
+  if (source < 0) {
+    DPRINTF("ERROR: Config rename failed (%d), and temp file is missing: %s\n",
+            renameError, tempPath);
+    return -EIO;
+  }
+  int destination = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+  if (destination < 0) {
+    close(source);
+    DPRINTF("ERROR: Config rename failed (%d), and copy could not open: %s\n",
+            renameError, path);
+    return -EIO;
+  }
+  char buffer[256];
+  int result = 0;
+  int count;
+  while ((count = read(source, buffer, sizeof(buffer))) > 0) {
+    if (writeAll(destination, buffer, (size_t)count)) {
+      result = -EIO;
+      break;
+    }
+  }
+  if (count < 0)
+    result = -EIO;
+  if (close(destination) < 0)
+    result = -EIO;
+  close(source);
+  if (result) {
+    DPRINTF("ERROR: Config rename failed (%d), and copy failed: %s\n",
+            renameError, path);
+    return result;
+  }
+  remove(tempPath);
+  DPRINTF("Recovered config save after rename failure (%d): %s\n",
+          renameError, path);
   return 0;
 }
 
@@ -230,6 +278,65 @@ int getGlobalLaunchArguments(ArgumentList *result, struct DeviceMapEntry *device
   return ret;
 }
 
+int loadPS2LogoEnabled(Target *target) {
+  if (target == NULL || target->device == NULL)
+    return 1;
+  struct DeviceMapEntry *device = target->device->metadev ?
+                                  target->device->metadev : target->device;
+  if (device->mountpoint == NULL)
+    return 1;
+  const char *const paths[] = {ps2LogoTempPath, ps2LogoPath};
+  char path[PATH_MAX];
+  char value[16];
+  for (int i = 0; i < 2; i++) {
+    if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
+      continue;
+    FILE *file = fopen(path, "r");
+    if (file == NULL)
+      continue;
+    int readable = fgets(value, sizeof(value), file) != NULL;
+    fclose(file);
+    if (!readable)
+      continue;
+    value[strcspn(value, "\r\n")] = '\0';
+    if (!strcmp(value, "off"))
+      return 0;
+    if (!strcmp(value, "on"))
+      return 1;
+  }
+  return 1;
+}
+
+int savePS2LogoEnabled(Target *target, int enabled) {
+  if (target == NULL || target->device == NULL)
+    return -EINVAL;
+  struct DeviceMapEntry *device = target->device->metadev ?
+                                  target->device->metadev : target->device;
+  if (device->mountpoint == NULL)
+    return -EINVAL;
+  char directory[PATH_MAX];
+  char path[PATH_MAX];
+  char tempPath[PATH_MAX];
+  struct stat st;
+  if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
+      buildConfigFilePath(path, sizeof(path), device->mountpoint, ps2LogoPath) ||
+      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint,
+                          ps2LogoTempPath))
+    return -ENAMETOOLONG;
+  if (stat(directory, &st) == -1 && mkdir(directory, 0777))
+    return -EIO;
+  FILE *file = fopen(tempPath, "w");
+  if (file == NULL)
+    return -EIO;
+  int writeResult = fprintf(file, "%s\n", enabled ? "on" : "off");
+  int closeResult = fclose(file);
+  if (writeResult < 0 || closeResult) {
+    remove(tempPath);
+    return -EIO;
+  }
+  return commitConfigFile(tempPath, path);
+}
+
 // Generates ArgumentList from global and title-specific config file
 int getTitleLaunchArguments(ArgumentList *result, Target *target) {
   struct DeviceMapEntry *device = target->device;
@@ -329,7 +436,8 @@ int updateTitleLaunchArguments(Target *target, ArgumentList *options) {
       len = getRelativePathIdx(tArg->value);
       len = snprintf(lineBuffer, sizeof(lineBuffer), "%s%s: %s\n", (tArg->isDisabled) ? "$" : "", tArg->arg,
                      len > 0 ? &tArg->value[len] : tArg->value);
-    } else if (tArg->isDisabled) {
+    } else if (tArg->isDisabled && strcmp(tArg->arg, "logo")) {
+      // The disabled library logo default is not a per-game override.
       len = snprintf(lineBuffer, sizeof(lineBuffer), "$%s:\n", tArg->arg);
     }
     if (len > 0) {
@@ -612,16 +720,24 @@ ArgumentList *loadLaunchArgumentLists(Target *target) {
   if ((res = getTitleLaunchArguments(titleArguments, target))) {
     DPRINTF("WARN: Failed to load title arguments: %d\n", res);
   }
-
+  int titleLogoOverride = getArgument(titleArguments, "logo") != NULL;
+  ArgumentList *result;
   if (titleArguments->total != 0) {
     // Merge lists
     mergeArgumentLists(titleArguments, globalArguments);
     freeArgumentList(globalArguments);
-    return titleArguments;
+    result = titleArguments;
+  } else {
+    // If there are no title arguments, use global arguments directly.
+    free(titleArguments);
+    result = globalArguments;
   }
-  // If there are no title arguments, use global arguments directly
-  free(titleArguments);
-  return globalArguments;
+  Argument *logo = getArgument(result, "logo");
+  if (titleLogoOverride && logo != NULL)
+    logo->isGlobal = 0;
+  if (!lunaApplyGlobalPS2Logo(result, loadPS2LogoEnabled(target)))
+    DPRINTF("WARN: Failed to add default PS2 logo launch argument\n");
+  return result;
 }
 
 // Generates 32-bit timestamp from RTC.

@@ -2,6 +2,7 @@
 #include "ui/navigation.h"
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 static void testWrapping(void) {
   assert(lunaNavWrap(5, -1) == 4);
@@ -55,18 +56,30 @@ static void testTiming(void) {
 
 static void testCollectionFastScan(void) {
   LunaCollectionScan scan = {0};
-  assert(lunaCollectionScanUpdate(&scan, 1, 100) == 0);
-  assert(lunaCollectionScanUpdate(&scan, 1, 549) == 0);
-  assert(lunaCollectionScanUpdate(&scan, 1, 550) == 1);
-  assert(lunaCollectionScanUpdate(&scan, 1, 649) == 0);
-  assert(lunaCollectionScanUpdate(&scan, 1, 650) == 1);
-  assert(lunaCollectionScanUpdate(&scan, 1, 1000) == 1); // No catch-up burst.
-  assert(lunaCollectionScanUpdate(&scan, -1, 1001) == -1); // Reverse an active scan.
-  assert(lunaCollectionScanUpdate(&scan, 0, 1010) == 0);
-  assert(lunaCollectionScanUpdate(&scan, -1, 1020) == 0); // A tap is inert.
-  assert(lunaCollectionScanUpdate(&scan, 0, 1030) == 0);
-  assert(lunaCollectionScanUpdate(&scan, 1, UINT32_MAX - 200) == 0);
-  assert(lunaCollectionScanUpdate(&scan, 1, 249) == 1); // Timer wrap.
+  assert(lunaCollectionScanUpdate(&scan, 1, 100, COLLECTION_SCAN_STEP_MS) == 0);
+  assert(lunaCollectionScanUpdate(&scan, 1, 549, COLLECTION_SCAN_STEP_MS) == 0);
+  assert(lunaCollectionScanUpdate(&scan, 1, 550, COLLECTION_SCAN_STEP_MS) == 1);
+  assert(lunaCollectionScanUpdate(&scan, 1, 649, COLLECTION_SCAN_STEP_MS) == 0);
+  assert(lunaCollectionScanUpdate(&scan, 1, 650, COLLECTION_SCAN_STEP_MS) == 1);
+  assert(lunaCollectionScanUpdate(&scan, 1, 1000, COLLECTION_SCAN_STEP_MS) == 1); // No catch-up burst.
+  assert(lunaCollectionScanUpdate(&scan, -1, 1001, COLLECTION_SCAN_STEP_MS) == -1); // Reverse an active scan.
+  assert(lunaCollectionScanUpdate(&scan, 0, 1010, COLLECTION_SCAN_STEP_MS) == 0);
+  assert(lunaCollectionScanUpdate(&scan, -1, 1020, COLLECTION_SCAN_STEP_MS) == 0); // A tap is inert.
+  assert(lunaCollectionScanUpdate(&scan, 0, 1030, COLLECTION_SCAN_STEP_MS) == 0);
+  assert(lunaCollectionScanUpdate(&scan, 1, UINT32_MAX - 200, COLLECTION_SCAN_STEP_MS) == 0);
+  assert(lunaCollectionScanUpdate(&scan, 1, 249, COLLECTION_SCAN_STEP_MS) == 1); // Timer wrap.
+}
+
+static void testOrbitFastScan(void) {
+  LunaCollectionScan scan = {0};
+  assert(lunaCollectionScanUpdate(&scan, -1, 100, ORBIT_RANDOM_STEP_MS) == 0);
+  assert(lunaCollectionScanUpdate(&scan, -1, 549, ORBIT_RANDOM_STEP_MS) == 0);
+  assert(lunaCollectionScanUpdate(&scan, -1, 550, ORBIT_RANDOM_STEP_MS) == -1);
+  assert(lunaCollectionScanUpdate(&scan, -1, 634, ORBIT_RANDOM_STEP_MS) == 0);
+  assert(lunaCollectionScanUpdate(&scan, -1, 635, ORBIT_RANDOM_STEP_MS) == -1);
+  assert(lunaCollectionScanUpdate(&scan, 0, 640, ORBIT_RANDOM_STEP_MS) == 0);
+  assert(lunaCollectionScanUpdate(&scan, 1, 650, ORBIT_RANDOM_STEP_MS) == 0); // A tap is inert.
+  assert(lunaCollectionScanUpdate(&scan, 0, 660, ORBIT_RANDOM_STEP_MS) == 0);
 }
 
 static void testScrollFast(void) {
@@ -98,15 +111,30 @@ static void testRouting(void) {
     }
   }
   assert(lunaNavNextView(UI_VIEW_CLASSIC, UI_VIEW_ALL_MASK) == UI_VIEW_PSBBN);
-  assert(lunaNavNextView(UI_VIEW_PSBBN, UI_VIEW_ALL_MASK) == UI_VIEW_GRID);
-  assert(lunaNavNextView(UI_VIEW_GRID, UI_VIEW_ALL_MASK) == UI_VIEW_ORBIT);
+  assert(lunaNavNextView(UI_VIEW_PSBBN, UI_VIEW_ALL_MASK) == UI_VIEW_ORBIT);
   assert(lunaNavNextView(UI_VIEW_ORBIT, UI_VIEW_ALL_MASK) == UI_VIEW_ORBS);
-  assert(lunaNavNextView(UI_VIEW_ORBS, UI_VIEW_ALL_MASK) == UI_VIEW_CLASSIC);
-  assert(lunaNavNextView(UI_VIEW_CLASSIC, (1U << UI_VIEW_GRID) | (1U << UI_VIEW_ORBS)) == UI_VIEW_GRID);
+  assert(lunaNavNextView(UI_VIEW_ORBS, UI_VIEW_ALL_MASK) == UI_VIEW_GRID);
+  assert(lunaNavNextView(UI_VIEW_GRID, UI_VIEW_ALL_MASK) == UI_VIEW_SAVE_ICONS);
+  assert(lunaNavNextView(UI_VIEW_SAVE_ICONS, UI_VIEW_ALL_MASK) == UI_VIEW_CLASSIC);
+  assert(lunaNavNextView(UI_VIEW_CLASSIC, (1U << UI_VIEW_GRID) | (1U << UI_VIEW_ORBS)) == UI_VIEW_ORBS);
   assert(lunaNavNextView(UI_VIEW_GRID, (1U << UI_VIEW_GRID) | (1U << UI_VIEW_ORBS)) == UI_VIEW_ORBS);
   assert(lunaNavNextView(UI_VIEW_ORBS, (1U << UI_VIEW_GRID) | (1U << UI_VIEW_ORBS)) == UI_VIEW_GRID);
+  assert(lunaNavNextView(UI_VIEW_PSBBN, (1U << UI_VIEW_ORBIT) | (1U << UI_VIEW_GRID)) == UI_VIEW_ORBIT);
+  assert(lunaNavNextView(UI_VIEW_ORBIT, (1U << UI_VIEW_ORBS) | (1U << UI_VIEW_SAVE_ICONS)) == UI_VIEW_ORBS);
+  assert(lunaNavNextView(UI_VIEW_SAVE_ICONS, (1U << UI_VIEW_ORBIT) | (1U << UI_VIEW_GRID)) == UI_VIEW_ORBIT);
   assert(lunaNavNextView(UI_VIEW_ORBIT, 1U << UI_VIEW_GRID) == UI_VIEW_GRID);
   assert(lunaNavNextView(UI_VIEW_GRID, 1U << UI_VIEW_GRID) == UI_VIEW_GRID);
+  for (int current = UI_VIEW_CLASSIC; current <= UI_VIEW_SAVE_ICONS; current++)
+    for (int enabled = UI_VIEW_CLASSIC; enabled <= UI_VIEW_SAVE_ICONS; enabled++)
+      assert(lunaNavNextView((UILibraryView)current, 1U << enabled) ==
+             (UILibraryView)enabled);
+  assert(lunaNavNextView(UI_VIEW_ORBS, 0) == UI_VIEW_CLASSIC);
+  assert(strcmp(lunaNavViewLabel(UI_VIEW_CLASSIC), "List") == 0);
+  assert(strcmp(lunaNavViewLabel(UI_VIEW_PSBBN), "Collections") == 0);
+  assert(strcmp(lunaNavViewLabel(UI_VIEW_ORBIT), "Orbit") == 0);
+  assert(strcmp(lunaNavViewLabel(UI_VIEW_ORBS), "Scroll") == 0);
+  assert(strcmp(lunaNavViewLabel(UI_VIEW_GRID), "Grid") == 0);
+  assert(strcmp(lunaNavViewLabel(UI_VIEW_SAVE_ICONS), "Save Icons") == 0);
 }
 
 static void testMarkedNavigation(void) {
@@ -131,6 +159,7 @@ int main(void) {
   testBufferSelection();
   testTiming();
   testCollectionFastScan();
+  testOrbitFastScan();
   testScrollFast();
   testRouting();
   testMarkedNavigation();

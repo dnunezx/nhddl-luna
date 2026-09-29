@@ -598,7 +598,7 @@ static int chooseFileAction(const BrowserPane *pane, const CopyQueue *queue) {
     menu.actions[menu.count++] = FILE_ACTION_MOVE;
   int selected = 0;
   while (1) {
-    drawBrowserFrame("File Manager", "Actions", "Choose an action.",
+    drawBrowserFrame("File Explorer", "Actions", "Choose an action.",
                      PROMPT_TWO(ICON_CROSS, "Select", ICON_CIRCLE, "Back"),
                      menu.count, selected, 0, 0, fileActionRow, &menu);
     int input = waitForInput(-1);
@@ -806,7 +806,7 @@ static void drawFileManagerFrame(const BrowserRoot *roots, int rootCount,
   gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
   drawBrowserSheet(1);
   drawTextWindow(left, headerHeight - lineHeight, right, headerHeight + 2,
-                 0, HeaderTextColor, ALIGN_HCENTER, "File Manager");
+                 0, HeaderTextColor, ALIGN_HCENTER, "File Explorer");
   for (int side = 0; side < 2; side++) {
     const BrowserPane *pane = &panes[side];
     int paneLeft = side == 0 ? left : left + leftPaneWidth + 12;
@@ -1855,22 +1855,74 @@ static void uiVMCManagerLoop(void) {
   free(roots);
 }
 
+static int unlockFileExplorer(void) {
+  static const int code[] = {PAD_CROSS, PAD_SQUARE, PAD_CIRCLE, PAD_CROSS};
+  int entered = 0;
+  const char *status = "";
+  while (1) {
+    const int left = keepoutArea + 48;
+    const int right = gsGlobal->Width - left;
+    const int top = gsGlobal->Height / 2 - 100;
+    const int bottom = gsGlobal->Height / 2 + 100;
+    char progress[24];
+    snprintf(progress, sizeof(progress), "%d of 4 buttons entered", entered);
+    gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
+    drawBrowserSheet(0);
+    drawTextWindow(left, headerHeight - getFontLineHeight(), right,
+                   headerHeight + 2, 0, HeaderTextColor,
+                   ALIGN_HCENTER, "File Explorer");
+    drawGlassPanel(left, top, right, bottom, 3);
+    drawTextWindow(left + 12, top + 16, right - 12, top + 44,
+                   4, ColorSelected, ALIGN_HCENTER, "Under construction");
+    drawTextWindow(left + 12, top + 55, right - 12, top + 81,
+                   4, FontMainColor, ALIGN_HCENTER,
+                   "File Explorer is under construction.");
+    drawTextWindow(left + 12, top + 88, right - 12, top + 114,
+                   4, HeaderTextColor, ALIGN_HCENTER,
+                   "Enter the four-button access code.");
+    drawTextWindow(left + 12, top + 122, right - 12, top + 148,
+                   4, FontMainColor, ALIGN_HCENTER, progress);
+    drawTextWindow(left + 12, top + 160, right - 12, bottom - 10,
+                   4, ErrorTextColor, ALIGN_HCENTER, status);
+    drawPromptBar(left, gsGlobal->Height - footerHeight, right,
+                  gsGlobal->Height, 0, HeaderTextColor,
+                  PROMPT_ONE(ICON_TRIANGLE, "Back"));
+    presentBrowserFrame();
+
+    int input = waitForInput(PAD_CROSS | PAD_SQUARE | PAD_CIRCLE | PAD_TRIANGLE);
+    if (input & PAD_TRIANGLE)
+      return 0;
+    int button = input & (PAD_CROSS | PAD_SQUARE | PAD_CIRCLE);
+    if (button == code[entered]) {
+      entered++;
+      status = "";
+      if (entered == 4)
+        return 1;
+    } else {
+      entered = 0;
+      status = "Incorrect code. Try again.";
+    }
+  }
+}
+
 static int mainMenuRow(int index, char *name, size_t nameSize,
                        char *detail, size_t detailSize, CardArtType *cardArt,
                        void *context) {
   int hasLibrary = *(int *)context;
-  const char *label = index == 0 ? "File Manager" :
+  const char *label = index == 0 ? "File Explorer" :
                       index == 1 ? "Virtual Memory Cards" :
                       (hasLibrary && index == 2 ? "Return to Library" :
                        index == (hasLibrary ? 4 : 3) ? "Shutdown" : "Exit LUNA");
   snprintf(name, nameSize, "%s", label);
   detail[0] = '\0';
-  *cardArt = index == 1 ? CARD_ART_MEMORY_CARD_MENU : CARD_ART_NONE;
+  *cardArt = index == 0 ? CARD_ART_FILE_EXPLORER :
+             index == 1 ? CARD_ART_MEMORY_CARD_MENU : CARD_ART_NONE;
   (void)detailSize;
   return 1;
 }
 
 int uiMainMenuLoop(int hasLibrary) {
+  static int fileExplorerUnlocked;
   int selected = 0;
   int count = hasLibrary ? 5 : 4;
   while (1) {
@@ -1878,7 +1930,8 @@ int uiMainMenuLoop(int hasLibrary) {
                      hasLibrary ? "Browse storage or return to your games."
                                 : "Browse storage even without a game library.",
                      PROMPT_TWO(ICON_CROSS, "Select", ICON_TRIANGLE, "Back"),
-                     count, selected, 0, selected == 1 ? 220 : 0,
+                     count, selected, 0,
+                     selected == 0 || selected == 1 ? 220 : 0,
                      mainMenuRow, &hasLibrary);
     int input = readInput();
     if ((input & (PAD_TRIANGLE | PAD_CIRCLE)) && hasLibrary)
@@ -1888,8 +1941,12 @@ int uiMainMenuLoop(int hasLibrary) {
     else if (input & PAD_DOWN)
       selected = (selected + 1) % count;
     else if (input & PAD_CROSS) {
-      if (selected == 0)
-        uiFileManagerLoop();
+      if (selected == 0) {
+        if (fileExplorerUnlocked || unlockFileExplorer()) {
+          fileExplorerUnlocked = 1;
+          uiFileManagerLoop();
+        }
+      }
       else if (selected == 1)
         uiVMCManagerLoop();
       else if (hasLibrary && selected == 2)

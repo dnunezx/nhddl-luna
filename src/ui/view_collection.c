@@ -121,9 +121,9 @@ static int psbbnAbsolute(int value) {
   return (value < 0) ? -value : value;
 }
 
-static void drawCollectionFooter(void) {
+static void drawCollectionFooter(const char *nextViewLabel) {
   const ButtonPrompt prompts[] = {
-      {ICON_CIRCLE, "Grid"}, {ICON_CROSS, "Launch"},
+      {ICON_CIRCLE, nextViewLabel}, {ICON_CROSS, "Launch"},
       {ICON_TRIANGLE, "Options"}};
   drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
                 gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
@@ -163,7 +163,8 @@ void formatPSBBNTitle(const char *source, char *destination, int maxWidth) {
 
 void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int flowOffset,
                          int outgoingTitleIdx, int favoritesOnly,
-                         int entryProgress, uint32_t frameNowMs) {
+                         int entryProgress, uint32_t frameNowMs,
+                         const char *nextViewLabel) {
   int top = headerHeight + 12;
   int bottom = gsGlobal->Height - footerHeight - 18;
   int selectedSize = (bottom - top) * 76 / 100;
@@ -205,21 +206,21 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
   int selectorCenterY = psbbnFieldStableY(gsGlobal->Height - footerHeight - getFontLineHeight() - 16);
   int collectionTextY = selectorCenterY - getFontLineHeight() - 8;
   int favoritesTextY = selectorCenterY + 10;
-  const char *collectionLabel = "Collection";
+  const char *collectionLabel = "Collections";
   const char *favoritesLabel = "Favorites";
   int activeTextY = favoritesOnly ? favoritesTextY : collectionTextY;
   int activeTextRight = 70 + getLineWidth(favoritesOnly ? favoritesLabel : collectionLabel);
   drawPSBBNFocusGlow(70, activeTextY, panelRight - 8, activeTextRight);
   drawTextWindow(70, collectionTextY, panelRight - 8, 0, 6,
-                 favoritesOnly ? HeaderTextColor : FontMainColor, ALIGN_LEFT, "Collection");
+                 favoritesOnly ? HeaderTextColor : FontMainColor, ALIGN_LEFT, "Collections");
   drawTextWindow(70, favoritesTextY, panelRight - 8, 0, 6,
                  favoritesOnly ? FontMainColor : HeaderTextColor, ALIGN_LEFT, "Favorites");
 
   if (titles->total <= 0) {
     drawTextWindow(40, headerHeight + 96, panelRight, selectorCenterY - getFontLineHeight() * 2,
                    5, HeaderTextColor, ALIGN_CENTER,
-                   "NO FAVORITES YET\nAdd favorites in Classic List");
-    drawCollectionFooter();
+                   "NO FAVORITES YET\nAdd favorites in List");
+    drawCollectionFooter(nextViewLabel);
     drawCollectionEntryFade(entryProgress);
     return;
   }
@@ -335,6 +336,6 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
                      (cacheToDraw == foregroundCacheIdx) ? PSBBN_COVER_FOREGROUND_Z
                                                       : PSBBN_COVER_BACKGROUND_Z);
   }
-  drawCollectionFooter();
+  drawCollectionFooter(nextViewLabel);
   drawCollectionEntryFade(entryProgress);
 }

@@ -251,7 +251,7 @@ static int gridEntryRowProgress(int entryProgress, int row) {
 void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBase, int activeWindowBuffer,
                    int incomingWindowBase, int incomingWindowBuffer, int selectedCoverBuffer,
                    int cascadeDirection, int cascadeProgress, int entryProgress,
-                   uint32_t frameNowMs) {
+                   uint32_t frameNowMs, const char *nextViewLabel) {
   const int top = headerHeight + 12;
   const int bottom = gsGlobal->Height - footerHeight - 10;
   const int leftX = keepoutArea + 10;
@@ -277,7 +277,8 @@ void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBas
   const float gridBottom = gridTop + GRID_ROWS * GRID_CELL_SIZE;
 
   drawSharedLibraryBackground(frameNowMs);
-  drawTextWindow(leftX, headerHeight - getFontLineHeight(), leftRight, 0, 5, HeaderTextColor, ALIGN_LEFT, "GRID");
+  drawTextWindow(leftX, headerHeight - getFontLineHeight(), leftRight, 0, 5, HeaderTextColor, ALIGN_LEFT,
+                 getGridSaveIconArtwork() ? "SAVE ICONS" : "GRID");
 
   if (cascadeProgress > 0 && incomingWindowBase >= 0) {
     float travel = (gridRight - gridLeft) / GRID_COLUMNS + 8.0f;
@@ -339,7 +340,26 @@ void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBas
 
   formatPSBBNTitle(getTargetByIdx(titles, selectedTitleIdx)->name, selectedTitle, rightRight - rightLeft);
   drawTextWindow(rightLeft, top - 2, rightRight, 0, 6, FontMainColor, ALIGN_HCENTER, selectedTitle);
-  if (selectedCoverBuffer >= 0 && gridSelectedLoaded[selectedCoverBuffer]) {
+  if (getGridSaveIconArtwork()) {
+    const int iconSize = selectedSize * 82 / 100;
+    const int iconX = rightLeft + (rightRight - rightLeft - iconSize) / 2;
+    const int iconY = selectedY + (selectedSize - iconSize) / 2;
+    GSTEXTURE *icon = (selectedCoverBuffer >= 0 && saveIconSpinLoaded) ? saveIconSpinTexture :
+                      (selectedCoverBuffer >= 0 && gridSelectedLoaded[selectedCoverBuffer]
+                           ? gridSelectedTextures[selectedCoverBuffer] : NULL);
+
+    // Draw only the transparent rotating icon, centered with no backing plate.
+    if (icon != NULL) {
+      drawGridTexture(icon, iconX, iconY, iconSize, 5,
+                      GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
+    } else {
+      drawGlassDiamond(iconX + iconSize / 2, iconY + iconSize / 2 - 12,
+                       21, 5, glassMissingCoverDiamondColor(0x48));
+      drawTextWindow(iconX, iconY + iconSize / 2 + 12,
+                     iconX + iconSize, 0, 5, glassMissingCoverTextColor(),
+                     ALIGN_HCENTER, "ICON\nUNAVAILABLE");
+    }
+  } else if (selectedCoverBuffer >= 0 && gridSelectedLoaded[selectedCoverBuffer]) {
     gsKit_prim_sprite(gsGlobal, selectedX - 3, selectedY - 3, selectedX + selectedSize + 3, selectedY + selectedSize + 3, 3,
                       glassPresetColor(0x28, 0x88, 0xD8, 0x28));
     drawGridTexture(gridSelectedTextures[selectedCoverBuffer], selectedX, selectedY, selectedSize, 5,
@@ -354,13 +374,14 @@ void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBas
     drawTextWindow(selectedX, selectedY + selectedSize / 2 + 12,
                    selectedX + selectedSize, 0, 5,
                    glassMissingCoverTextColor(), ALIGN_HCENTER,
-                   (selectedCoverBuffer < 0) ? "LOADING\nCOVER" : "COVER\nUNAVAILABLE");
+                   (selectedCoverBuffer < 0) ? "LOADING\nICON" :
+                   (getGridSaveIconArtwork() ? "ICON\nUNAVAILABLE" : "COVER\nUNAVAILABLE"));
   }
   snprintf(lineBuffer, sizeof(lineBuffer), "%d/%d", selectedTitleIdx + 1, titles->total);
   drawTextWindow(rightLeft, selectedY + selectedSize + 4, rightRight, 0, 6, FontMainColor, ALIGN_RIGHT, lineBuffer);
 
   const ButtonPrompt prompts[] = {
-      {ICON_CIRCLE, "Views"}, {ICON_CROSS, "Launch"},
+      {ICON_CIRCLE, nextViewLabel}, {ICON_CROSS, "Launch"},
       {ICON_TRIANGLE, "Options"}};
   drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
                 gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,

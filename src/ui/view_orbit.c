@@ -116,9 +116,9 @@ static void drawOrbitGuide(int centerX, int centerY, int radiusX, int radiusY) {
   }
 }
 
-static void drawOrbitFooter(void) {
+static void drawOrbitFooter(const char *nextViewLabel) {
   const ButtonPrompt prompts[] = {
-      {ICON_CIRCLE, "Classic"}, {ICON_SQUARE, "Random"},
+      {ICON_CIRCLE, nextViewLabel}, {ICON_SQUARE, "Random"},
       {ICON_CROSS, "Launch"}, {ICON_TRIANGLE, "Options"}};
   drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
                 gsGlobal->Width - 20, gsGlobal->Height, 8, FontMainColor,
@@ -126,7 +126,8 @@ static void drawOrbitFooter(void) {
 }
 
 void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int flowOffset,
-               int randomActive, int entryProgress, uint32_t frameNowMs) {
+               int randomActive, int entryProgress, uint32_t frameNowMs,
+               const char *nextViewLabel) {
   const int top = headerHeight + 8;
   const int bottom = gsGlobal->Height - footerHeight - 8;
   const int centerX = gsGlobal->Width / 2;
@@ -148,15 +149,17 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
   if (selectedSize > maxSelectedSize)
     selectedSize = maxSelectedSize;
 
-  // Orbit owns centered Ambient Orbs formations, independent of the
-  // shared library background preference.
-  const uint64_t black = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80);
-  gsKit_prim_quad_gouraud(gsGlobal, 0, 0, gsGlobal->Width, 0,
-                          0, gsGlobal->Height, gsGlobal->Width,
-                          gsGlobal->Height, 0, black, black, black, black);
-  drawAmbientOrbsOrbit(gsGlobal->Width / 2, gsGlobal->Height / 2,
-                       gsGlobal->Width * 25 / 100,
-                       gsGlobal->Height * 35 / 100, frameNowMs, 0);
+  if (getLibraryBackground() == LIBRARY_BACKGROUND_ORBS) {
+    const uint64_t black = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80);
+    gsKit_prim_quad_gouraud(gsGlobal, 0, 0, gsGlobal->Width, 0,
+                            0, gsGlobal->Height, gsGlobal->Width,
+                            gsGlobal->Height, 0, black, black, black, black);
+    drawAmbientOrbsOrbit(gsGlobal->Width / 2, gsGlobal->Height / 2,
+                         gsGlobal->Width * 25 / 100,
+                         gsGlobal->Height * 35 / 100, frameNowMs, 0);
+  } else {
+    drawSharedLibraryBackground(frameNowMs);
+  }
   drawTextWindow(keepoutArea + 10, headerHeight - getFontLineHeight(),
                  gsGlobal->Width - keepoutArea, 0, 6,
                  HeaderTextColor, ALIGN_LEFT, "ORBIT");
@@ -293,5 +296,5 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
                    HeaderTextColor, ALIGN_HCENTER, lineBuffer);
   }
 
-  drawOrbitFooter();
+  drawOrbitFooter(nextViewLabel);
 }

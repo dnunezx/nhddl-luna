@@ -20,6 +20,8 @@ extern unsigned char ps1_memory_card_2_png[];
 extern unsigned int size_ps1_memory_card_2_png;
 extern unsigned char memory_card_menu_png[];
 extern unsigned int size_memory_card_menu_png;
+extern unsigned char file_explorer_png[];
+extern unsigned int size_file_explorer_png;
 
 // Loads 32-bit RGBA PNG texture from memory into GSTEXTURE and uploads it to GS VRAM.
 static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *buf, size_t size, int whiteTransparentRgb,
@@ -206,10 +208,11 @@ void drawIcon(float x, float y, int z, uint64_t color, IconType iconType) {
 void drawCardArt(CardArtType card, float x, float y, float size) {
   static const unsigned char *const pngData[] = {
       virtual_memory_card_png, ps1_memory_card_1_png,
-      ps1_memory_card_2_png, memory_card_menu_png};
+      ps1_memory_card_2_png, memory_card_menu_png, file_explorer_png};
   static const unsigned int *const pngSizes[] = {
       &size_virtual_memory_card_png, &size_ps1_memory_card_1_png,
-      &size_ps1_memory_card_2_png, &size_memory_card_menu_png};
+      &size_ps1_memory_card_2_png, &size_memory_card_menu_png,
+      &size_file_explorer_png};
   if (card < CARD_ART_VIRTUAL || card >= CARD_ART_COUNT || size <= 0)
     return;
 

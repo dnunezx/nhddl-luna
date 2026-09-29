@@ -306,7 +306,9 @@ static void orbTintColor(int *red, int *green, int *blue,
                          AmbientOrbsColorPart part) {
   const AmbientOrbsColor color = part == ORBS_COLOR_PART_ORBS ?
                                   ambientOrbsColor : ambientTailsColor;
-  if (!orbBackgroundColorsActive || color == ORBS_COLOR_ORIGINAL)
+  if (!orbBackgroundColorsActive ||
+      ambientOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL ||
+      color == ORBS_COLOR_ORIGINAL)
     return;
   int brightness = *red;
   if (*green > brightness)
@@ -322,6 +324,8 @@ static uint64_t orbLightColor(int red, int green, int blue, int alpha,
                               AmbientOrbsColorPart part) {
   const AmbientOrbsColor color = part == ORBS_COLOR_PART_ORBS ?
                                   ambientOrbsColor : ambientTailsColor;
+  if (ambientOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL)
+    return GS_SETREG_RGBA(red, green, blue, alpha);
   if (!orbBackgroundColorsActive || color == ORBS_COLOR_ORIGINAL)
     return glassLightColor(red, green, blue, alpha);
   orbTintColor(&red, &green, &blue, part);

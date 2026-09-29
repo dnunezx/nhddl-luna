@@ -2,7 +2,8 @@
 #include "ui/navigation.h"
 #include <stddef.h>
 
-int lunaCollectionScanUpdate(LunaCollectionScan *scan, int direction, uint32_t now) {
+int lunaCollectionScanUpdate(LunaCollectionScan *scan, int direction, uint32_t now,
+                             uint32_t stepMs) {
   if (direction != scan->heldDirection) {
     int keepScanning = scan->active && direction != 0;
     scan->heldDirection = direction;
@@ -20,7 +21,7 @@ int lunaCollectionScanUpdate(LunaCollectionScan *scan, int direction, uint32_t n
   if ((int32_t)(now - scan->nextStepMs) < 0)
     return 0;
   // Skip missed steps after a slow artwork load instead of jumping past covers.
-  scan->nextStepMs = now + COLLECTION_SCAN_STEP_MS;
+  scan->nextStepMs = now + stepMs;
   return direction;
 }
 
@@ -238,9 +239,28 @@ int lunaNavMarkedPage(const uint8_t *marked, int total, int index, int pageSize,
   return lunaNavMarkedByRank(marked, total, rank);
 }
 
+const UILibraryView lunaViewCycleOrder[UI_VIEW_SAVE_ICONS + 1] = {
+    UI_VIEW_CLASSIC, UI_VIEW_PSBBN, UI_VIEW_ORBIT,
+    UI_VIEW_ORBS, UI_VIEW_GRID, UI_VIEW_SAVE_ICONS};
+
+const char *lunaNavViewLabel(UILibraryView view) {
+  static const char *const labels[UI_VIEW_SAVE_ICONS + 1] = {
+      "List", "Collections", "Grid", "Orbit", "Scroll", "Save Icons"};
+  return view >= UI_VIEW_CLASSIC && view <= UI_VIEW_SAVE_ICONS ?
+         labels[view] : "View";
+}
+
 UILibraryView lunaNavNextView(UILibraryView view, uint32_t enabledViews) {
-  for (int step = 1; step <= UI_VIEW_ORBS + 1; step++) {
-    UILibraryView next = (UILibraryView)((view + step) % (UI_VIEW_ORBS + 1));
+  const int count = UI_VIEW_SAVE_ICONS + 1;
+  int currentIndex = -1;
+  for (int index = 0; index < count; index++) {
+    if (lunaViewCycleOrder[index] == view) {
+      currentIndex = index;
+      break;
+    }
+  }
+  for (int step = 1; step <= count; step++) {
+    UILibraryView next = lunaViewCycleOrder[(currentIndex + step) % count];
     if (enabledViews & (1U << next))
       return next;
   }

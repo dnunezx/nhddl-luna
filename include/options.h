@@ -33,6 +33,9 @@ typedef struct {
 // If targetFileName is NULL, will return path to config directory
 int buildConfigFilePath(char *targetPath, size_t targetSize, const char *targetMountpoint,
                         const char *targetFileName);
+// Commit a completed temporary config file, with a copy fallback for filesystems
+// whose rename operation fails even after the destination is removed.
+int commitConfigFile(const char *tempPath, const char *path);
 int buildLegacyConfigFilePath(char *targetPath, size_t targetSize, const char *targetMountpoint,
                               const char *targetFileName);
 
@@ -58,6 +61,10 @@ int getTitleLaunchArguments(ArgumentList *result, Target *target);
 // '$' before the argument name is used as 'disabled' flag.
 // Empty value means that the argument is empty, but still should be used without the value.
 int updateTitleLaunchArguments(Target *target, ArgumentList *options);
+
+// Library-wide PS2 startup logo preference. Defaults to enabled.
+int loadPS2LogoEnabled(Target *target);
+int savePS2LogoEnabled(Target *target, int enabled);
 
 // Completely frees ArgumentList. Passed pointer will not be valid after this function executes
 void freeArgumentList(ArgumentList *result);

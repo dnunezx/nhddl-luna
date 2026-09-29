@@ -7,6 +7,7 @@
 #include "ui/pad.h"
 #include "ui/view_state.h"
 #include "options.h"
+#include "vmc_create.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <libpad.h>
@@ -14,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define OPTIONS_OPEN_DURATION_MS 360
@@ -27,6 +29,15 @@ typedef enum {
   OPTIONS_VIEWS,
   OPTIONS_ORBS
 } OptionsPage;
+
+typedef enum {
+  GAME_HUB = -1,
+  GAME_MEMORY_CARDS,
+  GAME_COMPATIBILITY,
+  GAME_VIDEO,
+  GAME_LAUNCH,
+  GAME_SECTION_COUNT
+} GameSection;
 
 typedef struct {
   OptionsPage page;
@@ -47,6 +58,7 @@ typedef struct {
   int *glassColorSetting;
   int *fontSetting;
   int *ambientEnabled;
+  int logoSetting;
   int *orbsThemeSetting;
   int *orbsAppearanceSetting;
   int *orbsColorSetting;
@@ -57,6 +69,7 @@ typedef struct {
   int pendingGlassColor;
   int pendingFont;
   int pendingAmbient;
+  int pendingLogo;
   int pendingOrbsTheme;
   int pendingOrbsAppearance;
   int pendingOrbsColor;
@@ -64,8 +77,12 @@ typedef struct {
   uint32_t pendingViews;
   int titleArgumentsChanged;
   int saveError;
+  const char *saveErrorLabel;
+  char vmcStatus[96];
   OptionsPage page;
   OptionsSelector selector;
+  GameSection gameSection;
+  int selectedGameHubRow;
   int selectedGameRow;
   int selectedGlobal;
   int selectedView;
@@ -95,14 +112,27 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Assign an existing OPL card image to the second slot.",
     "Choose a forced output mode for this game.",
     "Choose field flipping for a forced video mode.",
-    "Show the PlayStation 2 startup logo.",
+    "Choose Inherit to use the Global PS2 logo setting.",
     "Display debug colors while loading."};
 
-static const char *const viewRowLabels[UI_VIEW_ORBS + 1] = {
-    "Classic", "Collection", "Grid", "Orbit", "Scroll"};
+static const char *const gameSectionLabels[GAME_SECTION_COUNT] = {
+    "Virtual memory cards", "Compatibility", "Video", "Launch & debug"};
+static const char *const gameSectionDescriptions[GAME_SECTION_COUNT] = {
+    "Enable virtual cards by assigning one to a slot.",
+    "Change disc and system compatibility switches.",
+    "Adjust this game's video output.",
+    "Set the startup logo and review launch options."};
+static const LunaGameRow gameSectionRows[GAME_SECTION_COUNT][5] = {
+    {LUNA_GAME_VMC_SLOT1, LUNA_GAME_VMC_SLOT2},
+    {LUNA_GAME_FAST_READS, LUNA_GAME_SYNC_READS,
+     LUNA_GAME_UNHOOK_SYSCALLS, LUNA_GAME_DVD_DL,
+     LUNA_GAME_BUFFER_OVERRUN},
+    {LUNA_GAME_VIDEO_MODE, LUNA_GAME_FIELD_FLIP},
+    {LUNA_GAME_PS2_LOGO, LUNA_GAME_LAUNCH_ARGUMENTS, LUNA_GAME_DEBUG_COLORS}};
+static const int gameSectionRowCounts[GAME_SECTION_COUNT] = {4, 5, 2, 3};
 
-#define OPTIONS_VIEW_ART_LAYOUT_ROW 1
-#define OPTIONS_VIEW_ROW_COUNT (UI_VIEW_ORBS + 2)
+#define OPTIONS_VIEW_ART_LAYOUT_ROW (UI_VIEW_SAVE_ICONS + 1)
+#define OPTIONS_VIEW_ROW_COUNT (UI_VIEW_SAVE_ICONS + 2)
 
 // Give Options its own scene without carrying library text into the menu.
 static void drawOptionsSheet(void) {
@@ -155,13 +185,14 @@ static void presentOptionsFrame(void) {
 }
 
 static void drawOptionsFooter(int gamePage, int argumentList, int dirty,
-                              int placeholder) {
+                              int placeholder, const char *actionLabel,
+                              int gameDetail) {
   const int top = gsGlobal->Height - footerHeight;
   const int width = gsGlobal->Width;
   const int slot = width / 4;
   if (!placeholder) {
     const ButtonPrompt action[] = {
-        {ICON_CROSS, argumentList ? "Toggle" : "Change"}};
+        {ICON_CROSS, argumentList ? "Toggle" : actionLabel ? actionLabel : "Change"}};
     drawPromptBar(8, top, slot, gsGlobal->Height, 0, HeaderTextColor,
                   (PromptBar){NULL, action, 1});
     if (gamePage || argumentList) {
@@ -175,7 +206,8 @@ static void drawOptionsFooter(int gamePage, int argumentList, int dirty,
                   HeaderTextColor, (PromptBar){NULL, save, 1});
   }
   const ButtonPrompt back[] = {
-      {ICON_TRIANGLE, argumentList ? "Back" : (dirty ? "Discard" : "Close")}};
+      {ICON_TRIANGLE, argumentList || gameDetail ? "Back" :
+                      (dirty ? "Discard" : "Close")}};
   drawPromptBar(3 * slot, top, width - 8, gsGlobal->Height, 0,
                 HeaderTextColor, (PromptBar){NULL, back, 1});
 }
@@ -230,21 +262,26 @@ static void drawOptionsTextRow(int x, int y, int right, int selected,
 }
 
 static int optionsGlobalRowY(int index, int firstY, int rowStep, int lineHeight) {
-  return firstY + index * rowStep + (index == 3 ? lineHeight : 0);
+  return firstY + index * rowStep +
+         (index >= 3 ? lineHeight : 0) +
+         (index >= 4 ? lineHeight : 0);
 }
 
-static int optionsViewRowForLibraryView(int view) {
-  return view == UI_VIEW_CLASSIC ? 0 : view + 1;
+static int optionsViewRowY(int row, int firstY, int rowStep,
+                            int lineHeight) {
+  return firstY + row * rowStep +
+         (row == OPTIONS_VIEW_ART_LAYOUT_ROW ? lineHeight : 0);
 }
 
-static int optionsGameRowY(int index, int firstY, int rowStep) {
-  if (index <= LUNA_GAME_LAUNCH_ARGUMENTS)
-    return firstY + (index + 1) * rowStep;
-  if (index <= LUNA_GAME_VMC_SLOT2)
-    return firstY + (index + 2) * rowStep;
-  if (index <= LUNA_GAME_FIELD_FLIP)
-    return firstY + (index + 3) * rowStep;
-  return firstY + (index + 4) * rowStep;
+static int gameVMCEnabled(ArgumentList *arguments) {
+  const char *const names[] = {"mc0", "mc1"};
+  for (int slot = 0; slot < 2; slot++) {
+    Argument *card = getArgument(arguments, names[slot]);
+    if (card != NULL && !card->isDisabled && card->value != NULL &&
+        card->value[0] != '\0')
+      return 1;
+  }
+  return 0;
 }
 
 static void drawOptionsMusicNote(int centerX, int y, uint64_t color) {
@@ -272,9 +309,75 @@ static void drawOptionsSection(int y, const char *title, int musicNotes) {
 }
 
 static int optionsGlobalDirty(int pendingBackground, int pendingGlassColor,
-                              int pendingFont, int pendingAmbient,
+                              int pendingFont, int pendingAmbient, int pendingLogo,
                               int background, int glassColor, int fontSetting,
-                              int ambient);
+                              int ambient, int logo);
+
+static const char *gamePS2LogoValue(const OptionsMenuState *state) {
+  Argument *logo = getArgument(state->titleArguments, "logo");
+  if (logo == NULL || logo->isGlobal)
+    return state->logoSetting ? "Inherit (On)" : "Inherit (Off)";
+  return state->gameOptions.ps2Logo ? "Override (On)" : "Override (Off)";
+}
+
+static OptionsPage optionsNextPage(OptionsPage page, int direction) {
+  return (OptionsPage)((page + direction + OPTIONS_ORBS + 1) %
+                       (OPTIONS_ORBS + 1));
+}
+
+static int optionsOrbsEditable(const OptionsMenuState *state) {
+  return *state->ambientOrbsBackgroundSetting == LIBRARY_BACKGROUND_ORBS;
+}
+
+static int optionsOrbsColorsEditable(const OptionsMenuState *state) {
+  return state->pendingOrbsAppearance != ORBS_APPEARANCE_PS2_ORIGINAL;
+}
+
+static void drawOrbsUnavailablePopup(int baseX, int menuTop, int menuBottom) {
+  const int left = baseX + 28;
+  const int right = gsGlobal->Width - baseX - 28;
+  const int middleY = (menuTop + menuBottom) / 2;
+  const int top = middleY - 58;
+  const int bottom = middleY + 58;
+  drawGlassPanel(left, top, right, bottom, 3);
+  drawTextWindow(left + 14, top + 14, right - 14, top + 36, 4,
+                 ColorSelected, ALIGN_HCENTER, "Ambient Orbs required");
+  drawTextWindow(left + 14, top + 43, right - 14, top + 65, 4,
+                 FontMainColor, ALIGN_HCENTER,
+                 "Shown when Global background is Ambient Orbs.");
+  drawTextWindow(left + 14, top + 73, right - 14, bottom - 10, 4,
+                 HeaderTextColor, ALIGN_HCENTER,
+                 "Set and save Global > Background to Ambient Orbs.");
+}
+
+static void drawGameVMCRows(OptionsMenuState *state, int baseX,
+                            int firstY, int rowStep, int menuBottom) {
+  const int enabled = gameVMCEnabled(state->titleArguments);
+  const int visibleRows = enabled ? 4 : 3;
+  const char *const labels[] = {
+      "VMC slot 1", "VMC slot 2", "Create new card", "Disable virtual cards"};
+  const char *const values[] = {
+      state->gameOptions.vmcSlotLabel[0],
+      state->gameOptions.vmcSlotLabel[1], "8 MB", NULL};
+  int selectorY = optionsSelectorY(&state->selector, state->page,
+      GAME_SECTION_COUNT + GAME_MEMORY_CARDS * 5 + state->selectedGameRow,
+      firstY + state->selectedGameRow * rowStep);
+  for (int row = 0; row < visibleRows; row++)
+    drawOptionsTextRow(baseX, firstY + row * rowStep,
+                       gsGlobal->Width - baseX,
+                       row == state->selectedGameRow, selectorY,
+                       labels[row], values[row]);
+  const char *description = state->vmcStatus[0] ? state->vmcStatus :
+      state->selectedGameRow == 2 ?
+          "Create an 8 MB card on this game's drive." :
+      state->selectedGameRow == 3 ?
+          "Use physical cards in both slots for this game." :
+          gameRowDescriptions[LUNA_GAME_VMC_SLOT1 + state->selectedGameRow];
+  drawTextWindow(baseX + 18, menuBottom,
+                 gsGlobal->Width - baseX,
+                 gsGlobal->Height - footerHeight, 0,
+                 HeaderTextColor, ALIGN_LEFT, description);
+}
 
 static void drawTitleOptionsFrame(OptionsMenuState *state,
                                   int transitionProgress, int transitionMode) {
@@ -282,9 +385,9 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
   const int gameDirty = showDirty && state->titleArgumentsChanged;
   const int systemDirty = showDirty && optionsGlobalDirty(
       state->pendingBackground, state->pendingGlassColor,
-      state->pendingFont, state->pendingAmbient,
+      state->pendingFont, state->pendingAmbient, state->pendingLogo,
       *state->ambientOrbsBackgroundSetting, *state->glassColorSetting,
-      *state->fontSetting, *state->ambientEnabled);
+      *state->fontSetting, *state->ambientEnabled, state->logoSetting);
   const int viewsDirty = showDirty &&
                          (state->pendingViews != *state->enabledViews ||
                           state->pendingOverlap != *state->classicArtOverlap);
@@ -307,8 +410,8 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
   const int tabY = headerHeight + lineHeight / 4;
   const int middle = gsGlobal->Width / 2;
   static const int tabOffsets[] = {-175, -75, 30, 135};
-  static const char *const tabLabels[] = {"Game", "System", "Views", "Orbs"};
-  static const char *const dirtyTabLabels[] = {"Game *", "System *", "Views *", "Orbs *"};
+  static const char *const tabLabels[] = {"Game", "Global", "Views", "Orbs"};
+  static const char *const dirtyTabLabels[] = {"Game *", "Global *", "Views *", "Orbs *"};
   const int tabDirty[] = {gameDirty, systemDirty, viewsDirty, orbsDirty};
   drawIconWindow(middle - 230, tabY, middle - 200, tabY + lineHeight, 0,
                  FontMainColor, ALIGN_VCENTER, ICON_L1);
@@ -344,37 +447,46 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
     drawOptionsTextRow(baseX, optionsGlobalRowY(3, firstY, rowStep, lineHeight),
                        gsGlobal->Width - baseX, state->selectedGlobal == 3, selectorY,
                        "Ambient sound", state->pendingAmbient ? "On" : "Off");
+    drawOptionsSection(firstY + 4 * rowStep + lineHeight,
+                       "Applies to all games", 0);
+    drawOptionsTextRow(baseX, optionsGlobalRowY(4, firstY, rowStep, lineHeight),
+                       gsGlobal->Width - baseX, state->selectedGlobal == 4, selectorY,
+                       "PlayStation 2 logo", state->pendingLogo ? "On" : "Off");
     static const char *const descriptions[] = {
-        "Choose stars, orbs, or the moving red clouds.",
+        "Choose a library background; customize Ambient Orbs in Orbs.",
         "Change the tint of the glass interface.",
         "Use LUNA's font or the PSBBN keyboard lettering.",
-        "Play ambient music while browsing."};
+        "Play ambient music while browsing.",
+        "Default PS2 startup logo setting for every game."};
     drawTextWindow(baseX + 18, menuBottom - lineHeight,
                    gsGlobal->Width - baseX, menuBottom, 0,
                    HeaderTextColor, ALIGN_LEFT, descriptions[state->selectedGlobal]);
   } else if (state->page == OPTIONS_VIEWS) {
     const int firstY = menuTop + lineHeight + 4;
     int selectorY = optionsSelectorY(&state->selector, state->page, state->selectedView,
-                                     firstY + state->selectedView * rowStep);
-    drawOptionsSection(menuTop, "Library views", 0);
-    for (int row = UI_VIEW_CLASSIC; row <= UI_VIEW_ORBS; row++) {
-      const int optionRow = optionsViewRowForLibraryView(row);
-      drawOptionsTextRow(baseX, firstY + optionRow * rowStep,
-                         gsGlobal->Width - baseX, state->selectedView == optionRow,
-                         selectorY, viewRowLabels[row],
-                         state->pendingViews & (1U << row) ? "On" : "Off");
+                                     optionsViewRowY(state->selectedView,
+                                                     firstY, rowStep, lineHeight));
+    drawOptionsSection(menuTop, "Enabled views", 0);
+    for (int row = 0; row <= UI_VIEW_SAVE_ICONS; row++) {
+      drawOptionsTextRow(baseX, firstY + row * rowStep,
+                         gsGlobal->Width - baseX, state->selectedView == row,
+                         selectorY, lunaNavViewLabel(lunaViewCycleOrder[row]),
+                         state->pendingViews & (1U << lunaViewCycleOrder[row]) ? "On" : "Off");
     }
+    drawOptionsSection(firstY + OPTIONS_VIEW_ART_LAYOUT_ROW * rowStep,
+                       "List view", 0);
     drawOptionsTextRow(baseX + 18,
-                       firstY + OPTIONS_VIEW_ART_LAYOUT_ROW * rowStep,
+                       optionsViewRowY(OPTIONS_VIEW_ART_LAYOUT_ROW,
+                                       firstY, rowStep, lineHeight),
                        gsGlobal->Width - baseX,
                        state->selectedView == OPTIONS_VIEW_ART_LAYOUT_ROW, selectorY,
-                       "Classic art layout",
+                       "List art layout",
                        state->pendingOverlap ? "Overlap" : "Separate");
     if (state->selectedView == OPTIONS_VIEW_ART_LAYOUT_ROW)
       drawTextWindow(baseX + 18, menuBottom - lineHeight,
                      gsGlobal->Width - baseX, menuBottom, 0,
                      HeaderTextColor, ALIGN_LEFT,
-                     "Choose how cover art sits in Classic view.");
+                     "Choose how cover art sits in List view.");
     else {
       const ButtonPrompt cycle[] = {
           {ICON_CIRCLE, "Cycle views; keep at least one on"}};
@@ -383,86 +495,123 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                     HeaderTextColor, (PromptBar){NULL, cycle, 1});
     }
   } else if (state->page == OPTIONS_ORBS) {
-    static const char *const colorLabels[ORBS_COLOR_COUNT] = {
-        "Original", "Cyan", "Violet", "Rose", "Green", "Gold", "White"};
     drawOptionsSection(menuTop, "Orbs", 0);
-    const int firstY = menuTop + lineHeight + 4;
-    const int selectorY = optionsSelectorY(&state->selector, state->page, state->selectedOrbsRow,
-                                           firstY + state->selectedOrbsRow * rowStep);
-    drawOptionsTextRow(baseX, firstY, gsGlobal->Width - baseX,
-                       state->selectedOrbsRow == 0, selectorY,
-                       "Behavior", state->pendingOrbsTheme == ORBS_THEME_PS2_ORIGINAL ?
-                       "PS2 original" : "LUNA");
-    drawOptionsTextRow(baseX, firstY + rowStep, gsGlobal->Width - baseX,
-                       state->selectedOrbsRow == 1, selectorY,
-                       "Appearance", state->pendingOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL ?
-                       "PS2 original" : "LUNA");
-    drawOptionsTextRow(baseX, firstY + 2 * rowStep, gsGlobal->Width - baseX,
-                       state->selectedOrbsRow == 2, selectorY,
-                       "Orb color", colorLabels[state->pendingOrbsColor]);
-    drawOptionsTextRow(baseX, firstY + 3 * rowStep, gsGlobal->Width - baseX,
-                       state->selectedOrbsRow == 3, selectorY,
-                       "Tail color", colorLabels[state->pendingTailsColor]);
-    drawTextWindow(baseX, menuBottom - 2 * lineHeight,
-                   gsGlobal->Width - baseX, menuBottom, 0,
-                   HeaderTextColor, ALIGN_HCENTER,
-                   state->selectedOrbsRow >= 2 ?
-                       "Color choices affect only the shared orb background." :
-                   state->selectedOrbsRow == 0 ?
-                       (state->pendingOrbsTheme == ORBS_THEME_PS2_ORIGINAL ?
-                        "Seven clock-driven lights with long trails." :
-                        "Animated LUNA formations and title reactions.") :
-                       (state->pendingOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL ?
-                        "Original halo and core masks from the PS2 ROM." :
-                        "LUNA's soft glass lights and bright cores."));
+    if (!optionsOrbsEditable(state)) {
+      drawOrbsUnavailablePopup(baseX, menuTop, menuBottom);
+    } else {
+      static const char *const colorLabels[ORBS_COLOR_COUNT] = {
+          "Original", "Cyan", "Violet", "Rose", "Green", "Gold", "White"};
+      const int firstY = menuTop + lineHeight + 4;
+      const int selectorY = optionsSelectorY(&state->selector, state->page,
+                                             state->selectedOrbsRow,
+                                             firstY + state->selectedOrbsRow * rowStep);
+      drawOptionsTextRow(baseX, firstY, gsGlobal->Width - baseX,
+                         state->selectedOrbsRow == 0, selectorY,
+                         "Behavior", state->pendingOrbsTheme == ORBS_THEME_PS2_ORIGINAL ?
+                         "PS2 original" : "LUNA");
+      drawOptionsTextRow(baseX, firstY + rowStep, gsGlobal->Width - baseX,
+                         state->selectedOrbsRow == 1, selectorY,
+                         "Appearance", state->pendingOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL ?
+                         "PS2 original" : "LUNA");
+      if (optionsOrbsColorsEditable(state)) {
+        drawOptionsTextRow(baseX, firstY + 2 * rowStep, gsGlobal->Width - baseX,
+                           state->selectedOrbsRow == 2, selectorY,
+                           "Orb color", colorLabels[state->pendingOrbsColor]);
+        drawOptionsTextRow(baseX, firstY + 3 * rowStep, gsGlobal->Width - baseX,
+                           state->selectedOrbsRow == 3, selectorY,
+                           "Tail color", colorLabels[state->pendingTailsColor]);
+      }
+      drawTextWindow(baseX, menuBottom - 2 * lineHeight,
+                     gsGlobal->Width - baseX, menuBottom, 0,
+                     HeaderTextColor, ALIGN_HCENTER,
+                     !optionsOrbsColorsEditable(state) ?
+                         "PS2 original appearance uses its original colors." :
+                     state->selectedOrbsRow >= 2 ?
+                         "Color choices affect only the shared orb background." :
+                     state->selectedOrbsRow == 0 ?
+                         (state->pendingOrbsTheme == ORBS_THEME_PS2_ORIGINAL ?
+                          "Seven clock-driven lights with long trails." :
+                          "Animated LUNA formations and title reactions.") :
+                         (state->pendingOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL ?
+                          "Original halo and core masks from the PS2 ROM." :
+                          "LUNA's soft glass lights and bright cores."));
+    }
   } else {
     drawTextWindow(baseX, menuTop, gsGlobal->Width - baseX, 0, 0,
                    HeaderTextColor, ALIGN_HCENTER, state->titleHeader);
     const int contentTop = menuTop + lineHeight + 5;
-    const int gameStep = lineHeight + lineHeight / 3;
-    CardArtType selectedCardArt = state->selectedGameRow == LUNA_GAME_VMC_SLOT1 ?
-                                  CARD_ART_SLOT_1 :
-                                  state->selectedGameRow == LUNA_GAME_VMC_SLOT2 ?
-                                  CARD_ART_SLOT_2 : CARD_ART_NONE;
-    int gameRight = gsGlobal->Width - baseX -
-                    (selectedCardArt == CARD_ART_NONE ? 0 : 128);
-    int selectedY = optionsGameRowY(state->selectedGameRow, contentTop, gameStep);
-    int scrollOffset = selectedY + lineHeight > menuBottom
-                           ? selectedY + lineHeight - menuBottom : 0;
-    int focusY = selectedY - scrollOffset;
-    int selectorY = optionsSelectorY(&state->selector, state->page, state->selectedGameRow, focusY);
-    const int headingRows[] = {LUNA_GAME_FAST_READS, LUNA_GAME_VMC_SLOT1,
-                               LUNA_GAME_VIDEO_MODE,
-                               LUNA_GAME_PS2_LOGO};
-    const char *const headings[] = {"Compatibility", "Memory cards", "Video", "Launch"};
-    for (int section = 0; section < 4; section++) {
-      int y = optionsGameRowY(headingRows[section], contentTop, gameStep) -
-              gameStep - scrollOffset;
-      if (y >= contentTop && y + lineHeight <= menuBottom)
-        drawOptionsSection(y, headings[section], 0);
+    const int gameStep = lineHeight + lineHeight / 2;
+    const int firstY = contentTop + lineHeight + 4;
+    if (state->gameSection == GAME_HUB) {
+      char compatSummary[24];
+      int compatEnabled = 0;
+      for (int bit = 0; bit < LUNA_GAME_COMPAT_COUNT; bit++)
+        compatEnabled += (state->gameOptions.compat & (1U << bit)) != 0;
+      snprintf(compatSummary, sizeof(compatSummary), "%d enabled", compatEnabled);
+      const char *const summaries[GAME_SECTION_COUNT] = {
+          gameVMCEnabled(state->titleArguments) ? "Enabled" : "Disabled",
+          compatSummary,
+          lunaGameOptionsValue(&state->gameOptions, LUNA_GAME_VIDEO_MODE),
+          "3 options"};
+      drawOptionsSection(contentTop, "Game settings", 0);
+      int selectorY = optionsSelectorY(&state->selector, state->page,
+          state->selectedGameHubRow, firstY + state->selectedGameHubRow * gameStep);
+      for (int row = 0; row < GAME_SECTION_COUNT; row++)
+        drawOptionsTextRow(baseX, firstY + row * gameStep,
+                           gsGlobal->Width - baseX,
+                           row == state->selectedGameHubRow, selectorY,
+                           gameSectionLabels[row], summaries[row]);
+      drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
+                     gsGlobal->Height - footerHeight, 0, HeaderTextColor,
+                     ALIGN_LEFT, gameSectionDescriptions[state->selectedGameHubRow]);
+    } else {
+      const GameSection section = state->gameSection;
+      drawOptionsSection(contentTop, gameSectionLabels[section], 0);
+      if (section == GAME_MEMORY_CARDS) {
+        drawGameVMCRows(state, baseX, firstY, gameStep, menuBottom);
+      } else {
+        const LunaGameRow selectedRow =
+            gameSectionRows[section][state->selectedGameRow];
+        int selectorY = optionsSelectorY(&state->selector, state->page,
+            GAME_SECTION_COUNT + section * 5 + state->selectedGameRow,
+            firstY + state->selectedGameRow * gameStep);
+        for (int row = 0; row < gameSectionRowCounts[section]; row++) {
+          LunaGameRow option = gameSectionRows[section][row];
+          drawOptionsTextRow(baseX, firstY + row * gameStep,
+                             gsGlobal->Width - baseX,
+                             row == state->selectedGameRow, selectorY,
+                             gameRowLabels[option],
+                             option == LUNA_GAME_PS2_LOGO ?
+                                 gamePS2LogoValue(state) :
+                                 lunaGameOptionsValue(&state->gameOptions, option));
+        }
+        drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
+                       gsGlobal->Height - footerHeight, 0,
+                       HeaderTextColor, ALIGN_LEFT,
+                       gameRowDescriptions[selectedRow]);
+      }
     }
-    for (int row = 0; row < LUNA_GAME_ROW_COUNT; row++) {
-      int y = optionsGameRowY(row, contentTop, gameStep) - scrollOffset;
-      if (y < contentTop || y + lineHeight > menuBottom)
-        continue;
-      drawOptionsTextRow(baseX, y, gameRight,
-                         row == state->selectedGameRow, selectorY,
-                         gameRowLabels[row],
-                         lunaGameOptionsValue(&state->gameOptions, (LunaGameRow)row));
-    }
-    if (selectedCardArt != CARD_ART_NONE)
-      drawCardArt(selectedCardArt, gsGlobal->Width - baseX - 116,
-                  contentTop + 8, 108);
-    drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
-                   gsGlobal->Height - footerHeight, 0, HeaderTextColor,
-                   ALIGN_LEFT, gameRowDescriptions[state->selectedGameRow]);
   }
   drawOptionsFooter(state->page == OPTIONS_PER_GAME, 0,
-                    gameDirty || systemDirty || viewsDirty || orbsDirty, 0);
+                    gameDirty || systemDirty || viewsDirty || orbsDirty,
+                    state->page == OPTIONS_ORBS && !optionsOrbsEditable(state),
+                    state->page == OPTIONS_PER_GAME && state->gameSection == GAME_HUB ?
+                        (state->selectedGameHubRow == GAME_MEMORY_CARDS ?
+                            (gameVMCEnabled(state->titleArguments) ? "Manage" : "Enable") :
+                            "Open") :
+                    state->page == OPTIONS_PER_GAME &&
+                    state->gameSection == GAME_MEMORY_CARDS ?
+                        (state->selectedGameRow == 2 ? "Create" :
+                         state->selectedGameRow == 3 ? "Disable" : "Assign") : NULL,
+                    (state->page == OPTIONS_PER_GAME &&
+                     state->gameSection != GAME_HUB) ||
+                    (state->page == OPTIONS_ORBS &&
+                     !optionsOrbsEditable(state)));
   if (showDirty && state->saveError)
     drawTextWindow(baseX, gsGlobal->Height - footerHeight - getFontLineHeight(),
                    gsGlobal->Width - baseX, gsGlobal->Height - footerHeight, 0,
                    ErrorTextColor, ALIGN_HCENTER,
+                   state->saveErrorLabel ? state->saveErrorLabel :
                    state->page == OPTIONS_GLOBAL ? "Could not save global settings" :
                    state->page == OPTIONS_VIEWS ? "Could not save views" :
                    state->page == OPTIONS_ORBS ? "Could not save orb settings" :
@@ -474,14 +623,72 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
 }
 
 static int optionsGlobalDirty(int pendingBackground, int pendingGlassColor,
-                              int pendingFont, int pendingAmbient,
+                              int pendingFont, int pendingAmbient, int pendingLogo,
                               int background, int glassColor, int fontSetting,
-                              int ambient) {
+                              int ambient, int logo) {
   return pendingBackground != background || pendingGlassColor != glassColor ||
-         pendingFont != fontSetting || pendingAmbient != ambient;
+         pendingFont != fontSetting || pendingAmbient != ambient ||
+         pendingLogo != logo;
 }
 
 #define VMC_PICKER_MAX_FILES 128
+
+static int gameVMCDirectory(Target *target, char *path, size_t pathSize) {
+  const char *mountpoint = target->device->mountpoint;
+  size_t mountLength = strlen(mountpoint);
+  int written = snprintf(path, pathSize, "%s%sVMC", mountpoint,
+                         mountLength > 0 && mountpoint[mountLength - 1] == '/' ?
+                             "" : "/");
+  return written >= 0 && (size_t)written < pathSize;
+}
+
+static void drawGameVMCProgress(int percent, void *context) {
+  char message[64];
+  snprintf(message, sizeof(message), "Creating card: %d%%", percent);
+  gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
+  drawOptionsSheet();
+  const int baseX = keepoutArea + 10;
+  drawTextWindow(baseX, headerHeight - getFontLineHeight(),
+                 gsGlobal->Width - baseX, 0, 0, HeaderTextColor,
+                 ALIGN_HCENTER, "Options");
+  drawOptionsSection(headerHeight + getFontLineHeight() / 4,
+                     "Virtual memory cards", 0);
+  drawTextWindow(baseX, gsGlobal->Height / 2,
+                 gsGlobal->Width - baseX, 0, 0, HeaderTextColor,
+                 ALIGN_HCENTER, message);
+  drawTextWindow(baseX, gsGlobal->Height - footerHeight - getFontLineHeight(),
+                 gsGlobal->Width - baseX, 0, 0, HeaderTextColor,
+                 ALIGN_HCENTER, "Please wait until creation finishes");
+  gsKit_set_test(gsGlobal, GS_ZTEST_ON);
+  presentOptionsFrame();
+  (void)context;
+}
+
+static int createNextGameVMC(OptionsMenuState *state, char *created,
+                             size_t createdSize) {
+  const int mode = state->target->device->mode;
+  if (mode != MODE_ATA && mode != MODE_USB && mode != MODE_MX4SIO &&
+      mode != MODE_ILINK)
+    return 0;
+  char directory[PATH_MAX + 1];
+  struct stat info;
+  if (!gameVMCDirectory(state->target, directory, sizeof(directory)))
+    return 0;
+  if (stat(directory, &info) != 0 && mkdir(directory, 0777) != 0)
+    return 0;
+  for (int index = 1; index <= 999; index++) {
+    char name[24];
+    snprintf(name, sizeof(name), "LUNA_%03d.bin", index);
+    int written = snprintf(created, createdSize, "%s/%s", directory, name);
+    if (written < 0 || (size_t)written >= createdSize)
+      return 0;
+    if (stat(created, &info) == 0)
+      continue;
+    drawGameVMCProgress(0, state);
+    return lunaCreateVMC8(created, drawGameVMCProgress, state) == 0;
+  }
+  return 0;
+}
 
 static int vmcFileCompare(const void *left, const void *right) {
   return strcmp(*(const char *const *)left, *(const char *const *)right);
@@ -503,11 +710,7 @@ static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
   int count = 0;
   int selected = 0;
   int changed = 0;
-  const char *mountpoint = target->device->mountpoint;
-  size_t mountLength = strlen(mountpoint);
-  if (snprintf(directoryPath, sizeof(directoryPath), "%s%sVMC", mountpoint,
-               mountLength > 0 && mountpoint[mountLength - 1] == '/' ? "" : "/")
-      >= sizeof(directoryPath))
+  if (!gameVMCDirectory(target, directoryPath, sizeof(directoryPath)))
     return 0;
   DIR *directory = opendir(directoryPath);
   if (directory != NULL) {
@@ -532,9 +735,7 @@ static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
     const int menuTop = headerHeight + 2 * lineHeight + 8;
     const int menuBottom = gsGlobal->Height - footerHeight - lineHeight;
     const int rowStep = lineHeight + lineHeight / 3;
-    const int showCardPreview = selected == 0;
-    const int rowRight = gsGlobal->Width - baseX -
-                         (showCardPreview ? 128 : 0);
+    const int rowRight = gsGlobal->Width - baseX;
     const int focusY = menuTop + selected * rowStep;
     const int scrollOffset = focusY + lineHeight > menuBottom
                                  ? focusY + lineHeight - menuBottom : 0;
@@ -553,13 +754,10 @@ static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
                          index == selected, y,
                          index == 0 ? "Physical card" : files[index - 1], NULL);
     }
-    if (showCardPreview)
-      drawCardArt(slot == 0 ? CARD_ART_SLOT_1 : CARD_ART_SLOT_2,
-                  gsGlobal->Width - baseX - 116, menuTop + 8, 108);
     drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
                    gsGlobal->Height - footerHeight, 0, HeaderTextColor,
                    ALIGN_LEFT, count ? "Select a card from /VMC on this drive."
-                                     : "Create a card from Virtual Memory Cards in the main menu.");
+                                     : "Create a card from the Virtual memory cards page.");
     const ButtonPrompt assign[] = {
         {ICON_CROSS, "Assign"}, {ICON_TRIANGLE, "Back"}};
     drawPromptBar(baseX + 18, gsGlobal->Height - footerHeight,
@@ -593,27 +791,43 @@ static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
 }
 
 static int handleOrbsInput(OptionsMenuState *state, int input) {
+  if (!optionsOrbsEditable(state)) {
+    if (input & PAD_TRIANGLE) {
+      state->page = OPTIONS_VIEWS;
+      state->selector.initialized = 0;
+      state->saveError = 0;
+    }
+    return 0;
+  }
+  const int rowCount = optionsOrbsColorsEditable(state) ? 4 : 2;
+  if (state->selectedOrbsRow >= rowCount)
+    state->selectedOrbsRow = 1;
   if (input & PAD_UP) {
-    state->selectedOrbsRow = (state->selectedOrbsRow + 3) % 4;
+    state->selectedOrbsRow = (state->selectedOrbsRow + rowCount - 1) % rowCount;
   } else if (input & PAD_DOWN) {
-    state->selectedOrbsRow = (state->selectedOrbsRow + 1) % 4;
+    state->selectedOrbsRow = (state->selectedOrbsRow + 1) % rowCount;
   } else if (input & (PAD_CROSS | PAD_CIRCLE | PAD_LEFT | PAD_RIGHT)) {
     const int direction = input & PAD_LEFT ? -1 : 1;
     if (state->selectedOrbsRow == 0)
       state->pendingOrbsTheme = state->pendingOrbsTheme == ORBS_THEME_LUNA ?
                          ORBS_THEME_PS2_ORIGINAL : ORBS_THEME_LUNA;
-    else if (state->selectedOrbsRow == 1)
+    else if (state->selectedOrbsRow == 1) {
       state->pendingOrbsAppearance = state->pendingOrbsAppearance == ORBS_APPEARANCE_LUNA ?
                               ORBS_APPEARANCE_PS2_ORIGINAL : ORBS_APPEARANCE_LUNA;
-    else if (state->selectedOrbsRow == 2)
+      if (!optionsOrbsColorsEditable(state)) {
+        state->pendingOrbsColor = *state->orbsColorSetting;
+        state->pendingTailsColor = *state->tailsColorSetting;
+      }
+    } else if (state->selectedOrbsRow == 2 && optionsOrbsColorsEditable(state))
       state->pendingOrbsColor = (state->pendingOrbsColor + direction + ORBS_COLOR_COUNT) %
                          ORBS_COLOR_COUNT;
-    else
+    else if (state->selectedOrbsRow == 3 && optionsOrbsColorsEditable(state))
       state->pendingTailsColor = (state->pendingTailsColor + direction + ORBS_COLOR_COUNT) %
                           ORBS_COLOR_COUNT;
   } else if (input & PAD_START) {
     state->saveError = 0;
     if (state->pendingOrbsTheme != *state->orbsThemeSetting) {
+      state->saveErrorLabel = "Could not save orb behavior";
       state->saveError = saveAmbientOrbsTheme(state->target,
                         (AmbientOrbsTheme)state->pendingOrbsTheme);
       if (!state->saveError) {
@@ -622,6 +836,7 @@ static int handleOrbsInput(OptionsMenuState *state, int input) {
       }
     }
     if (!state->saveError && state->pendingOrbsAppearance != *state->orbsAppearanceSetting) {
+      state->saveErrorLabel = "Could not save orb appearance";
       if (setAmbientOrbsAppearance((AmbientOrbsAppearance)state->pendingOrbsAppearance)) {
         state->saveError = -1;
       } else {
@@ -633,7 +848,9 @@ static int handleOrbsInput(OptionsMenuState *state, int input) {
           setAmbientOrbsAppearance((AmbientOrbsAppearance)*state->orbsAppearanceSetting);
       }
     }
-    if (!state->saveError && state->pendingOrbsColor != *state->orbsColorSetting) {
+    if (!state->saveError && optionsOrbsColorsEditable(state) &&
+        state->pendingOrbsColor != *state->orbsColorSetting) {
+      state->saveErrorLabel = "Could not save orb color";
       state->saveError = saveAmbientOrbsColor(state->target, ORBS_COLOR_PART_ORBS,
                                       (AmbientOrbsColor)state->pendingOrbsColor);
       if (!state->saveError) {
@@ -642,7 +859,9 @@ static int handleOrbsInput(OptionsMenuState *state, int input) {
                             (AmbientOrbsColor)state->pendingOrbsColor);
       }
     }
-    if (!state->saveError && state->pendingTailsColor != *state->tailsColorSetting) {
+    if (!state->saveError && optionsOrbsColorsEditable(state) &&
+        state->pendingTailsColor != *state->tailsColorSetting) {
+      state->saveErrorLabel = "Could not save tail color";
       state->saveError = saveAmbientOrbsColor(state->target, ORBS_COLOR_PART_TAILS,
                                       (AmbientOrbsColor)state->pendingTailsColor);
       if (!state->saveError) {
@@ -667,15 +886,14 @@ static int handleViewsInput(OptionsMenuState *state, int input) {
     if (state->selectedView == OPTIONS_VIEW_ART_LAYOUT_ROW) {
       state->pendingOverlap = !state->pendingOverlap;
     } else {
-      int view = state->selectedView == UI_VIEW_CLASSIC
-                     ? UI_VIEW_CLASSIC : state->selectedView - 1;
-      uint32_t bit = 1U << view;
+      uint32_t bit = 1U << lunaViewCycleOrder[state->selectedView];
       if (state->pendingViews != bit)
         state->pendingViews ^= bit;
     }
   } else if (input & PAD_START) {
     state->saveError = 0;
     if (state->pendingOverlap != *state->classicArtOverlap) {
+      state->saveErrorLabel = "Could not save List art layout";
       state->saveError = saveClassicArtOverlap(state->target, state->pendingOverlap);
       if (!state->saveError) {
         *state->classicArtOverlap = state->pendingOverlap;
@@ -683,6 +901,7 @@ static int handleViewsInput(OptionsMenuState *state, int input) {
       }
     }
     if (!state->saveError && state->pendingViews != *state->enabledViews) {
+      state->saveErrorLabel = "Could not save enabled views";
       state->saveError = saveEnabledLibraryViews(state->target, state->pendingViews);
       if (!state->saveError)
         *state->enabledViews = state->pendingViews;
@@ -695,9 +914,9 @@ static int handleViewsInput(OptionsMenuState *state, int input) {
 
 static int handleSystemInput(OptionsMenuState *state, int input) {
   if (input & PAD_UP) {
-    state->selectedGlobal = (state->selectedGlobal + 3) % 4;
+    state->selectedGlobal = (state->selectedGlobal + 4) % 5;
   } else if (input & PAD_DOWN) {
-    state->selectedGlobal = (state->selectedGlobal + 1) % 4;
+    state->selectedGlobal = (state->selectedGlobal + 1) % 5;
   } else if (input & (PAD_CROSS | PAD_CIRCLE | PAD_LEFT | PAD_RIGHT)) {
     const int direction = (input & PAD_LEFT) ? -1 : 1;
     if (state->selectedGlobal == 0)
@@ -708,43 +927,76 @@ static int handleSystemInput(OptionsMenuState *state, int input) {
       state->pendingGlassColor = (state->pendingGlassColor + direction + GLASS_COLOR_COUNT) % GLASS_COLOR_COUNT;
     else if (state->selectedGlobal == 2)
       state->pendingFont = (state->pendingFont + direction + UI_FONT_COUNT) % UI_FONT_COUNT;
-    else
+    else if (state->selectedGlobal == 3)
       state->pendingAmbient = !state->pendingAmbient;
+    else
+      state->pendingLogo = !state->pendingLogo;
   } else if (input & PAD_START) {
     state->saveError = 0;
     if (state->pendingBackground != *state->ambientOrbsBackgroundSetting) {
       if (setLibraryBackground((LibraryBackground)state->pendingBackground)) {
         state->saveError = -1;
+        state->saveErrorLabel = "Could not load background";
       } else {
-        state->saveError = saveLibraryBackground(state->target,
-                                                 (LibraryBackground)state->pendingBackground);
-        if (!state->saveError)
+        int result = saveLibraryBackground(state->target,
+                                           (LibraryBackground)state->pendingBackground);
+        if (!result)
           *state->ambientOrbsBackgroundSetting = state->pendingBackground;
-        else
+        else {
           setLibraryBackground((LibraryBackground)*state->ambientOrbsBackgroundSetting);
+          state->saveError = result;
+          state->saveErrorLabel = "Could not save background";
+        }
       }
     }
-    if (!state->saveError && state->pendingGlassColor != *state->glassColorSetting) {
-      state->saveError = saveGlassColorPreset(state->target, (GlassColorPreset)state->pendingGlassColor);
-      if (!state->saveError)
+    if (state->pendingGlassColor != *state->glassColorSetting) {
+      int result = saveGlassColorPreset(state->target,
+                                       (GlassColorPreset)state->pendingGlassColor);
+      if (!result)
         *state->glassColorSetting = state->pendingGlassColor;
-    }
-    if (!state->saveError && state->pendingFont != *state->fontSetting) {
-      if (setUIFont((UIFont)state->pendingFont)) {
-        state->saveError = -1;
-      } else {
-        state->saveError = saveUIFont(state->target, (UIFont)state->pendingFont);
-        if (!state->saveError)
-          *state->fontSetting = state->pendingFont;
-        else
-          setUIFont((UIFont)*state->fontSetting);
+      else if (!state->saveError) {
+        state->saveError = result;
+        state->saveErrorLabel = "Could not save glass color";
       }
     }
-    if (!state->saveError && state->pendingAmbient != *state->ambientEnabled) {
-      state->saveError = saveAmbientSoundEnabled(state->target, state->pendingAmbient);
-      if (!state->saveError) {
+    if (state->pendingFont != *state->fontSetting) {
+      if (setUIFont((UIFont)state->pendingFont)) {
+        if (!state->saveError) {
+          state->saveError = -1;
+          state->saveErrorLabel = "Could not load font";
+        }
+      } else {
+        int result = saveUIFont(state->target, (UIFont)state->pendingFont);
+        if (!result)
+          *state->fontSetting = state->pendingFont;
+        else {
+          setUIFont((UIFont)*state->fontSetting);
+          if (!state->saveError) {
+            state->saveError = result;
+            state->saveErrorLabel = "Could not save font";
+          }
+        }
+      }
+    }
+    if (state->pendingAmbient != *state->ambientEnabled) {
+      int result = saveAmbientSoundEnabled(state->target, state->pendingAmbient);
+      if (!result) {
         *state->ambientEnabled = state->pendingAmbient;
         ambientSetEnabled(state->pendingAmbient);
+      } else if (!state->saveError) {
+        state->saveError = result;
+        state->saveErrorLabel = "Could not save ambient sound";
+      }
+    }
+    if (state->pendingLogo != state->logoSetting) {
+      int result = savePS2LogoEnabled(state->target, state->pendingLogo);
+      if (!result) {
+        state->logoSetting = state->pendingLogo;
+        lunaApplyGlobalPS2Logo(state->titleArguments, state->logoSetting);
+        lunaGameOptionsRead(&state->gameOptions, state->titleArguments);
+      } else if (!state->saveError) {
+        state->saveError = result;
+        state->saveErrorLabel = "Could not save PS2 logo setting";
       }
     }
   } else if (input & PAD_TRIANGLE) {
@@ -755,49 +1007,121 @@ static int handleSystemInput(OptionsMenuState *state, int input) {
 
 // Returns 1 for Back, -1 if a test launch unexpectedly returns, or 0 to stay.
 static int handleGameInput(OptionsMenuState *state, int input) {
-  if ((state->selectedGameRow == LUNA_GAME_VMC_SLOT1 ||
-       state->selectedGameRow == LUNA_GAME_VMC_SLOT2) &&
-      (input & (PAD_CROSS | PAD_CIRCLE))) {
-    int slot = state->selectedGameRow - LUNA_GAME_VMC_SLOT1;
-    if (uiVMCPickerLoop(state->target, state->titleArguments, &state->gameOptions, slot))
-      state->titleArgumentsChanged = 1;
-  } else if (state->selectedGameRow == LUNA_GAME_LAUNCH_ARGUMENTS &&
-      (input & (PAD_CROSS | PAD_CIRCLE))) {
-    // Open the full argument list from its visible Game row.
-    int result = uiArgumentListLoop(state->target, state->titleArguments);
-    if (result < 0)
-      return -1;
-    if (result == 2) {
-      state->titleArgumentsChanged = 0;
-    } else if (result == 1) {
-      state->titleArgumentsChanged = 1;
-    }
-    lunaGameOptionsRead(&state->gameOptions, state->titleArguments);
-  } else if (input & PAD_SQUARE) {
+  if (input & PAD_SQUARE) {
     // Launch title without saving arguments
     uiLaunchTitle(state->target, state->titleArguments, NULL);
     return -1;
-  } else if (input & PAD_START) {
+  }
+  if (input & PAD_START) {
+    state->saveErrorLabel = "Could not save game settings";
     state->saveError = updateTitleLaunchArguments(state->target, state->titleArguments);
     if (!state->saveError)
       state->titleArgumentsChanged = 0;
-  } else if (input & PAD_TRIANGLE) {
-    return 1;
-  } else if (input & PAD_UP) {
-    state->selectedGameRow = (state->selectedGameRow + LUNA_GAME_ROW_COUNT - 1) %
-                      LUNA_GAME_ROW_COUNT;
-  } else if (input & PAD_DOWN) {
-    state->selectedGameRow = (state->selectedGameRow + 1) % LUNA_GAME_ROW_COUNT;
+    return 0;
+  }
+  if (state->gameSection == GAME_HUB) {
+    if (input & PAD_TRIANGLE)
+      return 1;
+    if (input & PAD_UP)
+      state->selectedGameHubRow = (state->selectedGameHubRow +
+                                   GAME_SECTION_COUNT - 1) % GAME_SECTION_COUNT;
+    else if (input & PAD_DOWN)
+      state->selectedGameHubRow = (state->selectedGameHubRow + 1) % GAME_SECTION_COUNT;
+    else if (input & (PAD_CROSS | PAD_CIRCLE)) {
+      state->gameSection = (GameSection)state->selectedGameHubRow;
+      state->selectedGameRow = 0;
+      state->vmcStatus[0] = '\0';
+      state->selector.initialized = 0;
+    }
+    return 0;
+  }
+  if (input & PAD_TRIANGLE) {
+    state->gameSection = GAME_HUB;
+    state->selector.initialized = 0;
+    return 0;
+  }
+  int count = state->gameSection == GAME_MEMORY_CARDS &&
+              !gameVMCEnabled(state->titleArguments) ? 3 :
+              gameSectionRowCounts[state->gameSection];
+  if (input & PAD_UP) {
+    state->selectedGameRow = (state->selectedGameRow + count - 1) % count;
+    return 0;
+  }
+  if (input & PAD_DOWN) {
+    state->selectedGameRow = (state->selectedGameRow + 1) % count;
+    return 0;
+  }
+  if (state->gameSection == GAME_MEMORY_CARDS &&
+      (input & (PAD_CROSS | PAD_CIRCLE))) {
+    if (state->selectedGameRow == 2) {
+      char created[PATH_MAX + 1];
+      if (createNextGameVMC(state, created, sizeof(created)))
+        snprintf(state->vmcStatus, sizeof(state->vmcStatus),
+                 "Created %.24s. Select a slot to assign it.",
+                 strrchr(created, '/') + 1);
+      else
+        snprintf(state->vmcStatus, sizeof(state->vmcStatus),
+                 "Could not create card. Check drive and free space.");
+      return 0;
+    }
+    if (state->selectedGameRow == 3) {
+      if (gameVMCEnabled(state->titleArguments)) {
+        if (lunaGameOptionsSetVMC(&state->gameOptions,
+                                  state->titleArguments, 0, "") &&
+            lunaGameOptionsSetVMC(&state->gameOptions,
+                                  state->titleArguments, 1, "")) {
+          state->titleArgumentsChanged = 1;
+          state->selectedGameRow = 0;
+          state->selector.initialized = 0;
+          snprintf(state->vmcStatus, sizeof(state->vmcStatus),
+                   "Virtual cards disabled. Press Start to save.");
+        } else {
+          snprintf(state->vmcStatus, sizeof(state->vmcStatus),
+                   "Could not disable virtual cards.");
+        }
+      }
+      return 0;
+    }
+  }
+  if (state->gameSection == GAME_MEMORY_CARDS && state->selectedGameRow >= 2)
+    return 0;
+  if (state->gameSection == GAME_MEMORY_CARDS &&
+      (input & (PAD_LEFT | PAD_RIGHT)))
+    return 0;
+  LunaGameRow selectedRow = gameSectionRows[state->gameSection][state->selectedGameRow];
+  if ((selectedRow == LUNA_GAME_VMC_SLOT1 || selectedRow == LUNA_GAME_VMC_SLOT2) &&
+      (input & (PAD_CROSS | PAD_CIRCLE))) {
+    int slot = selectedRow - LUNA_GAME_VMC_SLOT1;
+    if (uiVMCPickerLoop(state->target, state->titleArguments, &state->gameOptions, slot)) {
+      state->titleArgumentsChanged = 1;
+      snprintf(state->vmcStatus, sizeof(state->vmcStatus),
+               "Card selection changed. Press Start to save.");
+    }
+  } else if (selectedRow == LUNA_GAME_LAUNCH_ARGUMENTS &&
+             (input & (PAD_CROSS | PAD_CIRCLE))) {
+    int result = uiArgumentListLoop(state->target, state->titleArguments);
+    if (result < 0)
+      return -1;
+    if (result == 2)
+      state->titleArgumentsChanged = 0;
+    else if (result == 1)
+      state->titleArgumentsChanged = 1;
+    lunaGameOptionsRead(&state->gameOptions, state->titleArguments);
   } else if (input & (PAD_CROSS | PAD_CIRCLE | PAD_LEFT | PAD_RIGHT)) {
     int direction = (input & PAD_LEFT) ? -1 : 1;
-    if (lunaGameOptionsChange(&state->gameOptions, state->titleArguments,
-                              (LunaGameRow)state->selectedGameRow, direction))
+    int changed = selectedRow == LUNA_GAME_PS2_LOGO ?
+        lunaGameOptionsCyclePS2Logo(&state->gameOptions,
+                                    state->titleArguments,
+                                    state->logoSetting, direction) :
+        lunaGameOptionsChange(&state->gameOptions, state->titleArguments,
+                              selectedRow, direction);
+    if (changed)
       state->titleArgumentsChanged = 1;
   }
   return 0;
 }
 
-// Runs the Game, System, Views, and Orbs settings tabs.
+// Runs the Game, Global, Views, and Orbs settings tabs.
 // Returns -1 if a test launch unexpectedly returns.
 int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
                        int *ambientOrbsBackgroundSetting, int *glassColorSetting,
@@ -806,6 +1130,7 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
                        int *tailsColorSetting,
                         uint32_t *enabledViews) {
   int res = 0;
+  int logoSetting = loadPS2LogoEnabled(target);
   OptionsMenuState state = {
       .target = target,
       .classicArtOverlap = classicArtOverlap,
@@ -813,6 +1138,7 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
       .glassColorSetting = glassColorSetting,
       .fontSetting = fontSetting,
       .ambientEnabled = ambientEnabled,
+      .logoSetting = logoSetting,
       .orbsThemeSetting = orbsThemeSetting,
       .orbsAppearanceSetting = orbsAppearanceSetting,
       .orbsColorSetting = orbsColorSetting,
@@ -823,13 +1149,14 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
       .pendingGlassColor = *glassColorSetting,
       .pendingFont = *fontSetting,
       .pendingAmbient = *ambientEnabled,
+      .pendingLogo = logoSetting,
       .pendingOrbsTheme = *orbsThemeSetting,
       .pendingOrbsAppearance = *orbsAppearanceSetting,
       .pendingOrbsColor = *orbsColorSetting,
       .pendingTailsColor = *tailsColorSetting,
       .pendingViews = *enabledViews,
       .page = OPTIONS_PER_GAME,
-      .selectedGameRow = LUNA_GAME_FAST_READS,
+      .gameSection = GAME_HUB,
       .selectedView = UI_VIEW_CLASSIC};
   snprintf(state.titleHeader, sizeof(state.titleHeader), "%.38s  (%s)",
            target->name, target->id);
@@ -854,12 +1181,14 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
     // Process user inputs
     input = readInput();
     if (input & PAD_L1) {
-      state.page = (OptionsPage)((state.page + OPTIONS_ORBS) % (OPTIONS_ORBS + 1));
+      state.page = optionsNextPage(state.page, -1);
+      state.selector.initialized = 0;
       state.saveError = 0;
       continue;
     }
     if (input & PAD_R1) {
-      state.page = (OptionsPage)((state.page + 1) % (OPTIONS_ORBS + 1));
+      state.page = optionsNextPage(state.page, 1);
+      state.selector.initialized = 0;
       state.saveError = 0;
       continue;
     }
@@ -947,7 +1276,7 @@ static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments) {
     drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
                    gsGlobal->Height - footerHeight, 0, HeaderTextColor,
                    ALIGN_LEFT, "[G] Inherited from global settings");
-    drawOptionsFooter(1, 1, changed, 0);
+    drawOptionsFooter(1, 1, changed, 0, NULL, 0);
     if (saveError)
       drawTextWindow(baseX, menuBottom, gsGlobal->Width - baseX,
                      gsGlobal->Height - footerHeight, 0, ErrorTextColor, ALIGN_HCENTER,

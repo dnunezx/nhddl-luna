@@ -59,8 +59,8 @@ int main(void) {
   assert(!strcmp(compat->value, "27") && !compat->isGlobal);
   assert(lunaGameOptionsChange(&options, &arguments, LUNA_GAME_FIELD_FLIP, 1));
   assert(!strcmp(video->value, "fp2:3"));
-  assert(lunaGameOptionsChange(&options, &arguments, LUNA_GAME_PS2_LOGO, 1));
-  assert(logo->isDisabled && logo->isGlobal);
+  assert(lunaGameOptionsCyclePS2Logo(&options, &arguments, 1, 1));
+  assert(logo->isDisabled && !logo->isGlobal);
   assert(lunaGameOptionsChange(&options, &arguments, LUNA_GAME_DEBUG_COLORS, 1));
   assert(!debug->isDisabled && !debug->isGlobal);
   assert(!strcmp(custom->value, "keep-me") && !custom->isDisabled);
@@ -75,7 +75,12 @@ int main(void) {
   video->value = strdup("vendor-mode");
   lunaGameOptionsRead(&options, &arguments);
   assert(options.videoMode == -1);
-  assert(lunaGameOptionsChange(&options, &arguments, LUNA_GAME_PS2_LOGO, 1));
+  assert(lunaGameOptionsCyclePS2Logo(&options, &arguments, 1, 1));
+  assert(!logo->isDisabled && !logo->isGlobal);
+  assert(lunaGameOptionsCyclePS2Logo(&options, &arguments, 1, 1));
+  assert(!logo->isDisabled && logo->isGlobal);
+  assert(lunaGameOptionsCyclePS2Logo(&options, &arguments, 1, -1));
+  assert(!logo->isDisabled && !logo->isGlobal);
   assert(!strcmp(video->value, "vendor-mode"));
 
   assert(lunaGameOptionsSetVMC(&options, &arguments, 0,
@@ -89,6 +94,35 @@ int main(void) {
   assert(lunaGameOptionsSetVMC(&options, &arguments, 0, ""));
   assert(card->isDisabled);
   assert(!strcmp(options.vmcSlotLabel[0], "Physical card"));
+
+  logo->isGlobal = 1;
+  assert(lunaApplyGlobalPS2Logo(&arguments, 0));
+  assert(logo->isDisabled);
+  assert(lunaApplyGlobalPS2Logo(&arguments, 1));
+  assert(!logo->isDisabled);
+  logo->isGlobal = 0;
+  assert(lunaApplyGlobalPS2Logo(&arguments, 0));
+  assert(!logo->isDisabled); // Per-game On overrides global Off.
+  logo->isDisabled = 1;
+  assert(lunaApplyGlobalPS2Logo(&arguments, 1));
+  assert(logo->isDisabled); // Per-game Off overrides global On.
+  ArgumentList noLogo = {0};
+  assert(lunaApplyGlobalPS2Logo(&noLogo, 0));
+  assert(getArgument(&noLogo, "logo") == NULL);
+  assert(lunaApplyGlobalPS2Logo(&noLogo, 1));
+  assert(!getArgument(&noLogo, "logo")->isDisabled);
+  assert(getArgument(&noLogo, "logo")->isGlobal);
+  ArgumentList noLogoDefaultOff = {0};
+  lunaGameOptionsRead(&options, &noLogoDefaultOff);
+  assert(lunaGameOptionsCyclePS2Logo(&options, &noLogoDefaultOff, 0, 1));
+  Argument *newLogo = getArgument(&noLogoDefaultOff, "logo");
+  assert(newLogo != NULL && !newLogo->isDisabled && !newLogo->isGlobal);
+  assert(lunaGameOptionsCyclePS2Logo(&options, &noLogoDefaultOff, 0, 1));
+  assert(newLogo->isDisabled && !newLogo->isGlobal);
+  assert(lunaGameOptionsCyclePS2Logo(&options, &noLogoDefaultOff, 0, 1));
+  assert(newLogo->isDisabled && newLogo->isGlobal);
+  freeArguments(&noLogoDefaultOff);
+  freeArguments(&noLogo);
 
   freeArguments(&arguments);
   puts("game options: ok");

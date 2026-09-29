@@ -3,6 +3,7 @@
 #include "ui/view_scroll.h"
 #include "ui/ambient_orbs.h"
 #include "dprintf.h"
+#include <gsInline.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,8 +14,45 @@ static u32 fogPixels[128 * 128] __attribute__((aligned(128)));
 static u32 bumpPixels[64 * 64] __attribute__((aligned(128)));
 static GSTEXTURE fogTexture;
 static GSTEXTURE bumpTexture;
+static u32 openingRefPixels[128 * 128] __attribute__((aligned(128)));
+static u32 openingBlpPixels[64 * 64] __attribute__((aligned(128)));
+static u32 openingBlprPixels[64 * 64] __attribute__((aligned(128)));
+static GSTEXTURE openingRefTexture;
+static GSTEXTURE openingBlpTexture;
+static GSTEXTURE openingBlprTexture;
+static GSTEXTURE openingCaptureTexture;
+static GSTEXTURE openingWorkTexture;
 static int biosFogTextureLoaded;
 static int biosCubeTextureLoaded;
+static int biosOpeningCubeTexturesLoaded;
+static int openingCaptureReady;
+
+#define OPENING_CAPTURE_SIZE 128
+
+void initOpeningCubeCapture(void) {
+  memset(&openingCaptureTexture, 0, sizeof(openingCaptureTexture));
+  memset(&openingWorkTexture, 0, sizeof(openingWorkTexture));
+  openingCaptureReady = 0;
+  const u32 bufferSize = gsKit_texture_size(OPENING_CAPTURE_SIZE,
+                                           OPENING_CAPTURE_SIZE, GS_PSM_CT24);
+  u32 captureVram = gsKit_vram_alloc(gsGlobal, bufferSize,
+                                    GSKIT_ALLOC_SYSBUFFER);
+  u32 workVram = gsKit_vram_alloc(gsGlobal, bufferSize,
+                                 GSKIT_ALLOC_SYSBUFFER);
+  if (captureVram == GSKIT_ALLOC_ERROR || workVram == GSKIT_ALLOC_ERROR) {
+    DPRINTF("LUNA: no VRAM for opening cube work buffers\n");
+    return;
+  }
+  openingCaptureTexture.Width = OPENING_CAPTURE_SIZE;
+  openingCaptureTexture.Height = OPENING_CAPTURE_SIZE;
+  openingCaptureTexture.PSM = GS_PSM_CT24;
+  openingCaptureTexture.TBW = OPENING_CAPTURE_SIZE / 64;
+  openingCaptureTexture.Vram = captureVram;
+  openingCaptureTexture.Filter = GS_FILTER_LINEAR;
+  openingWorkTexture = openingCaptureTexture;
+  openingWorkTexture.Vram = workVram;
+  openingCaptureReady = 1;
+}
 
 static uint32_t tunnelReadLE32(const unsigned char *bytes) {
   return (uint32_t)bytes[0] | (uint32_t)bytes[1] << 8 |
@@ -173,8 +211,59 @@ static int loadBiosCubeTexture(void) {
   return 0;
 }
 
+// The opening cube is built from these three ROM textures in osdbits/opening.c.
+// Keep them in the BIOS at runtime; no Sony texture data is stored in LUNA.
+static int loadBiosOpeningCubeTextures(void) {
+  if (biosOpeningCubeTexturesLoaded)
+    return 0;
+  FILE *rom = fopen("rom0:TEXIMAGE", "rb");
+  if (rom == NULL)
+    return -1;
+  static unsigned char expanded[20 + 128 * 128 * 2 + 4];
+  static const char *const names[3] = {"TEXOREF", "TEXOBLP", "TEXOBLPR"};
+  u32 *const pixels[3] = {openingRefPixels, openingBlpPixels, openingBlprPixels};
+  int result = 0;
+  for (int resource = 0; resource < 3; resource++) {
+    long offset;
+    uint32_t size;
+    const uint32_t expandedSize = resource == 0 ? sizeof(expanded) : 64 * 64;
+    if (tunnelFindResource(rom, names[resource], &offset, &size) ||
+        tunnelExpandResource(rom, offset, size, expanded, expandedSize)) {
+      result = -1;
+      break;
+    }
+    if (resource == 0) {
+      for (int i = 0; i < 128 * 128; i++) {
+        const uint16_t pixel = (uint16_t)expanded[20 + i * 2] |
+                               (uint16_t)expanded[20 + i * 2 + 1] << 8;
+        const u32 r = pixel & 31U;
+        const u32 g = (pixel >> 5) & 31U;
+        const u32 b = (pixel >> 10) & 31U;
+        pixels[resource][i] = ((r << 3) | (r >> 2)) |
+                              (((g << 3) | (g >> 2)) << 8) |
+                              (((b << 3) | (b >> 2)) << 16) | 0x7f000000U;
+      }
+    } else {
+      for (int i = 0; i < 64 * 64; i++)
+        pixels[resource][i] = (u32)expanded[i] << 24;
+    }
+  }
+  fclose(rom);
+  if (result) {
+    DPRINTF("LUNA: failed to load BIOS opening cube textures\n");
+    return -1;
+  }
+  tunnelInitTexture(&openingRefTexture, openingRefPixels, 128, 128);
+  tunnelInitTexture(&openingBlpTexture, openingBlpPixels, 64, 64);
+  tunnelInitTexture(&openingBlprTexture, openingBlprPixels, 64, 64);
+  biosOpeningCubeTexturesLoaded = 1;
+  DPRINTF("LUNA: loaded BIOS TEXOREF, TEXOBLP, TEXOBLPR\n");
+  return 0;
+}
+
 int setLibraryBackground(LibraryBackground background) {
-  if (background == LIBRARY_BACKGROUND_RED_CLOUDS && loadBiosFogTexture())
+  if (background == LIBRARY_BACKGROUND_RED_CLOUDS &&
+      (loadBiosFogTexture() || loadBiosOpeningCubeTextures()))
     return -1;
   if (background == LIBRARY_BACKGROUND_MIDNIGHT_CUBES && loadBiosCubeTexture())
     return -1;
@@ -183,6 +272,10 @@ int setLibraryBackground(LibraryBackground background) {
                       background : LIBRARY_BACKGROUND_STARS;
   setAmbientOrbsBackgroundStyle(libraryBackground == LIBRARY_BACKGROUND_ORBS);
   return 0;
+}
+
+LibraryBackground getLibraryBackground(void) {
+  return libraryBackground;
 }
 
 void setGlassColorPreset(GlassColorPreset preset) {
@@ -591,6 +684,217 @@ static void drawGlassCube(float centerX, float centerY, int size, uint32_t yawPh
   }
 }
 
+// Snapshot the current cloud frame before drawing glass. osdbits/opening.c
+// captures the screen for each cube; a 128x128 local copy covers LUNA's one
+// cube without reserving another full framebuffer in the PS2's 4 MB VRAM.
+static void copyOpeningCubePixels(u32 sourceVram, int sourceWidth,
+                                  int left, int top, u32 destVram) {
+  u64 *packet = gsKit_heap_alloc(gsGlobal, 5, 5 * 16, GIF_AD);
+  packet[0] = GIF_TAG_AD(5);
+  packet[1] = GIF_AD;
+  packet[2] = GS_SETREG_BITBLTBUF(sourceVram / 256,
+                                  sourceWidth / 64, GS_PSM_CT24,
+                                  destVram / 256,
+                                  OPENING_CAPTURE_SIZE / 64, GS_PSM_CT24);
+  packet[3] = GS_BITBLTBUF;
+  packet[4] = GS_SETREG_TRXPOS(left, top, 0, 0, 0);
+  packet[5] = GS_TRXPOS;
+  packet[6] = GS_SETREG_TRXREG(OPENING_CAPTURE_SIZE, OPENING_CAPTURE_SIZE);
+  packet[7] = GS_TRXREG;
+  packet[8] = GS_SETREG_TRXDIR(2);
+  packet[9] = GS_TRXDIR;
+  packet[10] = 0;
+  packet[11] = GS_TEXFLUSH;
+}
+
+static void setOpeningCubeTarget(int work) {
+  const u32 vram = work ? openingWorkTexture.Vram :
+                    gsGlobal->ScreenBuffer[gsGlobal->ActiveBuffer];
+  const int width = work ? OPENING_CAPTURE_SIZE : gsGlobal->Width;
+  const int height = work ? OPENING_CAPTURE_SIZE : gsGlobal->Height;
+  const int frameRegister = gsGlobal->PrimContext ? GS_FRAME_2 : GS_FRAME_1;
+  const int scissorRegister = gsGlobal->PrimContext ? GS_SCISSOR_2 : GS_SCISSOR_1;
+  u64 *packet = gsKit_heap_alloc(gsGlobal, 3, 3 * 16, GIF_AD);
+  packet[0] = GIF_TAG_AD(3);
+  packet[1] = GIF_AD;
+  packet[2] = GS_SETREG_FRAME(vram / 8192, width / 64, GS_PSM_CT24, 0);
+  packet[3] = frameRegister;
+  packet[4] = GS_SETREG_SCISSOR(0, width - 1, 0, height - 1);
+  packet[5] = scissorRegister;
+  packet[6] = 0;
+  packet[7] = GS_TEXFLUSH;
+}
+
+static float openingCubeUv(float value, float maximum) {
+  if (value < 1.0f)
+    return 1.0f;
+  if (value > maximum - 1.0f)
+    return maximum - 1.0f;
+  return value;
+}
+
+static float openingCubeWrapUv(float value, float maximum) {
+  while (value < 0.0f)
+    value += maximum;
+  while (value >= maximum)
+    value -= maximum;
+  return value;
+}
+
+static void drawOpeningGlassCube(uint32_t elapsedMs, int width, int height) {
+  if (!openingCaptureReady || !biosOpeningCubeTexturesLoaded)
+    return;
+  const float centerX = width * 0.26f;
+  const float centerY = height * 0.42f +
+                        orbWave(glassPhase(elapsedMs, 15000, 2800)) / 11.0f;
+  const int size = 25;
+  const int captureLeft = (int)centerX - OPENING_CAPTURE_SIZE / 2;
+  const int captureTop = (int)centerY - OPENING_CAPTURE_SIZE / 2;
+  if (captureLeft < 0 || captureTop < 0 ||
+      captureLeft + OPENING_CAPTURE_SIZE > width ||
+      captureTop + OPENING_CAPTURE_SIZE > height)
+    return;
+
+  // The face winding and two-layer texture sequence come from the opening
+  // cube in osdbits/opening.c. This keeps the actual ROM reflection and
+  // glass masks over a live copy of the moving clouds.
+  static const int corners[8][3] = {
+      {-127, -127, -127}, {127, -127, -127}, {127, 127, -127}, {-127, 127, -127},
+      {-127, -127, 127}, {127, -127, 127}, {127, 127, 127}, {-127, 127, 127}};
+  static const int faces[6][4] = {
+      {3, 2, 0, 1}, {7, 6, 4, 5}, {3, 7, 0, 4},
+      {2, 6, 1, 5}, {3, 2, 7, 6}, {0, 1, 4, 5}};
+  static const int faceNormal[6][3] = {
+      {0, 0, -1}, {0, 0, 1}, {-1, 0, 0},
+      {1, 0, 0}, {0, 1, 0}, {0, -1, 0}};
+  const uint32_t yaw = glassPhase(elapsedMs, 19000, 4200);
+  const uint32_t pitch = ((yaw * 5) / 7) + (5 << 11);
+  const uint32_t roll = ((yaw * 3) / 11) + (2 << 11);
+  const GlassRotation rotation = {
+      orbWave(yaw) / 127.0f, orbWave(yaw + (8 << 11)) / 127.0f,
+      orbWave(pitch) / 127.0f, orbWave(pitch + (8 << 11)) / 127.0f,
+      orbWave(roll) / 127.0f, orbWave(roll + (8 << 11)) / 127.0f};
+  GlassPoint point[8];
+  int faceOrder[6] = {0, 1, 2, 3, 4, 5};
+  int depth[6] = {0};
+  float normalX[6], normalY[6], normalZ[6];
+  for (int i = 0; i < 8; i++)
+    projectCrystalPointRotated(&point[i], centerX, centerY, size, &rotation,
+                               corners[i][0], corners[i][1], corners[i][2]);
+  for (int face = 0; face < 6; face++) {
+    for (int vertex = 0; vertex < 4; vertex++)
+      depth[face] += point[faces[face][vertex]].depth;
+    const float sx = faceNormal[face][0];
+    const float sy = faceNormal[face][1];
+    const float sz = faceNormal[face][2];
+    const float yawX = sx * rotation.yawCosine - sz * rotation.yawSine;
+    const float yawZ = sx * rotation.yawSine + sz * rotation.yawCosine;
+    const float pitchY = sy * rotation.pitchCosine - yawZ * rotation.pitchSine;
+    normalZ[face] = sy * rotation.pitchSine + yawZ * rotation.pitchCosine;
+    normalX[face] = yawX * rotation.rollCosine - pitchY * rotation.rollSine;
+    normalY[face] = yawX * rotation.rollSine + pitchY * rotation.rollCosine;
+  }
+  for (int i = 0; i < 5; i++) {
+    for (int j = i + 1; j < 6; j++) {
+      if (depth[faceOrder[i]] > depth[faceOrder[j]]) {
+        int swap = faceOrder[i];
+        faceOrder[i] = faceOrder[j];
+        faceOrder[j] = swap;
+      }
+    }
+  }
+
+  copyOpeningCubePixels(gsGlobal->ScreenBuffer[gsGlobal->ActiveBuffer],
+                        width, captureLeft, captureTop,
+                        openingCaptureTexture.Vram);
+  copyOpeningCubePixels(openingCaptureTexture.Vram, OPENING_CAPTURE_SIZE,
+                        0, 0, openingWorkTexture.Vram);
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+  for (int stage = 0; stage < 2; stage++) {
+    if (stage == 0)
+      setOpeningCubeTarget(1);
+    else
+      setOpeningCubeTarget(0);
+    GSTEXTURE *source = stage == 0 ? &openingCaptureTexture :
+                         &openingWorkTexture;
+    for (int order = 0; order < 6; order++) {
+      const int faceIndex = faceOrder[order];
+      if ((normalZ[faceIndex] > 0.0f) != (stage == 1))
+        continue;
+      const int *face = faces[faceIndex];
+      const float faceX = normalX[faceIndex] * 9.0f;
+      const float faceY = -normalY[faceIndex] * 9.0f;
+      float u[4], v[4];
+      for (int vertex = 0; vertex < 4; vertex++) {
+        const GlassPoint *p = &point[face[vertex]];
+        const float zoom = stage == 1 ? 0.084f : 0.0f;
+        u[vertex] = openingCubeUv(p->x - captureLeft + faceX -
+                                  (p->x - centerX) * zoom,
+                                  OPENING_CAPTURE_SIZE);
+        v[vertex] = openingCubeUv(p->y - captureTop + faceY -
+                                  (p->y - centerY) * zoom,
+                                  OPENING_CAPTURE_SIZE);
+      }
+      const float outputX = stage == 0 ? captureLeft : 0.0f;
+      const float outputY = stage == 0 ? captureTop : 0.0f;
+      gsKit_prim_quad_texture(gsGlobal, source,
+                              point[face[0]].x - outputX, point[face[0]].y - outputY, u[0], v[0],
+                              point[face[1]].x - outputX, point[face[1]].y - outputY, u[1], v[1],
+                              point[face[2]].x - outputX, point[face[2]].y - outputY, u[2], v[2],
+                              point[face[3]].x - outputX, point[face[3]].y - outputY, u[3], v[3], 0,
+                              GS_SETREG_RGBA(0x80, 0x80, 0x80, stage == 0 ? 0x72 : 0x68));
+    }
+  }
+
+  // The ROM's two black alpha masks use additive blending in opening.c;
+  // ordinary source-alpha blending incorrectly paints black face stickers.
+  GSTEXTURE *const layers[3] = {
+      &openingBlprTexture, &openingBlpTexture, &openingRefTexture};
+  for (int layer = 0; layer < 3; layer++) {
+    GSTEXTURE *texture = layers[layer];
+    gsKit_TexManager_bind(gsGlobal, texture);
+    gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 2, 0, 1, 0), 0);
+    for (int order = 0; order < 6; order++) {
+      const int faceIndex = faceOrder[order];
+      if (normalZ[faceIndex] <= 0.0f)
+        continue;
+      const int *face = faces[faceIndex];
+      const float textureSize = layer == 2 ? 128.0f : 64.0f;
+      const float phase = (elapsedMs % 16000) / 16000.0f;
+      float u[4], v[4];
+      for (int vertex = 0; vertex < 4; vertex++) {
+        const float cornerU = vertex == 1 || vertex == 3 ? 1.0f : 0.0f;
+        const float cornerV = vertex >= 2 ? 1.0f : 0.0f;
+        if (layer == 2) {
+          const GlassPoint *p = &point[face[vertex]];
+          const float viewX = (p->x - centerX) / (size * 2.0f);
+          const float viewY = (p->y - centerY) / (size * 2.0f);
+          u[vertex] = openingCubeUv((0.5f + viewY * 0.5f +
+                                     normalY[faceIndex] * 0.30f) * textureSize,
+                                    textureSize);
+          v[vertex] = openingCubeUv((0.5f + viewX * 0.5f +
+                                     normalX[faceIndex] * 0.30f) * textureSize,
+                                    textureSize);
+        } else {
+          const float scroll = phase * (layer == 0 ? -0.5f : 0.5f);
+          u[vertex] = openingCubeWrapUv((cornerU + scroll) *
+                                         (textureSize - 1.0f), textureSize);
+          v[vertex] = openingCubeWrapUv((cornerV - scroll) *
+                                         (textureSize - 1.0f), textureSize);
+        }
+      }
+      gsKit_prim_quad_texture(gsGlobal, texture,
+                              point[face[0]].x, point[face[0]].y, u[0], v[0],
+                              point[face[1]].x, point[face[1]].y, u[1], v[1],
+                              point[face[2]].x, point[face[2]].y, u[2], v[2],
+                              point[face[3]].x, point[face[3]].y, u[3], v[3], 0,
+                              GS_SETREG_RGBA(0x80, 0x80, 0x80,
+                                             layer == 2 ? 0x18 : 0x10));
+    }
+  }
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+}
+
 void drawOrbitalDisc(int centerX, int centerY, int radius, int z, uint64_t centerColor, uint64_t edgeColor) {
   for (int i = 0; i < 32; i++) {
     int next = (i + 1) & 31;
@@ -756,10 +1060,7 @@ static void drawRedClouds(uint32_t frameNowMs) {
   drawOrbitalDisc(centerX, centerY, width * 13 / 100, 0,
                   GS_SETREG_RGBA(0xD0, 0x5A, 0x64, 0x20),
                   GS_SETREG_RGBA(0x78, 0x1A, 0x28, 0));
-  drawGlassCube(width * 0.26f,
-                height * 0.42f + orbWave(glassPhase(elapsedMs, 15000, 2800)) / 11.0f,
-                25, glassPhase(elapsedMs, 19000, 4200),
-                0x58, 0xA8, 0xD8, 0, NULL, 1);
+  drawOpeningGlassCube(elapsedMs, width, height);
 }
 
 static void drawMidnightCubes(uint32_t frameNowMs) {
@@ -835,13 +1136,13 @@ static void drawOrbsLogo(GSTEXTURE *texture, float x, float y,
 
 void drawOrbsView(TargetList *titles, int selectedTitleIdx,
                   int flowOffset, int visualFocus, int fastScroll,
-                  int entryProgress, uint32_t now) {
+                  int entryProgress, uint32_t now,
+                  const char *nextViewLabel) {
   const int width = gsGlobal->Width;
   const int height = gsGlobal->Height;
   const int listTop = headerHeight + 12;
   const int listBottom = height - footerHeight - 12;
   const int centerY = (listTop + listBottom) / 2;
-  const int rowPitch = (listBottom - listTop) / 4;
   const int logoCenterX = width - 153;
   const int logoEntryOffset = (1000 - entryProgress) * 72 / 1000;
   const int logoEntryBrightness = 350 + entryProgress * 650 / 1000;
@@ -867,8 +1168,6 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
   gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 1,
                     glassPresetColor(0x00, 0x02, 0x0C, 0x20));
-  gsKit_prim_sprite(gsGlobal, 0, 0, width / 2, height, 2,
-                    glassPresetColor(0x02, 0x06, 0x12, 0x26));
   gsKit_prim_quad_gouraud(gsGlobal, width - 350, 0, width, 0,
                           width - 350, height, width, height, 2,
                           glassPresetColor(0x02, 0x06, 0x12, 0x08),
@@ -888,28 +1187,42 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
                  width - keepoutArea - 8, 0, 7, FontMainColor,
                  ALIGN_RIGHT, lineBuffer);
 
-  gsKit_prim_sprite(gsGlobal, width - 283, centerY - 37,
-                    width - 35, centerY + 37, 4,
-                    glassPresetColor(0x18, 0x34, 0x58, 0x56));
-  drawOrbitalDisc(width - 20, centerY, 10, 6,
-                  glassLightColor(0xD0, 0xEB, 0xFF, 0x80),
-                  glassLightColor(0x30, 0x8C, 0xD8, 0));
   drawAmbientOrbsScroll(width * 27 / 100, centerY, width * 20 / 100,
                         (listBottom - listTop) * 36 / 100, elapsedMs,
                         fastScroll, getTargetByIdx(titles, visualTitleIdx)->name,
                         5, width - 290);
 
-  for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++) {
+  // Draw the far side of the wheel first so nearer titles stay in front.
+  int wheelOrder[ORBS_LOGO_CACHE_COUNT];
+  for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++)
+    wheelOrder[i] = i;
+  for (int i = 0; i < ORBS_LOGO_CACHE_COUNT - 1; i++) {
+    for (int j = i + 1; j < ORBS_LOGO_CACHE_COUNT; j++) {
+      int a = (wheelOrder[i] - ORBS_LOGO_CACHE_FOCUS) * 1000 + flowOffset;
+      int b = (wheelOrder[j] - ORBS_LOGO_CACHE_FOCUS) * 1000 + flowOffset;
+      if (abs(a) < abs(b)) {
+        int swap = wheelOrder[i];
+        wheelOrder[i] = wheelOrder[j];
+        wheelOrder[j] = swap;
+      }
+    }
+  }
+
+  for (int order = 0; order < ORBS_LOGO_CACHE_COUNT; order++) {
+    int i = wheelOrder[order];
     int position = (i - ORBS_LOGO_CACHE_FOCUS) * 1000 + flowOffset;
-    int distance = position < 0 ? -position : position;
+    int distance = abs(position);
     int targetIdx = lunaNavWrap(titles->total,
         selectedTitleIdx + i - ORBS_LOGO_CACHE_FOCUS);
     int duplicate = 0;
-    int proximity;
+    float steps;
+    float scale;
+    float rowX;
     float logoWidth;
     float logoHeight;
     float rowY;
-    if (distance > 1350)
+    int brightness;
+    if (distance >= 2300)
       continue;
     for (int j = 0; j < ORBS_LOGO_CACHE_COUNT; j++) {
       int otherPosition = (j - ORBS_LOGO_CACHE_FOCUS) * 1000 + flowOffset;
@@ -924,28 +1237,38 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
     }
     if (duplicate)
       continue;
-    proximity = distance < 1000 ? 1000 - distance : 0;
-    logoWidth = 188.0f + 44.0f * lunaNavEase(proximity) / 1000.0f;
-    logoHeight = 62.0f + 14.0f * lunaNavEase(proximity) / 1000.0f;
-    rowY = centerY + position * rowPitch / 1000.0f;
+    steps = distance / 1000.0f;
+    scale = 1.0f / (1.0f + 0.20f * steps * steps);
+    logoWidth = 232.0f * scale;
+    logoHeight = 76.0f * scale;
+    rowX = logoCenterX + logoEntryOffset + 12.0f * steps * steps;
+    rowY = centerY + position * ((listBottom - listTop) * 0.29f) /
+                         (1000.0f + distance * 0.23f);
+    brightness = 0x80 - (int)(17.0f * steps * steps);
+    if (distance > 2000)
+      brightness = brightness * (2300 - distance) / 300;
+    brightness = brightness * logoEntryBrightness / 1000;
     if (orbsLogoLoaded[i] && !fastScroll)
-      drawOrbsLogo(orbsLogoTextures[i], logoCenterX + logoEntryOffset - logoWidth / 2.0f,
+      drawOrbsLogo(orbsLogoTextures[i], rowX - logoWidth / 2.0f,
                    rowY - logoHeight / 2.0f, logoWidth, logoHeight,
-                   (i == visualFocus ? 0x80 : 0x58) * logoEntryBrightness / 1000);
+                   brightness);
     else {
-      formatPSBBNTitle(getTargetByIdx(titles, targetIdx)->name, title, 190);
-      drawTextWindow(width - 270 + logoEntryOffset,
+      int textWidth = (int)logoWidth - 20;
+      formatPSBBNTitle(getTargetByIdx(titles, targetIdx)->name, title, textWidth);
+      drawTextWindow((int)(rowX - logoWidth / 2.0f),
                      (int)rowY - getFontLineHeight() / 2,
-                     width - 35 + logoEntryOffset,
+                     (int)(rowX + logoWidth / 2.0f),
                      (int)rowY + getFontLineHeight() / 2, 6,
-                     i == visualFocus ? FontMainColor : glassMissingCoverTextColor(),
+                     glassPresetColor(0xC8 * brightness / 0x80,
+                                      0xD4 * brightness / 0x80,
+                                      0xE8 * brightness / 0x80, 0x80),
                      ALIGN_CENTER, title);
     }
   }
 
   const int footerY = height - footerHeight + 8;
   const ButtonPrompt prompts[] = {
-      {ICON_CIRCLE, "Views"}, {ICON_CROSS, "Launch"},
+      {ICON_CIRCLE, nextViewLabel}, {ICON_CROSS, "Launch"},
       {ICON_TRIANGLE, "Options"}};
   drawPromptBar(20, footerY, width - 20, height, 8, FontMainColor,
                 (PromptBar){NULL, prompts, 3});
