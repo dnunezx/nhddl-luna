@@ -556,27 +556,10 @@ uint64_t glassLightColor(int red, int green, int blue, int alpha) {
 }
 
 static uint32_t glassPhase(uint32_t elapsedMs, uint32_t periodMs, uint32_t offsetMs) {
-  return (uint32_t)((((uint64_t)(elapsedMs + offsetMs)) << 16) / periodMs);
-}
-
-static int glassStarEdgeAlpha(float x, int width, int fadeWidth) {
-  float distance;
-
-  if (x < 0)
-    distance = x + fadeWidth;
-  else if (x >= width)
-    distance = width + fadeWidth - x;
-  else {
-    distance = x;
-    if ((width - 1 - x) < distance)
-      distance = width - 1 - x;
-  }
-
-  if (distance <= 0)
-    return 0;
-  if (distance >= fadeWidth)
-    return 255;
-  return (int)(distance * 255.0f / fadeWidth);
+  // All animation periods are below 36 seconds. Reduce first so the scaled
+  // numerator fits in 32 bits and phase calculation avoids 64-bit division.
+  uint32_t phaseMs = (elapsedMs + offsetMs) % periodMs;
+  return (phaseMs << 16) / periodMs;
 }
 
 static int clampColor(int value) {
@@ -763,14 +746,16 @@ static void drawGlassCube(float centerX, float centerY, int size, uint32_t yawPh
       orbWave(rollPhase) / 127.0f, orbWave(rollPhase + (8 << 11)) / 127.0f};
   GlassPoint shell[8];
   GlassPoint core[8];
+  const float coreScale = (float)((size * 68) / 100) / size;
   int faceOrder[6] = {0, 1, 2, 3, 4, 5};
   int faceDepth[6];
 
   for (int i = 0; i < 8; i++) {
     projectCrystalPointRotated(&shell[i], centerX, centerY, size, &rotation,
                                source[i][0], source[i][1], source[i][2]);
-    projectCrystalPointRotated(&core[i], centerX, centerY, (size * 68) / 100,
-                               &rotation, source[i][0], source[i][1], source[i][2]);
+    // The inner volume shares the shell's rotation and perspective.
+    core[i].x = centerX + (shell[i].x - centerX) * coreScale;
+    core[i].y = centerY + (shell[i].y - centerY) * coreScale;
   }
 
   for (int face = 0; face < 6; face++) {
@@ -1097,7 +1082,6 @@ static float orbWave(uint32_t phase) {
 
 static void drawOrbitalStars(int width, int height, uint32_t elapsedMs) {
   static const int speedPixelsPerSecond[3] = {4, 8, 13};
-  const int edgeFadeWidth = 18;
   float scroll[3];
 
   for (int layer = 0; layer < 3; layer++)
@@ -1116,16 +1100,15 @@ static void drawOrbitalStars(int width, int height, uint32_t elapsedMs) {
     int twinkle = (int)(orbWave(glassPhase(elapsedMs, 2600 + layer * 900, i * 173)) / 14.0f);
     int size = ((layer == 2) && ((i % 5) == 0)) ? 2 : 1;
     int alpha = 0x20 + layer * 0x12;
-    int edgeAlpha = (alpha * glassStarEdgeAlpha(x, width, edgeFadeWidth)) / 255;
-    drawGlassBackgroundStarSprite(x, y, size, layer, edgeAlpha + twinkle);
+    int starAlpha = alpha + twinkle;
+    drawGlassBackgroundStarSprite(x, y, size, layer, starAlpha);
 
-    // Cross-fade a duplicate through the opposite edge during wraparound.
-    if (x < edgeFadeWidth)
-      drawGlassBackgroundStarSprite(x + width, y, size, layer,
-                                    (alpha * glassStarEdgeAlpha(x + width, width, edgeFadeWidth)) / 255 + twinkle);
-    else if (x >= width - edgeFadeWidth)
-      drawGlassBackgroundStarSprite(x - width, y, size, layer,
-                                    (alpha * glassStarEdgeAlpha(x - width, width, edgeFadeWidth)) / 255 + twinkle);
+    // Draw the clipped half at the opposite edge with identical brightness.
+    const int radius = size + 3;
+    if (x < radius)
+      drawGlassBackgroundStarSprite(x + width, y, size, layer, starAlpha);
+    else if (x > width - radius)
+      drawGlassBackgroundStarSprite(x - width, y, size, layer, starAlpha);
   }
 }
 
