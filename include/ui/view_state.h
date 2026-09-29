@@ -12,7 +12,7 @@
 UILibraryView loadLastLibraryView(Target *target);
 int saveLastLibraryView(Target *target, UILibraryView view);
 
-// All five views are enabled when no valid selection has been saved.
+// List, Collections, and Orbit are enabled when no valid selection has been saved.
 uint32_t loadEnabledLibraryViews(Target *target);
 int saveEnabledLibraryViews(Target *target, uint32_t enabledViews);
 

@@ -1234,7 +1234,6 @@ static void drawRedClouds(uint32_t frameNowMs) {
   drawOrbitalDisc(centerX, centerY, width * 13 / 100, 0,
                   GS_SETREG_RGBA(0xD0, 0x5A, 0x64, 0x20),
                   GS_SETREG_RGBA(0x78, 0x1A, 0x28, 0));
-  drawOpeningGlassCube(elapsedMs, width, height);
 }
 
 static void drawMidnightCubes(uint32_t frameNowMs) {

@@ -447,7 +447,7 @@ uint32_t loadEnabledLibraryViews(Target *target) {
   char value[24];
 
   if (device == NULL || device->mountpoint == NULL)
-    return UI_VIEW_ALL_MASK;
+    return UI_VIEW_DEFAULT_MASK;
   for (int i = 0; i < 2; i++) {
     if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
       continue;
@@ -464,7 +464,7 @@ uint32_t loadEnabledLibraryViews(Target *target) {
         mask != 0 && (mask & ~UI_VIEW_ALL_MASK) == 0)
       return (uint32_t)mask;
   }
-  return UI_VIEW_ALL_MASK;
+  return UI_VIEW_DEFAULT_MASK;
 }
 
 int saveEnabledLibraryViews(Target *target, uint32_t enabledViews) {

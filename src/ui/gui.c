@@ -272,7 +272,7 @@ int uiLoop(TargetList *titles) {
   int classicPreviousCoverAvailable = 0;
   int classicArtOverlap = 0;
   int ambientEnabled = 1;
-  uint32_t enabledViews = UI_VIEW_ALL_MASK;
+  uint32_t enabledViews = UI_VIEW_DEFAULT_MASK;
   uint32_t classicArtDueMs = 0;
   uint32_t classicCoverFadeStartMs = 0;
   LunaNavRepeatState classicRepeat = {0};

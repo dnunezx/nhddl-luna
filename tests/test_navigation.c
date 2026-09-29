@@ -116,6 +116,9 @@ static void testRouting(void) {
   assert(lunaNavNextView(UI_VIEW_ORBS, UI_VIEW_ALL_MASK) == UI_VIEW_GRID);
   assert(lunaNavNextView(UI_VIEW_GRID, UI_VIEW_ALL_MASK) == UI_VIEW_SAVE_ICONS);
   assert(lunaNavNextView(UI_VIEW_SAVE_ICONS, UI_VIEW_ALL_MASK) == UI_VIEW_CLASSIC);
+  assert(lunaNavNextView(UI_VIEW_CLASSIC, UI_VIEW_DEFAULT_MASK) == UI_VIEW_PSBBN);
+  assert(lunaNavNextView(UI_VIEW_PSBBN, UI_VIEW_DEFAULT_MASK) == UI_VIEW_ORBIT);
+  assert(lunaNavNextView(UI_VIEW_ORBIT, UI_VIEW_DEFAULT_MASK) == UI_VIEW_CLASSIC);
   assert(lunaNavNextView(UI_VIEW_CLASSIC, (1U << UI_VIEW_GRID) | (1U << UI_VIEW_ORBS)) == UI_VIEW_ORBS);
   assert(lunaNavNextView(UI_VIEW_GRID, (1U << UI_VIEW_GRID) | (1U << UI_VIEW_ORBS)) == UI_VIEW_ORBS);
   assert(lunaNavNextView(UI_VIEW_ORBS, (1U << UI_VIEW_GRID) | (1U << UI_VIEW_ORBS)) == UI_VIEW_GRID);

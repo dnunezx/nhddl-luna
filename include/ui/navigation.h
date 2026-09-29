@@ -68,6 +68,9 @@ typedef enum {
 } UILibraryView;
 
 #define UI_VIEW_ALL_MASK ((1U << (UI_VIEW_SAVE_ICONS + 1)) - 1U)
+#define UI_VIEW_DEFAULT_MASK ((1U << UI_VIEW_CLASSIC) | \
+                              (1U << UI_VIEW_PSBBN) | \
+                              (1U << UI_VIEW_ORBIT))
 
 extern const UILibraryView lunaViewCycleOrder[UI_VIEW_SAVE_ICONS + 1];
 
