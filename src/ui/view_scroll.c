@@ -478,7 +478,7 @@ static void projectCrystalPointRotated(GlassPoint *point, float centerX, float c
 }
 
 static void drawGlassCube(float centerX, float centerY, int size, uint32_t yawPhase, int red, int green, int blue,
-                          int stableOutline, GSTEXTURE *surface) {
+                          int stableOutline, GSTEXTURE *surface, int clearCore) {
   // Clean-room crystal renderer based only on observation of the stock System
   // Configuration animation: a tumbling translucent shell around a dark core.
   static const int source[8][3] = {{-127, -127, -127}, {127, -127, -127}, {127, 127, -127}, {-127, 127, -127},
@@ -548,19 +548,21 @@ static void drawGlassCube(float centerX, float centerY, int size, uint32_t yawPh
                               GS_SETREG_RGBA(red, green, blue, 0x22));
   }
 
-  // A dark inner cube creates the stock crystal's dense central volume.
-  for (int order = 0; order < 6; order++) {
-    int face = faceOrder[order];
-    int a = faceVertices[face][0];
-    int b = faceVertices[face][1];
-    int c = faceVertices[face][2];
-    int d = faceVertices[face][3];
-    int shade = faceShade[face] + faceDepth[face] / 22;
-    uint64_t light = glassColor(red / 2, green / 2, blue / 2, 0x42, shade + 8);
-    uint64_t mid = glassColor(red / 3, green / 3, blue / 3, 0x48, shade - 12);
-    uint64_t dark = glassColor(red / 4, green / 4, blue / 4, 0x50, shade - 28);
-    gsKit_prim_quad_gouraud(gsGlobal, core[a].x, core[a].y, core[b].x, core[b].y, core[c].x, core[c].y, core[d].x, core[d].y, 0,
-                            light, mid, dark, mid);
+  // The clear variant shows the clouds through its glass shell.
+  if (!clearCore) {
+    for (int order = 0; order < 6; order++) {
+      int face = faceOrder[order];
+      int a = faceVertices[face][0];
+      int b = faceVertices[face][1];
+      int c = faceVertices[face][2];
+      int d = faceVertices[face][3];
+      int shade = faceShade[face] + faceDepth[face] / 22;
+      uint64_t light = glassColor(red / 2, green / 2, blue / 2, 0x42, shade + 8);
+      uint64_t mid = glassColor(red / 3, green / 3, blue / 3, 0x48, shade - 12);
+      uint64_t dark = glassColor(red / 4, green / 4, blue / 4, 0x50, shade - 28);
+      gsKit_prim_quad_gouraud(gsGlobal, core[a].x, core[a].y, core[b].x, core[b].y, core[c].x, core[c].y, core[d].x, core[d].y, 0,
+                              light, mid, dark, mid);
+    }
   }
 
   // Keep the large loading cube's outline subdued so interlaced output does
@@ -679,8 +681,8 @@ static void drawGlassBackground(uint32_t frameNowMs) {
   float nearY = orbitY + orbWave(orbitPhase) * (56.0f / 127.0f);
   float farX = orbitX + orbWave(oppositePhase + (8 << 11)) * (96.0f / 127.0f);
   float farY = orbitY + orbWave(oppositePhase) * (40.0f / 127.0f);
-  drawGlassCube(nearX, nearY, 9, glassPhase(elapsedMs, 18000, 3000), 0x38, 0x98, 0xD8, 1, NULL);
-  drawGlassCube(farX, farY, 7, glassPhase(elapsedMs, 26000, 12000), 0x78, 0x68, 0xC8, 1, NULL);
+  drawGlassCube(nearX, nearY, 9, glassPhase(elapsedMs, 18000, 3000), 0x38, 0x98, 0xD8, 1, NULL, 0);
+  drawGlassCube(farX, farY, 7, glassPhase(elapsedMs, 26000, 12000), 0x78, 0x68, 0xC8, 1, NULL, 0);
 }
 
 typedef struct {
@@ -754,6 +756,10 @@ static void drawRedClouds(uint32_t frameNowMs) {
   drawOrbitalDisc(centerX, centerY, width * 13 / 100, 0,
                   GS_SETREG_RGBA(0xD0, 0x5A, 0x64, 0x20),
                   GS_SETREG_RGBA(0x78, 0x1A, 0x28, 0));
+  drawGlassCube(width * 0.26f,
+                height * 0.42f + orbWave(glassPhase(elapsedMs, 15000, 2800)) / 11.0f,
+                25, glassPhase(elapsedMs, 19000, 4200),
+                0x58, 0xA8, 0xD8, 0, NULL, 1);
 }
 
 static void drawMidnightCubes(uint32_t frameNowMs) {
@@ -769,16 +775,16 @@ static void drawMidnightCubes(uint32_t frameNowMs) {
   // Floating cubes keep the BIOS bump texture from the original trial.
   drawGlassCube(width * 0.17f,
                 height * 0.33f + orbWave(glassPhase(elapsedMs, 13000, 0)) / 10.0f,
-                23, glassPhase(elapsedMs, 16000, 0), 0x26, 0xAE, 0xDC, 0, &bumpTexture);
+                23, glassPhase(elapsedMs, 16000, 0), 0x26, 0xAE, 0xDC, 0, &bumpTexture, 0);
   drawGlassCube(width * 0.36f,
                 height * 0.18f + orbWave(glassPhase(elapsedMs, 17000, 2300)) / 12.0f,
-                18, glassPhase(elapsedMs, 22000, 5500), 0x43, 0xA0, 0xDB, 0, &bumpTexture);
+                18, glassPhase(elapsedMs, 22000, 5500), 0x43, 0xA0, 0xDB, 0, &bumpTexture, 0);
   drawGlassCube(width * 0.31f,
                 height * 0.67f + orbWave(glassPhase(elapsedMs, 15000, 5900)) / 11.0f,
-                15, glassPhase(elapsedMs, 19000, 11000), 0x7E, 0x75, 0xB9, 0, &bumpTexture);
+                15, glassPhase(elapsedMs, 19000, 11000), 0x7E, 0x75, 0xB9, 0, &bumpTexture, 0);
   drawGlassCube(width * 0.47f,
                 height * 0.51f + orbWave(glassPhase(elapsedMs, 14000, 8100)) / 13.0f,
-                11, glassPhase(elapsedMs, 26000, 17000), 0x68, 0x83, 0xB8, 0, &bumpTexture);
+                11, glassPhase(elapsedMs, 26000, 17000), 0x68, 0x83, 0xB8, 0, &bumpTexture, 0);
 }
 
 void drawSharedLibraryBackground(uint32_t frameNowMs) {
