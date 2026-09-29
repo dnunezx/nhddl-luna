@@ -28,7 +28,8 @@ static void put32(uint8_t *bytes, unsigned offset, uint32_t value) {
 static int writeAll(int fd, const void *data, unsigned size) {
   const uint8_t *bytes = data;
   while (size != 0) {
-    int written = write(fd, bytes, size);
+    unsigned chunk = size > 4096 ? 4096 : size;
+    int written = write(fd, bytes, chunk);
     if (written <= 0)
       return -1;
     bytes += written;
@@ -44,7 +45,8 @@ static int writeCluster(int fd, unsigned cluster, const uint8_t *data) {
 }
 
 int lunaCreateVMC8(const char *path, void (*progress)(int, void *), void *context) {
-  uint8_t buffer[ERASE_CLUSTER_COUNT * CLUSTER_SIZE];
+  uint8_t buffer[ERASE_CLUSTER_COUNT * CLUSTER_SIZE]
+      __attribute__((aligned(64)));
   int fd;
   if (path == NULL || path[0] == '\0')
     return -1;
