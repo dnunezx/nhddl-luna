@@ -1756,7 +1756,7 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
   const int footerY = height - footerHeight + 8;
   const ButtonPrompt prompts[] = {
       {ICON_CIRCLE, nextViewLabel}, {ICON_CROSS, "Launch"},
-      {ICON_TRIANGLE, "Options"}};
+      {ICON_START, "Menu"}, {ICON_TRIANGLE, "Options"}};
   drawPromptBar(20, footerY, width - 20, height, 8, FontMainColor,
-                (PromptBar){NULL, prompts, 3});
+                (PromptBar){NULL, prompts, 4});
 }

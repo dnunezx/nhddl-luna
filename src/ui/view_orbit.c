@@ -119,10 +119,11 @@ static void drawOrbitGuide(int centerX, int centerY, int radiusX, int radiusY) {
 static void drawOrbitFooter(const char *nextViewLabel) {
   const ButtonPrompt prompts[] = {
       {ICON_CIRCLE, nextViewLabel}, {ICON_SQUARE, "Random"},
-      {ICON_CROSS, "Launch"}, {ICON_TRIANGLE, "Options"}};
+      {ICON_CROSS, "Launch"}, {ICON_START, "Menu"},
+      {ICON_TRIANGLE, "Options"}};
   drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
                 gsGlobal->Width - 20, gsGlobal->Height, 8, FontMainColor,
-                (PromptBar){NULL, prompts, 4});
+                (PromptBar){NULL, prompts, 5});
 }
 
 void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int flowOffset,

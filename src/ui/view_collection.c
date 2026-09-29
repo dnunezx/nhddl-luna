@@ -121,13 +121,22 @@ static int psbbnAbsolute(int value) {
   return (value < 0) ? -value : value;
 }
 
-static void drawCollectionFooter(const char *nextViewLabel) {
+static void drawCollectionFooter(const char *nextViewLabel, int favoritesEmpty) {
+  if (favoritesEmpty) {
+    const ButtonPrompt prompts[] = {
+        {ICON_CIRCLE, nextViewLabel}, {ICON_SELECT, "Return"},
+        {ICON_START, "Menu"}};
+    drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
+                  gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
+                  (PromptBar){NULL, prompts, 3});
+    return;
+  }
   const ButtonPrompt prompts[] = {
       {ICON_CIRCLE, nextViewLabel}, {ICON_CROSS, "Launch"},
-      {ICON_TRIANGLE, "Options"}};
+      {ICON_START, "Menu"}, {ICON_TRIANGLE, "Options"}};
   drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
                 gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
-                (PromptBar){NULL, prompts, 3});
+                (PromptBar){NULL, prompts, 4});
 }
 
 static void drawCollectionEntryFade(int entryProgress) {
@@ -220,7 +229,7 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
     drawTextWindow(40, headerHeight + 96, panelRight, selectorCenterY - getFontLineHeight() * 2,
                    5, HeaderTextColor, ALIGN_CENTER,
                    "NO FAVORITES YET\nAdd favorites in List");
-    drawCollectionFooter(nextViewLabel);
+    drawCollectionFooter(nextViewLabel, 1);
     drawCollectionEntryFade(entryProgress);
     return;
   }
@@ -336,6 +345,6 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
                      (cacheToDraw == foregroundCacheIdx) ? PSBBN_COVER_FOREGROUND_Z
                                                       : PSBBN_COVER_BACKGROUND_Z);
   }
-  drawCollectionFooter(nextViewLabel);
+  drawCollectionFooter(nextViewLabel, 0);
   drawCollectionEntryFade(entryProgress);
 }

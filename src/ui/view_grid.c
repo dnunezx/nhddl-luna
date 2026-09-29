@@ -382,8 +382,8 @@ void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBas
 
   const ButtonPrompt prompts[] = {
       {ICON_CIRCLE, nextViewLabel}, {ICON_CROSS, "Launch"},
-      {ICON_TRIANGLE, "Options"}};
+      {ICON_START, "Menu"}, {ICON_TRIANGLE, "Options"}};
   drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
                 gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
-                (PromptBar){NULL, prompts, 3});
+                (PromptBar){NULL, prompts, 4});
 }

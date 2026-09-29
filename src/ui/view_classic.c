@@ -218,10 +218,19 @@ void setClassicArtOverlap(int overlap) {
 }
 
 
-static void drawTitleListFooter(const char *nextViewLabel) {
+static void drawTitleListFooter(const char *nextViewLabel, int favoritesEmpty) {
+  if (favoritesEmpty) {
+    const ButtonPrompt prompts[] = {
+        {ICON_CIRCLE, nextViewLabel}, {ICON_SELECT, "Return"},
+        {ICON_START, "Menu"}};
+    drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
+                  gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
+                  (PromptBar){NULL, prompts, 3});
+    return;
+  }
   const ButtonPrompt prompts[] = {
       {ICON_CIRCLE, nextViewLabel}, {ICON_SQUARE, "Favorite"},
-      {ICON_CROSS, "Launch"}, {ICON_START, "Exit"},
+      {ICON_CROSS, "Launch"}, {ICON_START, "Menu"},
       {ICON_TRIANGLE, "Options"}};
   drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
                 gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
@@ -368,7 +377,7 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
   snprintf(lineBuffer, 255, "%d/%d", curPage + 1, pageCount);
   drawTextWindow(baseX, headerHeight - getFontLineHeight(), gsGlobal->Width - baseX, 0, 3, HeaderTextColor, ALIGN_RIGHT, lineBuffer);
 
-  drawTitleListFooter(nextViewLabel);
+  drawTitleListFooter(nextViewLabel, favoritesOnly && favoriteTotal == 0);
 
   // Draw title list
   Target *curTitle = titles->first;
@@ -380,13 +389,9 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
   listStartY = titleY;
   classicGlowSync(selectedDisplayIdx, maxTitlesPerPage, curPage, frameNowMs);
   if (favoritesOnly && favoriteTotal == 0) {
-    const ButtonPrompt back[] = {{ICON_SELECT, "Return"}};
     drawTextWindow(baseX, titleY + getFontLineHeight() * 3, coverArtX1 - 12,
                    titleY + getFontLineHeight() * 5, 6, HeaderTextColor,
                    ALIGN_CENTER, "NO FAVORITES YET");
-    drawPromptBar(baseX, titleY + getFontLineHeight() * 5,
-                  coverArtX1 - 12, titleY + getFontLineHeight() * 7,
-                  6, HeaderTextColor, (PromptBar){NULL, back, 1});
   }
   while (curTitle != NULL) {
     int rowIdx;

@@ -1926,7 +1926,9 @@ int uiMainMenuLoop(int hasLibrary) {
     drawBrowserFrame("LUNA", hasLibrary ? "Main menu" : "No games found",
                      hasLibrary ? "Browse storage or return to your games."
                                 : "Browse storage even without a game library.",
-                     PROMPT_TWO(ICON_CROSS, "Select", ICON_TRIANGLE, "Back"),
+                     hasLibrary ?
+                         PROMPT_TWO(ICON_CROSS, "Select", ICON_TRIANGLE, "Back") :
+                         PROMPT_ONE(ICON_CROSS, "Select"),
                      count, selected, 0,
                      selected == 0 || selected == 1 ? 220 : 0,
                      mainMenuRow, &hasLibrary);
