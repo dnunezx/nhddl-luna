@@ -12,14 +12,16 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
                    GSTEXTURE *selectedTitleCover, GSTEXTURE *previousCover,
                    GSTEXTURE *selectedTitleDisc, const uint8_t *favoriteFlags,
                    int favoritesOnly, int coverPending, int coverTransitionProgress,
-                   uint32_t frameNowMs);
+                   int entryProgress, uint32_t frameNowMs);
 void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers,
-                         int flowOffset, int outgoingTitleIdx, int favoritesOnly, uint32_t frameNowMs);
+                         int flowOffset, int outgoingTitleIdx, int favoritesOnly,
+                         int entryProgress, uint32_t frameNowMs);
 void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBase,
                    int activeWindowBuffer, int incomingWindowBase, int incomingWindowBuffer,
                    int selectedCoverBuffer, int cascadeDirection, int cascadeProgress,
-                   uint32_t frameNowMs);
+                   int entryProgress, uint32_t frameNowMs);
 void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers,
-               int flowOffset, int randomActive, uint32_t frameNowMs);
+               int flowOffset, int randomActive, int entryProgress,
+               uint32_t frameNowMs);
 
 #endif

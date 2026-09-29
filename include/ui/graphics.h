@@ -55,7 +55,23 @@ typedef enum {
   ICON_SELECT,
   ICON_START,
   ICON_ENABLED,
+  ICON_L2,
+  ICON_R2,
+  ICON_DPAD,
+  ICON_L3,
+  ICON_R3,
 } IconType;
+
+typedef struct {
+  IconType icon;
+  const char *label;
+} ButtonPrompt;
+
+typedef struct {
+  const char *note;
+  const ButtonPrompt *items;
+  int count;
+} PromptBar;
 
 typedef enum {
   CARD_ART_NONE = -1,
@@ -106,10 +122,13 @@ void drawIcon(float x, float y, int z, uint64_t color, IconType iconType);
 // Draws the icon in [x1,y1],[x2,y2] window.
 void drawIconWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_t alignment, IconType iconType);
 
+// Centers prompts within equal-width slots; an optional note occupies the left half.
+void drawPromptBar(int left, int top, int right, int bottom, int z,
+                   uint64_t labelColor, PromptBar bar);
+
 // Draws bundled memory-card artwork at the requested square size.
 void drawCardArt(CardArtType card, float x, float y, float size);
 
 // Draws the embedded Classic scrollbar PNG at a chosen height.
-void drawClassicScrollbar(float x, float y, float height, int z);
 
 #endif

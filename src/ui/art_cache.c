@@ -7,8 +7,11 @@
 #include <malloc.h>
 #include <gsToolkit.h>
 #include <stdio.h>
+#include <string.h>
 
 #define PSBBN_THUMBNAIL_SIZE 64
+#define GRID_THUMBNAIL_BYTES (GRID_THUMBNAIL_SIZE * GRID_THUMBNAIL_SIZE * sizeof(PSBBNPixel))
+#define GRID_THUMBNAIL_CACHE_COUNT (GRID_PAGE_BUFFERS * GRID_PAGE_SIZE)
 
 typedef struct {
   uint8_t r, g, b, a;
@@ -26,6 +29,14 @@ static int psbbnCoverSourceHeight[PSBBN_COVER_CACHE_COUNT];
 GSTEXTURE *gridCoverTextures[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
 uint8_t gridCoverLoaded[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
 static uint8_t gridCoverAttempted[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
+typedef struct {
+  char path[255];
+  PSBBNPixel *pixels;
+  uint32_t lastUsed;
+  uint8_t state; // 0: empty, 1: thumbnail, 2: missing file
+} GridThumbnailCacheEntry;
+static GridThumbnailCacheEntry gridThumbnailCache[GRID_THUMBNAIL_CACHE_COUNT];
+static uint32_t gridThumbnailCacheClock;
 GSTEXTURE *gridSelectedTextures[GRID_SELECTED_BUFFERS];
 uint8_t gridSelectedLoaded[GRID_SELECTED_BUFFERS];
 GSTEXTURE *orbsLogoTextures[ORBS_LOGO_CACHE_COUNT];
@@ -400,21 +411,88 @@ void refreshOrbsBackground(Target *target) {
   orbsBackgroundTarget = target->idx;
 }
 
+static int findGridThumbnail(const char *path) {
+  for (int i = 0; i < GRID_THUMBNAIL_CACHE_COUNT; i++) {
+    if (gridThumbnailCache[i].state && !strcmp(gridThumbnailCache[i].path, path))
+      return i;
+  }
+  return -1;
+}
+
+static void rememberGridThumbnail(const char *path, const PSBBNPixel *pixels) {
+  int victim = -1;
+  for (int i = 0; i < GRID_THUMBNAIL_CACHE_COUNT; i++) {
+    if (!gridThumbnailCache[i].state) {
+      victim = i;
+      break;
+    }
+    if (victim < 0 || gridThumbnailCache[i].lastUsed < gridThumbnailCache[victim].lastUsed)
+      victim = i;
+  }
+  GridThumbnailCacheEntry *entry = &gridThumbnailCache[victim];
+  if (pixels != NULL && entry->pixels == NULL) {
+    entry->pixels = malloc(GRID_THUMBNAIL_BYTES);
+    if (entry->pixels == NULL)
+      return;
+  }
+  if (pixels != NULL)
+    memcpy(entry->pixels, pixels, GRID_THUMBNAIL_BYTES);
+  else {
+    free(entry->pixels);
+    entry->pixels = NULL;
+  }
+  snprintf(entry->path, sizeof(entry->path), "%s", path);
+  entry->lastUsed = ++gridThumbnailCacheClock;
+  entry->state = pixels != NULL ? 1 : 2;
+}
+
 static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXTURE *texture, int thumbnail) {
   if (device->metadev)
     device = device->metadev;
 
   releaseGridTexture(texture);
   snprintf(artPathBuffer, 255, "%s%s/%s.png", device->mountpoint, psbbnArtPath, titleID);
-  if (thumbnail ? decodePNGTextureRGBA(gsGlobal, texture, artPathBuffer) : loadPNGTextureRGBA(gsGlobal, texture, artPathBuffer))
+  if (thumbnail) {
+    int cached = findGridThumbnail(artPathBuffer);
+    if (cached >= 0) {
+      GridThumbnailCacheEntry *entry = &gridThumbnailCache[cached];
+      entry->lastUsed = ++gridThumbnailCacheClock;
+      if (entry->state == 2)
+        return -1;
+      texture->Mem = memalign(128, GRID_THUMBNAIL_BYTES);
+      if (texture->Mem == NULL)
+        return -1;
+      memcpy(texture->Mem, entry->pixels, GRID_THUMBNAIL_BYTES);
+      texture->Width = GRID_THUMBNAIL_SIZE;
+      texture->Height = GRID_THUMBNAIL_SIZE;
+      texture->VramClut = 0;
+      texture->Clut = NULL;
+      texture->PSM = GS_PSM_CT32;
+      texture->Filter = GS_FILTER_LINEAR;
+      gsKit_TexManager_bind(gsGlobal, texture);
+      return 0;
+    }
+  }
+  if (thumbnail ? decodePNGTextureRGBA(gsGlobal, texture, artPathBuffer) : loadPNGTextureRGBA(gsGlobal, texture, artPathBuffer)) {
+    if (thumbnail) {
+      // A missing file stays a placeholder on later visits; other read or
+      // decode failures may be retried after the page buffer is replaced.
+      FILE *file = fopen(artPathBuffer, "rb");
+      if (file == NULL)
+        rememberGridThumbnail(artPathBuffer, NULL);
+      else
+        fclose(file);
+      releaseGridTexture(texture);
+    }
     return -1;
+  }
   texture->Filter = GS_FILTER_LINEAR;
 
   if (thumbnail) {
     PSBBNPixel *source = (PSBBNPixel *)texture->Mem;
     int sourceWidth = texture->Width;
     int sourceHeight = texture->Height;
-    PSBBNPixel *pixels = memalign(128, GRID_THUMBNAIL_SIZE * GRID_THUMBNAIL_SIZE * sizeof(PSBBNPixel));
+    PSBBNPixel *pixels = memalign(128, GRID_THUMBNAIL_BYTES);
 
     if (pixels == NULL) {
       releaseGridTexture(texture);
@@ -462,6 +540,7 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
     texture->PSM = GS_PSM_CT32;
     texture->Filter = GS_FILTER_LINEAR;
     gsKit_TexManager_bind(gsGlobal, texture);
+    rememberGridThumbnail(artPathBuffer, pixels);
   }
   return 0;
 }
@@ -712,6 +791,14 @@ void artCacheShutdown(void) {
       gridCoverLoaded[buffer][i] = 0;
     }
   }
+  for (int i = 0; i < GRID_THUMBNAIL_CACHE_COUNT; i++) {
+    free(gridThumbnailCache[i].pixels);
+    gridThumbnailCache[i].pixels = NULL;
+    gridThumbnailCache[i].state = 0;
+    gridThumbnailCache[i].path[0] = '\0';
+    gridThumbnailCache[i].lastUsed = 0;
+  }
+  gridThumbnailCacheClock = 0;
   for (int buffer = 0; buffer < GRID_SELECTED_BUFFERS; buffer++) {
     if (gridSelectedTextures[buffer] != NULL) {
       free(gridSelectedTextures[buffer]->Mem);

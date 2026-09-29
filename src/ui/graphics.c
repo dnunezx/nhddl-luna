@@ -4,7 +4,6 @@
 #include "ui/dejavu_sans.h"
 #include "ui/psbbn_font.h"
 #include "ui/icons.h"
-#include "ui/classic_scrollbar.h"
 #include "ui/grid_selector.h"
 #include <dmaKit.h>
 #include <gsKit.h>
@@ -30,7 +29,6 @@ static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *b
 GSTEXTURE **fontPages;
 // Graphics textures
 GSTEXTURE *icons;
-static GSTEXTURE *classicScrollbar;
 GSTEXTURE *gridSelector;
 static GSTEXTURE cardArtTextures[CARD_ART_COUNT];
 static uint8_t cardArtAttempted[CARD_ART_COUNT];
@@ -137,14 +135,6 @@ int initGraphics() {
     return -1;
   }
 
-  classicScrollbar = calloc(sizeof(GSTEXTURE), 1);
-  if (gsKit_texture_png_mem(gsGlobal, classicScrollbar, CLASSIC_SCROLLBAR_PNG,
-                            SIZE_CLASSIC_SCROLLBAR_PNG, 0, 1)) {
-    DPRINTF("ERROR: Failed to load Classic scrollbar texture\n");
-    return -1;
-  }
-  classicScrollbar->Filter = GS_FILTER_LINEAR;
-
   gridSelector = calloc(sizeof(GSTEXTURE), 1);
   if (gridSelector != NULL &&
       gsKit_texture_png_mem(gsGlobal, gridSelector, (void *)GRID_SELECTOR_PNG,
@@ -177,37 +167,12 @@ void closeFont() {
 
   free(icons->Mem);
   free(icons);
-  free(classicScrollbar->Mem);
-  free(classicScrollbar);
   if (gridSelector != NULL) {
     free(gridSelector->Mem);
     free(gridSelector);
     gridSelector = NULL;
   }
   return;
-}
-
-void drawClassicScrollbar(float x, float y, float height, int z) {
-  int previousAlphaTest = gsGlobal->Test->ATST;
-  int previousAlphaReference = gsGlobal->Test->AREF;
-  int previousAlphaFail = gsGlobal->Test->AFAIL;
-
-  gsKit_TexManager_bind(gsGlobal, classicScrollbar);
-  gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-  gsGlobal->Test->ATST = 2;
-  gsGlobal->Test->AREF = 0x80;
-  gsGlobal->Test->AFAIL = 0;
-  gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
-  gsKit_set_test(gsGlobal, GS_ATEST_ON);
-  gsKit_prim_sprite_texture(gsGlobal, classicScrollbar, x, y, 0.0f, 0.0f,
-                            x + classicScrollbar->Width, y + height,
-                            classicScrollbar->Width - 1, classicScrollbar->Height - 1,
-                            z, GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80));
-  gsGlobal->Test->ATST = previousAlphaTest;
-  gsGlobal->Test->AREF = previousAlphaReference;
-  gsGlobal->Test->AFAIL = previousAlphaFail;
-  gsKit_set_test(gsGlobal, GS_ATEST_ON);
-  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
 }
 
 // Returns icon width
@@ -217,12 +182,8 @@ int getIconWidth(IconType iconType) { return ICONS[iconType].width; }
 void drawIcon(float x, float y, int z, uint64_t color, IconType iconType) {
   Icon icon = ICONS[iconType];
 
-  // The triangle artwork sits two pixels higher within its 26-pixel tile.
-  if (iconType == ICON_TRIANGLE)
-    y += 2;
-
-  // Preserve the colors in the supplied face-button artwork.
-  if (iconType <= ICON_TRIANGLE)
+  // Preserve the artwork colors for every controller button.
+  if (iconType != ICON_ENABLED)
     color = GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80);
 
   gsKit_TexManager_bind(gsGlobal, icons);
@@ -328,6 +289,37 @@ void drawIconWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8
   }
 
   drawIcon(x1, y1, z, color, iconType);
+}
+
+void drawPromptBar(int left, int top, int right, int bottom, int z,
+                   uint64_t labelColor, PromptBar bar) {
+  if (right <= left || bottom <= top)
+    return;
+  if (bar.note != NULL) {
+    int noteRight = bar.count > 0 ? left + (right - left) / 2 : right;
+    drawTextWindow(left, top, noteRight - 6, bottom, z, labelColor,
+                   bar.count > 0 ? ALIGN_VCENTER : ALIGN_CENTER, bar.note);
+    if (bar.count == 0)
+      return;
+    left = noteRight;
+  }
+  if (bar.items == NULL || bar.count <= 0)
+    return;
+  int slot = (right - left) / bar.count;
+  for (int i = 0; i < bar.count; i++) {
+    const ButtonPrompt *prompt = &bar.items[i];
+    int slotLeft = left + i * slot;
+    int slotRight = i == bar.count - 1 ? right : slotLeft + slot;
+    int labelWidth = (int)getLineWidth(prompt->label);
+    int contentWidth = getIconWidth(prompt->icon) + 6 + labelWidth;
+    int x = slotLeft + ((slotRight - slotLeft) - contentWidth) / 2;
+    if (x < slotLeft + 2)
+      x = slotLeft + 2;
+    drawIconWindow(x, top, 0, bottom, z, FontMainColor,
+                   ALIGN_VCENTER, prompt->icon);
+    drawTextWindow(x + getIconWidth(prompt->icon) + 6, top, slotRight - 2,
+                   bottom, z, labelColor, ALIGN_VCENTER, prompt->label);
+  }
 }
 
 // Returns line height for used font

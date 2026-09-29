@@ -2,9 +2,188 @@
 #include "ui/view_internal.h"
 #include "ui/view_scroll.h"
 #include "ui/ambient_orbs.h"
+#include "dprintf.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static GlassColorPreset glassColorPreset = GLASS_COLOR_ORIGINAL;
+static LibraryBackground libraryBackground = LIBRARY_BACKGROUND_STARS;
+static u32 fogPixels[128 * 128] __attribute__((aligned(128)));
+static u32 bumpPixels[64 * 64] __attribute__((aligned(128)));
+static GSTEXTURE fogTexture;
+static GSTEXTURE bumpTexture;
+static int biosFogTextureLoaded;
+static int biosCubeTextureLoaded;
+
+static uint32_t tunnelReadLE32(const unsigned char *bytes) {
+  return (uint32_t)bytes[0] | (uint32_t)bytes[1] << 8 |
+         (uint32_t)bytes[2] << 16 | (uint32_t)bytes[3] << 24;
+}
+
+// TEXIMAGE is a ROMDIR; file offsets are 16-byte aligned from its start.
+static int tunnelFindResource(FILE *rom, const char *name,
+                              long *offset, uint32_t *size) {
+  unsigned char entry[16];
+  long fileOffset = 0;
+  if (fseek(rom, 0, SEEK_SET))
+    return -1;
+  for (int index = 0; index < 256; index++) {
+    if (fread(entry, 1, sizeof(entry), rom) != sizeof(entry) || !entry[0])
+      break;
+    const uint32_t fileSize = tunnelReadLE32(entry + 12);
+    if (!memcmp(entry, name, strlen(name)) && entry[strlen(name)] == 0) {
+      *offset = fileOffset;
+      *size = fileSize;
+      return 0;
+    }
+    fileOffset += (fileSize + 15U) & ~15U;
+  }
+  return -1;
+}
+
+// The OSDSYS expand format uses 30 literal/back-reference flags per word.
+static int tunnelExpandResource(FILE *rom, long offset, uint32_t size,
+                                unsigned char *output, uint32_t outputSize) {
+  if (size < 8 || size > 65536 || fseek(rom, offset, SEEK_SET))
+    return -1;
+  unsigned char *source = malloc(size);
+  if (source == NULL)
+    return -1;
+  int result = -1;
+  if (fread(source, 1, size, rom) != size ||
+      tunnelReadLE32(source) != outputSize)
+    goto done;
+  uint32_t position = 4;
+  uint32_t produced = 0;
+  uint32_t descriptor = 0;
+  int flagsLeft = 0;
+  int shift = 0, backMask = 0;
+  while (produced < outputSize) {
+    if (!flagsLeft) {
+      if (position + 4 > size)
+        goto done;
+      descriptor = ((uint32_t)source[position] << 24) |
+                   ((uint32_t)source[position + 1] << 16) |
+                   ((uint32_t)source[position + 2] << 8) |
+                   source[position + 3];
+      position += 4;
+      const int mode = descriptor & 3;
+      shift = 14 - mode;
+      backMask = 0x3fff >> mode;
+      flagsLeft = 30;
+    }
+    if (position >= size)
+      goto done;
+    const int value = source[position++];
+    if (descriptor & 0x80000000U) {
+      if (position >= size)
+        goto done;
+      const int code = (value << 8) | source[position++];
+      const int back = 1 + (code & backMask);
+      int count = 3 + (code >> shift);
+      if (back > produced || count > (int)(outputSize - produced))
+        goto done;
+      while (count--) {
+        output[produced] = output[produced - back];
+        produced++;
+      }
+    } else {
+      output[produced++] = value;
+    }
+    descriptor <<= 1;
+    flagsLeft--;
+  }
+  result = 0;
+done:
+  free(source);
+  return result;
+}
+
+static void tunnelInitTexture(GSTEXTURE *texture, u32 *pixels,
+                              int width, int height) {
+  memset(texture, 0, sizeof(*texture));
+  texture->Width = width;
+  texture->Height = height;
+  texture->PSM = GS_PSM_CT32;
+  texture->Mem = pixels;
+  texture->Filter = GS_FILTER_LINEAR;
+  texture->Delayed = GS_SETTING_ON;
+}
+
+static int loadBiosFogTexture(void) {
+  if (biosFogTextureLoaded)
+    return 0;
+  FILE *rom = fopen("rom0:TEXIMAGE", "rb");
+  if (rom == NULL)
+    return -1;
+  long fogOffset;
+  uint32_t fogSize;
+  // TEXOFOG0 expands to a 20-byte container header, 16-bit pixels,
+  // and four spare bytes. The opening renderer reads pixels at +20.
+  static unsigned char expanded[20 + 128 * 128 * 2 + 4];
+  int result = tunnelFindResource(rom, "TEXOFOG0", &fogOffset, &fogSize) ||
+               tunnelExpandResource(rom, fogOffset, fogSize, expanded, sizeof(expanded));
+  if (!result) {
+    for (int i = 0; i < 128 * 128; i++) {
+      const uint16_t pixel = (uint16_t)expanded[20 + i * 2] |
+                             (uint16_t)expanded[20 + i * 2 + 1] << 8;
+      const u32 r5 = pixel & 31U;
+      const u32 g5 = (pixel >> 5) & 31U;
+      const u32 b5 = (pixel >> 10) & 31U;
+      fogPixels[i] = ((r5 << 3) | (r5 >> 2)) |
+                     (((g5 << 3) | (g5 >> 2)) << 8) |
+                     (((b5 << 3) | (b5 >> 2)) << 16) | 0x7f000000U;
+    }
+  }
+  fclose(rom);
+  if (result) {
+    DPRINTF("LUNA: failed to load BIOS TEXOFOG0\n");
+    return -1;
+  }
+  tunnelInitTexture(&fogTexture, fogPixels, 128, 128);
+  biosFogTextureLoaded = 1;
+  DPRINTF("LUNA: loaded BIOS TEXOFOG0\n");
+  return 0;
+}
+
+static int loadBiosCubeTexture(void) {
+  if (biosCubeTextureLoaded)
+    return 0;
+  FILE *rom = fopen("rom0:TEXIMAGE", "rb");
+  if (rom == NULL)
+    return -1;
+  long bumpOffset;
+  uint32_t bumpSize;
+  static unsigned char expanded[64 * 64];
+  int result = tunnelFindResource(rom, "TEXCBUMP", &bumpOffset, &bumpSize) ||
+               tunnelExpandResource(rom, bumpOffset, bumpSize, expanded, sizeof(expanded));
+  fclose(rom);
+  if (result) {
+    DPRINTF("LUNA: failed to load BIOS TEXCBUMP\n");
+    return -1;
+  }
+  for (int i = 0; i < 64 * 64; i++) {
+    const u32 gray = expanded[i];
+    bumpPixels[i] = gray | gray << 8 | gray << 16 | 0x7f000000U;
+  }
+  tunnelInitTexture(&bumpTexture, bumpPixels, 64, 64);
+  biosCubeTextureLoaded = 1;
+  DPRINTF("LUNA: loaded BIOS TEXCBUMP\n");
+  return 0;
+}
+
+int setLibraryBackground(LibraryBackground background) {
+  if (background == LIBRARY_BACKGROUND_RED_CLOUDS && loadBiosFogTexture())
+    return -1;
+  if (background == LIBRARY_BACKGROUND_MIDNIGHT_CUBES && loadBiosCubeTexture())
+    return -1;
+  libraryBackground = background >= LIBRARY_BACKGROUND_STARS &&
+                      background < LIBRARY_BACKGROUND_COUNT ?
+                      background : LIBRARY_BACKGROUND_STARS;
+  setAmbientOrbsBackgroundStyle(libraryBackground == LIBRARY_BACKGROUND_ORBS);
+  return 0;
+}
 
 void setGlassColorPreset(GlassColorPreset preset) {
   glassColorPreset = (preset >= GLASS_COLOR_ORIGINAL && preset < GLASS_COLOR_COUNT)
@@ -299,7 +478,7 @@ static void projectCrystalPointRotated(GlassPoint *point, float centerX, float c
 }
 
 static void drawGlassCube(float centerX, float centerY, int size, uint32_t yawPhase, int red, int green, int blue,
-                          int stableOutline) {
+                          int stableOutline, GSTEXTURE *surface) {
   // Clean-room crystal renderer based only on observation of the stock System
   // Configuration animation: a tumbling translucent shell around a dark core.
   static const int source[8][3] = {{-127, -127, -127}, {127, -127, -127}, {127, 127, -127}, {-127, 127, -127},
@@ -344,6 +523,9 @@ static void drawGlassCube(float centerX, float centerY, int size, uint32_t yawPh
     }
   }
 
+  if (surface != NULL)
+    gsKit_TexManager_bind(gsGlobal, surface);
+
   // The low-alpha shell remains visible behind the central smoked volume.
   for (int order = 0; order < 6; order++) {
     int face = faceOrder[order];
@@ -357,6 +539,13 @@ static void drawGlassCube(float centerX, float centerY, int size, uint32_t yawPh
     uint64_t dark = glassColor(red, green, blue, 0x16, shade - 24);
     gsKit_prim_quad_gouraud(gsGlobal, shell[a].x, shell[a].y, shell[b].x, shell[b].y, shell[c].x, shell[c].y, shell[d].x,
                             shell[d].y, 0, light, mid, dark, mid);
+    if (surface != NULL)
+      gsKit_prim_quad_texture(gsGlobal, surface,
+                              shell[a].x, shell[a].y, 0, 0,
+                              shell[b].x, shell[b].y, 63, 0,
+                              shell[c].x, shell[c].y, 0, 63,
+                              shell[d].x, shell[d].y, 63, 63, 0,
+                              GS_SETREG_RGBA(red, green, blue, 0x22));
   }
 
   // A dark inner cube creates the stock crystal's dense central volume.
@@ -490,12 +679,114 @@ static void drawGlassBackground(uint32_t frameNowMs) {
   float nearY = orbitY + orbWave(orbitPhase) * (56.0f / 127.0f);
   float farX = orbitX + orbWave(oppositePhase + (8 << 11)) * (96.0f / 127.0f);
   float farY = orbitY + orbWave(oppositePhase) * (40.0f / 127.0f);
-  drawGlassCube(nearX, nearY, 9, glassPhase(elapsedMs, 18000, 3000), 0x38, 0x98, 0xD8, 1);
-  drawGlassCube(farX, farY, 7, glassPhase(elapsedMs, 26000, 12000), 0x78, 0x68, 0xC8, 1);
+  drawGlassCube(nearX, nearY, 9, glassPhase(elapsedMs, 18000, 3000), 0x38, 0x98, 0xD8, 1, NULL);
+  drawGlassCube(farX, farY, 7, glassPhase(elapsedMs, 26000, 12000), 0x78, 0x68, 0xC8, 1, NULL);
+}
+
+typedef struct {
+  float x, y, u, v;
+  uint64_t color;
+} CloudVertex;
+
+// OSDSYS fades a 3x3 fog patch to its lit center. Four quads keep that
+// shape while sampling TEXOFOG0 from the running console's BIOS.
+static void drawRedCloudPatch(float x, float y, float radius, int alpha,
+                              int red, int green, int blue) {
+  CloudVertex vertex[3][3];
+  for (int row = 0; row < 3; row++) {
+    for (int column = 0; column < 3; column++) {
+      CloudVertex *point = &vertex[row][column];
+      point->x = x + (column - 1) * radius;
+      point->y = y + (row - 1) * radius;
+      point->u = column * 63.5f;
+      point->v = row * 63.5f;
+      point->color = GS_SETREG_RGBA(red, green, blue,
+                                     row == 1 && column == 1 ? alpha : 0);
+    }
+  }
+  for (int row = 0; row < 2; row++) {
+    for (int column = 0; column < 2; column++) {
+      CloudVertex *topLeft = &vertex[row][column];
+      CloudVertex *topRight = &vertex[row][column + 1];
+      CloudVertex *bottomLeft = &vertex[row + 1][column];
+      CloudVertex *bottomRight = &vertex[row + 1][column + 1];
+      gsKit_prim_quad_goraud_texture(gsGlobal, &fogTexture,
+                                     topLeft->x, topLeft->y, topLeft->u, topLeft->v,
+                                     topRight->x, topRight->y, topRight->u, topRight->v,
+                                     bottomLeft->x, bottomLeft->y, bottomLeft->u, bottomLeft->v,
+                                     bottomRight->x, bottomRight->y, bottomRight->u, bottomRight->v,
+                                     0, topLeft->color, topRight->color,
+                                     bottomLeft->color, bottomRight->color);
+    }
+  }
+}
+
+static void drawRedClouds(uint32_t frameNowMs) {
+  const int width = gsGlobal->Width;
+  const int height = gsGlobal->Height;
+  const uint32_t elapsedMs = glassElapsedMs(frameNowMs);
+  const int centerX = width * 52 / 100;
+  const int centerY = height * 52 / 100;
+  gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 0,
+                    GS_SETREG_RGBA(0x05, 0x01, 0x04, 0x80));
+  drawOrbitalDisc(centerX, centerY, width * 42 / 100, 0,
+                  GS_SETREG_RGBA(0x62, 0x10, 0x19, 0x24),
+                  GS_SETREG_RGBA(0x18, 0x03, 0x08, 0));
+
+  gsKit_TexManager_bind(gsGlobal, &fogTexture);
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 2, 0, 1, 0), 0);
+  for (int i = 0; i < 36; i++) {
+    const int radius = 72 + (i % 6) * 18;
+    const int span = height + radius * 2;
+    const int speed = 5 + (i % 7) * 3;
+    const float baseX = (i * 107 + i * i * 19 + 37) % (width + 160) - 80;
+    const float x = baseX + orbWave(glassPhase(elapsedMs, 15000 + i * 270, i * 313)) / 8.0f;
+    const float y = (float)(((uint64_t)elapsedMs * speed +
+                              (uint64_t)((i * 73 + i * i * 11) % span) * 1000) %
+                             ((uint64_t)span * 1000)) / 1000.0f - radius;
+    const int alpha = 0x1A + (i % 4) * 4;
+    drawRedCloudPatch(x, y, radius, alpha,
+                      0x68 + (i % 5) * 8, 0x20 + (i % 3) * 7,
+                      0x25 + (i % 4) * 5);
+  }
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+
+  drawOrbitalDisc(centerX, centerY, width * 13 / 100, 0,
+                  GS_SETREG_RGBA(0xD0, 0x5A, 0x64, 0x20),
+                  GS_SETREG_RGBA(0x78, 0x1A, 0x28, 0));
+}
+
+static void drawMidnightCubes(uint32_t frameNowMs) {
+  const int width = gsGlobal->Width;
+  const int height = gsGlobal->Height;
+  const uint32_t elapsedMs = glassElapsedMs(frameNowMs);
+  gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 0,
+                    GS_SETREG_RGBA(0x02, 0x04, 0x0B, 0x80));
+  drawOrbitalDisc(width * 34 / 100, height * 49 / 100, width * 43 / 100, 0,
+                  GS_SETREG_RGBA(0x15, 0x35, 0x53, 0x28),
+                  GS_SETREG_RGBA(0x02, 0x08, 0x15, 0));
+
+  // Floating cubes keep the BIOS bump texture from the original trial.
+  drawGlassCube(width * 0.17f,
+                height * 0.33f + orbWave(glassPhase(elapsedMs, 13000, 0)) / 10.0f,
+                23, glassPhase(elapsedMs, 16000, 0), 0x26, 0xAE, 0xDC, 0, &bumpTexture);
+  drawGlassCube(width * 0.36f,
+                height * 0.18f + orbWave(glassPhase(elapsedMs, 17000, 2300)) / 12.0f,
+                18, glassPhase(elapsedMs, 22000, 5500), 0x43, 0xA0, 0xDB, 0, &bumpTexture);
+  drawGlassCube(width * 0.31f,
+                height * 0.67f + orbWave(glassPhase(elapsedMs, 15000, 5900)) / 11.0f,
+                15, glassPhase(elapsedMs, 19000, 11000), 0x7E, 0x75, 0xB9, 0, &bumpTexture);
+  drawGlassCube(width * 0.47f,
+                height * 0.51f + orbWave(glassPhase(elapsedMs, 14000, 8100)) / 13.0f,
+                11, glassPhase(elapsedMs, 26000, 17000), 0x68, 0x83, 0xB8, 0, &bumpTexture);
 }
 
 void drawSharedLibraryBackground(uint32_t frameNowMs) {
-  if (!drawAmbientOrbsBackground(frameNowMs))
+  if (libraryBackground == LIBRARY_BACKGROUND_RED_CLOUDS)
+    drawRedClouds(frameNowMs);
+  else if (libraryBackground == LIBRARY_BACKGROUND_MIDNIGHT_CUBES)
+    drawMidnightCubes(frameNowMs);
+  else if (!drawAmbientOrbsBackground(frameNowMs))
     drawGlassBackground(frameNowMs);
 }
 
@@ -538,7 +829,7 @@ static void drawOrbsLogo(GSTEXTURE *texture, float x, float y,
 
 void drawOrbsView(TargetList *titles, int selectedTitleIdx,
                   int flowOffset, int visualFocus, int fastScroll,
-                  uint32_t now) {
+                  int entryProgress, uint32_t now) {
   const int width = gsGlobal->Width;
   const int height = gsGlobal->Height;
   const int listTop = headerHeight + 12;
@@ -546,6 +837,8 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
   const int centerY = (listTop + listBottom) / 2;
   const int rowPitch = (listBottom - listTop) / 4;
   const int logoCenterX = width - 153;
+  const int logoEntryOffset = (1000 - entryProgress) * 72 / 1000;
+  const int logoEntryBrightness = 350 + entryProgress * 650 / 1000;
   const int visualTitleIdx = lunaNavWrap(titles->total,
       selectedTitleIdx + visualFocus - ORBS_LOGO_CACHE_FOCUS);
   const uint32_t elapsedMs = glassElapsedMs(now);
@@ -630,33 +923,24 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
     logoHeight = 62.0f + 14.0f * lunaNavEase(proximity) / 1000.0f;
     rowY = centerY + position * rowPitch / 1000.0f;
     if (orbsLogoLoaded[i] && !fastScroll)
-      drawOrbsLogo(orbsLogoTextures[i], logoCenterX - logoWidth / 2.0f,
+      drawOrbsLogo(orbsLogoTextures[i], logoCenterX + logoEntryOffset - logoWidth / 2.0f,
                    rowY - logoHeight / 2.0f, logoWidth, logoHeight,
-                   i == visualFocus ? 0x80 : 0x58);
+                   (i == visualFocus ? 0x80 : 0x58) * logoEntryBrightness / 1000);
     else {
       formatPSBBNTitle(getTargetByIdx(titles, targetIdx)->name, title, 190);
-      drawTextWindow(width - 270, (int)rowY - getFontLineHeight() / 2,
-                     width - 35, (int)rowY + getFontLineHeight() / 2, 6,
+      drawTextWindow(width - 270 + logoEntryOffset,
+                     (int)rowY - getFontLineHeight() / 2,
+                     width - 35 + logoEntryOffset,
+                     (int)rowY + getFontLineHeight() / 2, 6,
                      i == visualFocus ? FontMainColor : glassMissingCoverTextColor(),
                      ALIGN_CENTER, title);
     }
   }
 
   const int footerY = height - footerHeight + 8;
-  const int circleX = 26;
-  const int crossX = width * 39 / 100;
-  const int triangleX = width * 69 / 100;
-  drawIconWindow(circleX, footerY, 0, height, 8, FontMainColor,
-                 ALIGN_CENTER, ICON_CIRCLE);
-  drawTextWindow(circleX + getIconWidth(ICON_CIRCLE) + 6, footerY,
-                 crossX - 8, height, 8, FontMainColor, ALIGN_VCENTER, "Views");
-  drawIconWindow(crossX, footerY, 0, height, 8, FontMainColor,
-                 ALIGN_CENTER, ICON_CROSS);
-  drawTextWindow(crossX + getIconWidth(ICON_CROSS) + 6, footerY,
-                 triangleX - 8, height, 8, FontMainColor, ALIGN_VCENTER, "Launch");
-  drawIconWindow(triangleX, footerY, 0, height, 8, FontMainColor,
-                 ALIGN_CENTER, ICON_TRIANGLE);
-  drawTextWindow(triangleX + getIconWidth(ICON_TRIANGLE) + 6, footerY,
-                 width - keepoutArea, height, 8, FontMainColor,
-                 ALIGN_VCENTER, "Options");
+  const ButtonPrompt prompts[] = {
+      {ICON_CIRCLE, "Views"}, {ICON_CROSS, "Launch"},
+      {ICON_TRIANGLE, "Options"}};
+  drawPromptBar(20, footerY, width - 20, height, 8, FontMainColor,
+                (PromptBar){NULL, prompts, 3});
 }

@@ -239,9 +239,19 @@ static void drawGridSelectionPlate(int selectedTitleIdx, int windowBase, float l
   drawGridQuadSolid(plate, 4, glassPresetColor(0x0C, 0x38, 0x78, (0x38 * opacity) / 0x80));
 }
 
+static int gridEntryRowProgress(int entryProgress, int row) {
+  int staggered = entryProgress * 13 / 10 - row * 100;
+  if (staggered <= 0)
+    return 0;
+  if (staggered >= 1000)
+    return 1000;
+  return lunaNavEase(staggered);
+}
+
 void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBase, int activeWindowBuffer,
                    int incomingWindowBase, int incomingWindowBuffer, int selectedCoverBuffer,
-                   int cascadeDirection, int cascadeProgress, uint32_t frameNowMs) {
+                   int cascadeDirection, int cascadeProgress, int entryProgress,
+                   uint32_t frameNowMs) {
   const int top = headerHeight + 12;
   const int bottom = gsGlobal->Height - footerHeight - 10;
   const int leftX = keepoutArea + 10;
@@ -293,18 +303,39 @@ void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBas
                    incomingOffset, 0.0f, incomingOpacity, row, 1);
     }
   } else {
-    drawGridSelectionPlate(selectedTitleIdx, activeWindowBase, gridLeft, gridTop, gridRight, gridBottom, 0.0f, 0x80);
+    int selectedRow = (selectedTitleIdx - activeWindowBase) / GRID_COLUMNS;
+    if (selectedRow < 0)
+      selectedRow = 0;
+    if (selectedRow >= GRID_ROWS)
+      selectedRow = GRID_ROWS - 1;
+    int selectedEntry = gridEntryRowProgress(entryProgress, selectedRow);
+    float selectedOffset = (1000 - selectedEntry) * 20.0f / 1000.0f;
+    int selectedOpacity = 0x80 * selectedEntry / 1000;
+    drawGridSelectionPlate(selectedTitleIdx, activeWindowBase, gridLeft, gridTop, gridRight, gridBottom,
+                           selectedOffset, selectedOpacity);
     if (selectedTitleIdx >= activeWindowBase && selectedTitleIdx < activeWindowBase + GRID_PAGE_SIZE) {
       float visualU, visualV;
       gridSelectorVisualPosition(selectedTitleIdx, activeWindowBase, frameNowMs, &visualU, &visualV);
-      drawGridHighlight(visualU, visualV, gridLeft, gridTop, gridRight, gridBottom, 0.0f, 0x80);
+      drawGridHighlight(visualU, visualV, gridLeft, gridTop, gridRight, gridBottom,
+                        selectedOffset, selectedOpacity);
     }
-    drawGridPage(titles, activeWindowBase, activeWindowBuffer, selectedTitleIdx, gridLeft, gridTop, gridRight, gridBottom,
-                 0.0f, 0.0f, 0x80, 0, GRID_ROWS);
+    if (entryProgress >= 1000) {
+      drawGridPage(titles, activeWindowBase, activeWindowBuffer, selectedTitleIdx,
+                   gridLeft, gridTop, gridRight, gridBottom,
+                   0.0f, 0.0f, 0x80, 0, GRID_ROWS);
+    } else {
+      for (int row = 0; row < GRID_ROWS; row++) {
+        int rowEntry = gridEntryRowProgress(entryProgress, row);
+        drawGridPage(titles, activeWindowBase, activeWindowBuffer, selectedTitleIdx,
+                     gridLeft, gridTop, gridRight, gridBottom,
+                     (1000 - rowEntry) * 20.0f / 1000.0f, 0.0f,
+                     0x80 * rowEntry / 1000, row, 1);
+      }
+    }
   }
 
-  snprintf(lineBuffer, sizeof(lineBuffer), "Page %d/%d", displayPageBase / GRID_PAGE_SIZE + 1, pageCount);
-  drawTextWindow(leftX, headerHeight - getFontLineHeight(), leftRight, 0, 5, HeaderTextColor, ALIGN_RIGHT, lineBuffer);
+  snprintf(lineBuffer, sizeof(lineBuffer), "%d/%d", displayPageBase / GRID_PAGE_SIZE + 1, pageCount);
+  drawTextWindow(rightLeft, headerHeight - getFontLineHeight(), rightRight, 0, 5, HeaderTextColor, ALIGN_RIGHT, lineBuffer);
 
   formatPSBBNTitle(getTargetByIdx(titles, selectedTitleIdx)->name, selectedTitle, rightRight - rightLeft);
   drawTextWindow(rightLeft, top - 2, rightRight, 0, 6, FontMainColor, ALIGN_HCENTER, selectedTitle);
@@ -328,15 +359,10 @@ void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBas
   snprintf(lineBuffer, sizeof(lineBuffer), "%d/%d", selectedTitleIdx + 1, titles->total);
   drawTextWindow(rightLeft, selectedY + selectedSize + 4, rightRight, 0, 6, FontMainColor, ALIGN_RIGHT, lineBuffer);
 
-  int baseY = gsGlobal->Height - footerHeight + 8;
-  int circleX = 22;
-  int crossX = 154;
-  int triangleX = 286;
-  drawIconWindow(circleX, baseY, 0, gsGlobal->Height, 6, FontMainColor, ALIGN_CENTER, ICON_CIRCLE);
-  drawTextWindow(circleX + getIconWidth(ICON_CIRCLE) + 6, baseY, crossX - 8, gsGlobal->Height, 6, FontMainColor, ALIGN_VCENTER, "Views");
-  drawIconWindow(crossX, baseY, 0, gsGlobal->Height, 6, FontMainColor, ALIGN_CENTER, ICON_CROSS);
-  drawTextWindow(crossX + getIconWidth(ICON_CROSS) + 6, baseY, triangleX - 8, gsGlobal->Height, 6, FontMainColor, ALIGN_VCENTER, "Launch");
-  drawIconWindow(triangleX, baseY, 0, gsGlobal->Height, 6, FontMainColor, ALIGN_CENTER, ICON_TRIANGLE);
-  drawTextWindow(triangleX + getIconWidth(ICON_TRIANGLE) + 6, baseY, gsGlobal->Width - keepoutArea, gsGlobal->Height, 6, FontMainColor, ALIGN_VCENTER,
-                  "Options");
+  const ButtonPrompt prompts[] = {
+      {ICON_CIRCLE, "Views"}, {ICON_CROSS, "Launch"},
+      {ICON_TRIANGLE, "Options"}};
+  drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
+                gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
+                (PromptBar){NULL, prompts, 3});
 }

@@ -22,8 +22,8 @@ int loadClassicArtOverlap(Target *target);
 int saveClassicArtOverlap(Target *target, int overlap);
 
 // The shared library background defaults to stars and cubes.
-int loadAmbientOrbsBackground(Target *target);
-int saveAmbientOrbsBackground(Target *target, int enabled);
+LibraryBackground loadLibraryBackground(Target *target);
+int saveLibraryBackground(Target *target, LibraryBackground background);
 
 // Orb behavior defaults to LUNA when no valid choice has been saved.
 AmbientOrbsTheme loadAmbientOrbsTheme(Target *target);
@@ -32,6 +32,11 @@ int saveAmbientOrbsTheme(Target *target, AmbientOrbsTheme theme);
 // Appearance is independent of behavior and defaults to LUNA.
 AmbientOrbsAppearance loadAmbientOrbsAppearance(Target *target);
 int saveAmbientOrbsAppearance(Target *target, AmbientOrbsAppearance appearance);
+
+// Background orb and tail colors are independent; absent settings keep the original colors.
+AmbientOrbsColor loadAmbientOrbsColor(Target *target, AmbientOrbsColorPart part);
+int saveAmbientOrbsColor(Target *target, AmbientOrbsColorPart part,
+                         AmbientOrbsColor color);
 
 // Glass color is a library-wide preference; invalid or absent data uses Original.
 GlassColorPreset loadGlassColorPreset(Target *target);

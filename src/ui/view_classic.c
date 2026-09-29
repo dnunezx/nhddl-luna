@@ -13,9 +13,6 @@
 #define DISC_ROTATION_PERIOD_MS 30000
 #define CLASSIC_SELECTION_GLOW_DURATION_MS 110
 #define CLASSIC_GLOW_ROW_SCALE 256
-#define CLASSIC_SCROLLBAR_HEIGHT 261
-#define CLASSIC_SCROLLBAR_WIDTH 15
-#define CLASSIC_SCROLLBAR_COVER_GAP 8
 
 static int coverArtX2;
 static int coverArtY2;
@@ -222,32 +219,13 @@ void setClassicArtOverlap(int overlap) {
 
 
 static void drawTitleListFooter(void) {
-  const int footerZ = 6;
-  const int baseY = gsGlobal->Height - footerHeight + 8;
-  const int circleX = 34;
-  const int squareX = gsGlobal->Width / 4;
-  const int crossX = gsGlobal->Width / 2 - 42;
-  const int startX = gsGlobal->Width * 63 / 100;
-  const int triangleX = gsGlobal->Width - 132;
-
-  // Match the unframed baseline and primary control anchors used by the other
-  // library views, fitting Classic's Favorite and Exit actions between them.
-  drawIconWindow(circleX, baseY, 0, gsGlobal->Height, footerZ, FontMainColor, ALIGN_CENTER, ICON_CIRCLE);
-  drawTextWindow(circleX + getIconWidth(ICON_CIRCLE) + 6, baseY, squareX - 8,
-                 gsGlobal->Height, footerZ, FontMainColor, ALIGN_VCENTER, "Collection");
-  drawIconWindow(squareX, baseY, 0, gsGlobal->Height, footerZ, FontMainColor, ALIGN_CENTER, ICON_SQUARE);
-  drawTextWindow(squareX + getIconWidth(ICON_SQUARE) + 6, baseY, crossX - 8,
-                 gsGlobal->Height, footerZ, FontMainColor, ALIGN_VCENTER, "Favorite");
-  drawIconWindow(crossX, baseY, 0, gsGlobal->Height, footerZ, FontMainColor, ALIGN_CENTER, ICON_CROSS);
-  drawTextWindow(crossX + getIconWidth(ICON_CROSS) + 6, baseY, startX - 8,
-                 gsGlobal->Height, footerZ, FontMainColor, ALIGN_VCENTER, "Launch");
-  drawIconWindow(startX, baseY, 0, gsGlobal->Height, footerZ, FontMainColor, ALIGN_CENTER, ICON_START);
-  drawTextWindow(startX + getIconWidth(ICON_START) + 6, baseY, triangleX - 8,
-                 gsGlobal->Height, footerZ, FontMainColor, ALIGN_VCENTER, "Exit");
-  drawIconWindow(triangleX, baseY, 0, gsGlobal->Height, footerZ, FontMainColor, ALIGN_CENTER, ICON_TRIANGLE);
-  drawTextWindow(triangleX + getIconWidth(ICON_TRIANGLE) + 6, baseY,
-                 gsGlobal->Width - keepoutArea, gsGlobal->Height, footerZ,
-                 FontMainColor, ALIGN_VCENTER, "Options");
+  const ButtonPrompt prompts[] = {
+      {ICON_CIRCLE, "Collection"}, {ICON_SQUARE, "Favorite"},
+      {ICON_CROSS, "Launch"}, {ICON_START, "Exit"},
+      {ICON_TRIANGLE, "Options"}};
+  drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
+                gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
+                (PromptBar){NULL, prompts, 5});
 }
 
 
@@ -274,16 +252,20 @@ static void drawClassicDisc(GSTEXTURE *disc, uint32_t frameNowMs) {
   if (disc == NULL) {
     // Missing artwork stays source-truthful: a quiet empty disc, not a cover crop
     // or a generic label that could be mistaken for the selected game's art.
-    drawDiscOutline(centerX, centerY, radius, classicArtOverlap ? 4 : 5, GS_SETREG_RGBA(0x70, 0xB8, 0xD8, 0x22));
-    drawDiscOutline(centerX, centerY, 7, classicArtOverlap ? 4 : 5, GS_SETREG_RGBA(0x90, 0xD0, 0xE8, 0x1C));
+    drawDiscOutline(centerX, centerY, radius, classicArtOverlap ? 4 : 5,
+                    glassPresetColor(0x70, 0xB8, 0xD8, 0x22));
+    drawDiscOutline(centerX, centerY, 7, classicArtOverlap ? 4 : 5,
+                    glassPresetColor(0x90, 0xD0, 0xE8, 0x1C));
     return;
   }
 
   drawOrbitalDisc(centerX, centerY, radius + 8, classicArtOverlap ? 2 : 3,
-                  GS_SETREG_RGBA(0x44, 0xB8, 0xF0, 0x0D),
-                  GS_SETREG_RGBA(0x28, 0x68, 0xB0, 0x02));
-  drawDiscOutline(centerX, centerY, radius + 5, outlineZ, GS_SETREG_RGBA(0x78, 0xD8, 0xFF, 0x20));
-  drawDiscOutline(centerX, centerY, radius + 2, outlineZ, GS_SETREG_RGBA(0x38, 0x88, 0xC8, 0x18));
+                  glassPresetColor(0x44, 0xB8, 0xF0, 0x0D),
+                  glassPresetColor(0x28, 0x68, 0xB0, 0x02));
+  drawDiscOutline(centerX, centerY, radius + 5, outlineZ,
+                  glassPresetColor(0x78, 0xD8, 0xFF, 0x20));
+  drawDiscOutline(centerX, centerY, radius + 2, outlineZ,
+                  glassPresetColor(0x38, 0x88, 0xC8, 0x18));
 
   const uint32_t phase = discRotationPhase(frameNowMs);
   const float sine = (float)discWave(phase) / 127.0f;
@@ -345,7 +327,7 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
                    GSTEXTURE *selectedTitleCover, GSTEXTURE *previousCover,
                    GSTEXTURE *selectedTitleDisc, const uint8_t *favoriteFlags,
                    int favoritesOnly, int coverPending, int coverTransitionProgress,
-                   uint32_t frameNowMs) {
+                   int entryProgress, uint32_t frameNowMs) {
 
   classicDiscLastFrameMs = frameNowMs;
 
@@ -382,7 +364,7 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
                  favoritesOnly ? HeaderTextColor : FontMainColor, ALIGN_LEFT, "List");
   drawTextWindow(favoriteTextX, headerY, favoriteRight + 2, 0, 6,
                  favoritesOnly ? FontMainColor : HeaderTextColor, ALIGN_LEFT, "Favorites");
-  snprintf(lineBuffer, 255, "Page %d/%d", curPage + 1, pageCount);
+  snprintf(lineBuffer, 255, "%d/%d", curPage + 1, pageCount);
   drawTextWindow(baseX, headerHeight - getFontLineHeight(), gsGlobal->Width - baseX, 0, 3, HeaderTextColor, ALIGN_RIGHT, lineBuffer);
 
   drawTitleListFooter();
@@ -391,33 +373,20 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
   Target *curTitle = titles->first;
   int displayIdx = 0;
   int listStartY;
-  const int scrollbarVisible = displayTotal > maxTitlesPerPage && selectedDisplayIdx >= 0;
-  const int scrollbarInset = scrollbarVisible
-                                 ? CLASSIC_SCROLLBAR_WIDTH + CLASSIC_SCROLLBAR_COVER_GAP
-                                 : 0;
+  const int listTextX = baseX + (1000 - entryProgress) * 20 / 1000;
 
   titleY += getFontLineHeight() / 2;
   listStartY = titleY;
   classicGlowSync(selectedDisplayIdx, maxTitlesPerPage, curPage, frameNowMs);
-  if (scrollbarVisible) {
-    const int trackTop = listStartY + 2;
-    const int trackBottom = gsGlobal->Height - footerHeight - 6;
-    const int trackHeight = trackBottom - trackTop;
-    const int thumbHeight = trackHeight < CLASSIC_SCROLLBAR_HEIGHT
-                                ? trackHeight : CLASSIC_SCROLLBAR_HEIGHT;
-    const int thumbY = trackTop +
-                       (int)((int64_t)selectedDisplayIdx *
-                             (trackHeight - thumbHeight) / (displayTotal - 1));
-    // Leave a gap even beside the legacy cover frame; the cover stays above
-    // the scrollbar in depth as a second safeguard against overlap.
-    drawClassicScrollbar(coverArtX1 - CLASSIC_SCROLLBAR_WIDTH -
-                             CLASSIC_SCROLLBAR_COVER_GAP,
-                         thumbY, thumbHeight, 4);
-  }
-  if (favoritesOnly && favoriteTotal == 0)
+  if (favoritesOnly && favoriteTotal == 0) {
+    const ButtonPrompt back[] = {{ICON_SELECT, "Return"}};
     drawTextWindow(baseX, titleY + getFontLineHeight() * 3, coverArtX1 - 12,
-                   titleY + getFontLineHeight() * 7, 6, HeaderTextColor,
-                   ALIGN_CENTER, "NO FAVORITES YET\nPress Select to return");
+                   titleY + getFontLineHeight() * 5, 6, HeaderTextColor,
+                   ALIGN_CENTER, "NO FAVORITES YET");
+    drawPromptBar(baseX, titleY + getFontLineHeight() * 5,
+                  coverArtX1 - 12, titleY + getFontLineHeight() * 7,
+                  6, HeaderTextColor, (PromptBar){NULL, back, 1});
+  }
   while (curTitle != NULL) {
     int rowIdx;
     int titleRight;
@@ -436,25 +405,25 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
     }
 
     titleRight = favoriteFlags[curTitle->idx]
-                     ? coverArtX1 - 32 - scrollbarInset
-                     : coverArtX1 - 5 - scrollbarInset;
+                     ? coverArtX1 - 32
+                     : coverArtX1 - 5;
 
     // Draw title name
     if (selectedTitleIdx == curTitle->idx) {
       const int glowY = classicGlowY(listStartY, getFontLineHeight(), frameNowMs);
-      const int selectionRight = coverArtX1 - 12 - scrollbarInset;
-      int textRight = baseX + getLineWidth(curTitle->name);
+      const int selectionRight = coverArtX1 - 12;
+      int textRight = listTextX + getLineWidth(curTitle->name);
       if (textRight > titleRight)
         textRight = titleRight;
-      drawPSBBNFocusGlow(baseX, glowY, selectionRight, textRight);
+      drawPSBBNFocusGlow(listTextX, glowY, selectionRight, textRight);
     }
-    titleY = drawText(baseX, titleY, 6, titleRight, 0,
+    titleY = drawText(listTextX, titleY, 6, titleRight, 0,
                       ((selectedTitleIdx == curTitle->idx)
                            ? GS_SETREG_RGBA(0xF0, 0xFA, 0xFF, 0x80)
                            : HeaderTextColor),
                       curTitle->name);
     if (favoriteFlags[curTitle->idx])
-      drawFavoriteMarker(coverArtX1 - 23 - scrollbarInset, titleY - getFontLineHeight() / 2, 7);
+      drawFavoriteMarker(coverArtX1 - 23, titleY - getFontLineHeight() / 2, 7);
 
   next:
     curTitle = curTitle->next;
@@ -482,14 +451,17 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
   }
   if (previousCover != NULL && coverTransitionProgress < 1000) {
     if (selectedTitleCover != NULL) {
-      drawClassicCoverTexture(previousCover, 1000, coverTextureZ);
-      drawClassicCoverTexture(selectedTitleCover, coverTransitionProgress, coverTextureZ + 1);
+      drawClassicCoverTexture(previousCover, entryProgress, coverTextureZ);
+      drawClassicCoverTexture(selectedTitleCover,
+                              coverTransitionProgress * entryProgress / 1000,
+                              coverTextureZ + 1);
     } else {
-      drawClassicCoverTexture(previousCover, 1000 - coverTransitionProgress,
+      drawClassicCoverTexture(previousCover,
+                              (1000 - coverTransitionProgress) * entryProgress / 1000,
                               coverTextureZ + 1);
     }
   } else if (selectedTitleCover != NULL) {
-    drawClassicCoverTexture(selectedTitleCover, 1000, coverTextureZ);
+    drawClassicCoverTexture(selectedTitleCover, entryProgress, coverTextureZ);
   }
 
   if (!classicArtOverlap)

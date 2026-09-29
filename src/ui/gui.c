@@ -34,6 +34,7 @@
 #define GRID_RIGHT_SHOULDERS (PAD_R1 | PAD_R2)
 #define SPLASH_MIN_VISIBLE_MS 3400
 #define LIBRARY_RETURN_FADE_MS 180
+#define LIBRARY_VIEW_ENTRY_MS 320
 
 void closeUI();
 int uiLoop(TargetList *titles);
@@ -42,9 +43,11 @@ void uiSplashThread();
 
 GSGLOBAL *gsGlobal;
 char lineBuffer[255];
-static int ambientOrbsBackground = 0;
+static int libraryBackground = LIBRARY_BACKGROUND_STARS;
 static int orbsThemeSetting = ORBS_THEME_LUNA;
 static int orbsAppearanceSetting = ORBS_APPEARANCE_LUNA;
+static int orbsColorSetting = ORBS_COLOR_ORIGINAL;
+static int tailsColorSetting = ORBS_COLOR_ORIGINAL;
 static int glassColorSetting = GLASS_COLOR_ORIGINAL;
 static int fontSetting = UI_FONT_DEJAVU;
 static uint32_t splashVisibleStartMs;
@@ -56,6 +59,16 @@ const int footerHeight = 60;
 
 uint32_t uiNowMs(void) {
   return (uint32_t)((GetTimerSystemTime() >> 8) / PSBBN_TIMER_TICKS_PER_MS);
+}
+
+static int libraryViewEntryProgress(int entryView, UILibraryView view,
+                                    uint32_t startMs, uint32_t now) {
+  if (entryView != (int)view)
+    return 1000;
+  uint32_t elapsed = now - startMs;
+  if (elapsed >= LIBRARY_VIEW_ENTRY_MS)
+    return 1000;
+  return lunaNavEase((int)(elapsed * 1000U / LIBRARY_VIEW_ENTRY_MS));
 }
 
 static const int discSin[32] = {0,   25,  49,  71,  90,  106, 117, 125, 127, 125, 117, 106, 90,  71,  49,  25,
@@ -260,6 +273,9 @@ int uiLoop(TargetList *titles) {
   LunaNavRepeatState classicRepeat = {0};
   LunaScrollFast scrollFast = {0};
   UILibraryView view = UI_VIEW_CLASSIC;
+  int entryView = -1;
+  int entryPending = 0;
+  uint32_t entryStartMs = 0;
   Target *curTarget = titles->first;
 
   // Get last launched title and find it in the target list
@@ -290,13 +306,20 @@ int uiLoop(TargetList *titles) {
     view = lunaNavNextView(view, enabledViews);
   if (view == UI_VIEW_ORBIT)
     resetAmbientOrbsOrbit(uiNowMs());
-  ambientOrbsBackground = loadAmbientOrbsBackground(curTarget);
-  setAmbientOrbsBackgroundStyle(ambientOrbsBackground);
+  libraryBackground = loadLibraryBackground(curTarget);
+  if (setLibraryBackground((LibraryBackground)libraryBackground))
+    libraryBackground = LIBRARY_BACKGROUND_STARS;
   orbsThemeSetting = loadAmbientOrbsTheme(curTarget);
   setAmbientOrbsTheme((AmbientOrbsTheme)orbsThemeSetting, uiNowMs());
   orbsAppearanceSetting = loadAmbientOrbsAppearance(curTarget);
   if (setAmbientOrbsAppearance((AmbientOrbsAppearance)orbsAppearanceSetting))
     orbsAppearanceSetting = ORBS_APPEARANCE_LUNA;
+  orbsColorSetting = loadAmbientOrbsColor(curTarget, ORBS_COLOR_PART_ORBS);
+  tailsColorSetting = loadAmbientOrbsColor(curTarget, ORBS_COLOR_PART_TAILS);
+  setAmbientOrbsColor(ORBS_COLOR_PART_ORBS,
+                      (AmbientOrbsColor)orbsColorSetting);
+  setAmbientOrbsColor(ORBS_COLOR_PART_TAILS,
+                      (AmbientOrbsColor)tailsColorSetting);
   glassColorSetting = loadGlassColorPreset(curTarget);
   setGlassColorPreset((GlassColorPreset)glassColorSetting);
   fontSetting = loadUIFont(curTarget);
@@ -390,7 +413,13 @@ int uiLoop(TargetList *titles) {
         psbbnAnimationTargetIdx = -1;
         psbbnOutgoingTitleIdx = -1;
         psbbnAnimationStartOffset = 0;
-        drawPSBBNCollection(flowTitles, 0, psbbnCoverTextures, 0, -1, collectionFavoritesOnly, now);
+        if (entryPending) {
+          entryStartMs = now;
+          entryPending = 0;
+        }
+        drawPSBBNCollection(flowTitles, 0, psbbnCoverTextures, 0, -1,
+                            collectionFavoritesOnly,
+                            libraryViewEntryProgress(entryView, view, entryStartMs, now), now);
         goto library_view_drawn;
       }
 
@@ -405,7 +434,6 @@ int uiLoop(TargetList *titles) {
           refreshOrbsLogos(flowTitles, flowSelectedTitleIdx);
       }
       now = uiNowMs();
-
       if (psbbnAnimationTargetIdx < 0) {
         psbbnAnimationTargetIdx = flowSelectedTitleIdx;
         psbbnOutgoingTitleIdx = -1;
@@ -442,6 +470,10 @@ int uiLoop(TargetList *titles) {
       if (view == UI_VIEW_ORBIT)
         updatePSBBNCoverResidency(flowOffset);
       now = uiNowMs();
+      if (entryPending && (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT)) {
+        entryStartMs = now;
+        entryPending = 0;
+      }
       flowOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart, psbbnAnimationDuration, now);
       if (view == UI_VIEW_PSBBN) {
         collectionVisualCoverIdx = PSBBN_COVER_CACHE_FOCUS;
@@ -455,18 +487,24 @@ int uiLoop(TargetList *titles) {
                                       ? lunaNavMarkedByRank(favoriteFlags, titles->total, visualRank)
                                       : visualRank;
         drawPSBBNCollection(flowTitles, flowSelectedTitleIdx, psbbnCoverTextures,
-                            flowOffset, psbbnOutgoingTitleIdx, collectionFavoritesOnly, now);
+                            flowOffset, psbbnOutgoingTitleIdx, collectionFavoritesOnly,
+                            libraryViewEntryProgress(entryView, view, entryStartMs, now), now);
       } else if (view == UI_VIEW_ORBIT)
         drawOrbit(titles, selectedTitleIdx, psbbnCoverTextures, flowOffset,
-                  orbitRandomActive, now);
+                  orbitRandomActive, libraryViewEntryProgress(entryView, view, entryStartMs, now), now);
       else {
         int visualFocus = orbsVisualCacheIndex(flowOffset);
         orbsVisualTitleIdx = lunaNavWrap(titles->total,
             selectedTitleIdx + visualFocus - ORBS_LOGO_CACHE_FOCUS);
         if (!scrollFast.active)
           refreshOrbsBackground(getTargetByIdx(titles, orbsVisualTitleIdx));
+        now = uiNowMs();
+        if (entryPending) {
+          entryStartMs = now;
+          entryPending = 0;
+        }
         drawOrbsView(titles, selectedTitleIdx, flowOffset, visualFocus,
-                     scrollFast.active, now);
+                     scrollFast.active, libraryViewEntryProgress(entryView, view, entryStartMs, now), now);
       }
     } else if (view == UI_VIEW_GRID) {
       int didLoadArtwork = 0;
@@ -648,6 +686,11 @@ int uiLoop(TargetList *titles) {
       // All artwork work for this frame is complete. From here onward every
       // moving element uses this one timestamp.
       now = uiNowMs();
+      if (entryPending) {
+        entryStartMs = now;
+        entryPending = 0;
+      }
+      int gridEntryProgress = libraryViewEntryProgress(entryView, view, entryStartMs, now);
       if (gridCascadeActive) {
         uint32_t elapsed = now - gridCascadeStart;
         gridCascadeProgress = (elapsed >= GRID_CASCADE_DURATION_MS)
@@ -669,17 +712,17 @@ int uiLoop(TargetList *titles) {
           destinationBuffer = -1;
         drawPSBBNGrid(titles, gridFastTrackSelectedIdx, gridFastTrackPreviousPageBase, previousBuffer,
                       gridFastTrackPageBase, destinationBuffer, -1,
-                      gridFastTrackDirection, fastTrackProgress, now);
+                      gridFastTrackDirection, fastTrackProgress, gridEntryProgress, now);
       } else if (gridFastTrackSettling && !gridCascadeActive) {
         int destinationBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridFastTrackPageBase);
         if (destinationBuffer < 0)
           destinationBuffer = -1;
         drawPSBBNGrid(titles, gridFastTrackSelectedIdx, gridFastTrackPageBase, destinationBuffer,
-                      -1, -1, -1, gridFastTrackDirection, 0, now);
+                      -1, -1, -1, gridFastTrackDirection, 0, gridEntryProgress, now);
       } else {
         drawPSBBNGrid(titles, selectedTitleIdx, gridActivePageBase, gridActivePageBuffer,
                       gridIncomingPageBase, gridIncomingPageBuffer, gridSelectedActiveBuffer,
-                      gridCascadeDirection, gridCascadeProgress, now);
+                      gridCascadeDirection, gridCascadeProgress, gridEntryProgress, now);
       }
     } else {
       int favoritesEmpty = favoritesOnly && lunaNavMarkedCount(favoriteFlags, titles->total) == 0;
@@ -696,7 +739,9 @@ int uiLoop(TargetList *titles) {
                      coverFadeProgress < 1000) ? classicPreviousCoverTexture : NULL,
                     (classicDisplayedDiscAvailable && !favoritesEmpty) ? discTexture : NULL,
                     favoriteFlags, favoritesOnly, coverPending && !favoritesEmpty,
-                    coverFadeProgress, frameNowMs);
+                    coverFadeProgress,
+                    libraryViewEntryProgress(entryView, view, entryStartMs, frameNowMs),
+                    frameNowMs);
     }
 
   library_view_drawn:
@@ -1021,6 +1066,8 @@ int uiLoop(TargetList *titles) {
       view = lunaNavNextView(view, enabledViews);
       if (view == previousView)
         continue;
+      entryView = (int)view;
+      entryPending = view != UI_VIEW_CLASSIC;
       if (view == UI_VIEW_ORBIT)
         resetAmbientOrbsOrbit(uiNowMs());
       if (previousView == UI_VIEW_ORBS || view == UI_VIEW_ORBS)
@@ -1097,6 +1144,8 @@ int uiLoop(TargetList *titles) {
       }
       if (saveLastLibraryView(curTarget, view))
         DPRINTF("WARN: Could not save selected library view\n");
+      if (entryView == UI_VIEW_CLASSIC)
+        entryStartMs = uiNowMs();
     } else if (view == UI_VIEW_CLASSIC && (input & PAD_SQUARE) && !favoriteButtonHeld &&
                (!favoritesOnly || lunaNavMarkedCount(favoriteFlags, titles->total) > 0)) {
       int wasFavorite = favoriteFlags[selectedTitleIdx] != 0;
@@ -1250,9 +1299,10 @@ int uiLoop(TargetList *titles) {
       prevInput = 0; // Reset previous input
       // Enter title options screen
       if ((res = uiTitleOptionsLoop(curTarget, &classicArtOverlap,
-                                    &ambientOrbsBackground, &glassColorSetting,
+                                    &libraryBackground, &glassColorSetting,
                                     &fontSetting, &ambientEnabled, &orbsThemeSetting,
-                                    &orbsAppearanceSetting,
+                                    &orbsAppearanceSetting, &orbsColorSetting,
+                                    &tailsColorSetting,
                                     &enabledViews)) < 0) {
         // Something went wrong, main loop must exit immediately
         ambientStop();
@@ -1263,7 +1313,7 @@ int uiLoop(TargetList *titles) {
       if (view == UI_VIEW_CLASSIC)
         holdClassicDiscRotation(uiNowMs());
       libraryReturnFadeStartMs = uiNowMs();
-      setAmbientOrbsBackgroundStyle(ambientOrbsBackground);
+      setLibraryBackground((LibraryBackground)libraryBackground);
       setGlassColorPreset((GlassColorPreset)glassColorSetting);
       if (!(enabledViews & (1U << view)))
         forceViewSwitch = 1;

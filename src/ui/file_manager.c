@@ -31,6 +31,14 @@
 #define FILE_MANAGER_LIST_TOP 114
 #define FILE_MANAGER_NAME_MAX 255
 
+#define PROMPT_TEXT(text) ((PromptBar){text, NULL, 0})
+#define PROMPT_ONE(icon, label) \
+  ((PromptBar){NULL, (ButtonPrompt[]){{icon, label}}, 1})
+#define PROMPT_TWO(icon1, label1, icon2, label2) \
+  ((PromptBar){NULL, (ButtonPrompt[]){{icon1, label1}, {icon2, label2}}, 2})
+#define PROMPT_NOTE(text, icon, label) \
+  ((PromptBar){text, (ButtonPrompt[]){{icon, label}}, 1})
+
 typedef struct {
   char path[PATH_MAX + 1];
   char label[64];
@@ -113,7 +121,7 @@ static void drawBrowserRow(int y, int selected, const char *name,
 }
 
 static void drawBrowserFrame(const char *heading, const char *path,
-                             const char *status, const char *footer,
+                             const char *status, PromptBar footer,
                              int count, int selected, int first,
                              int previewColumn,
                              int (*row)(int, char *, size_t, char *, size_t,
@@ -155,8 +163,8 @@ static void drawBrowserFrame(const char *heading, const char *path,
                    0, HeaderTextColor, ALIGN_LEFT, "Nothing to show");
   drawTextWindow(left + 18, listBottom, right, gsGlobal->Height - footerHeight,
                  0, HeaderTextColor, ALIGN_LEFT, status);
-  drawTextWindow(left + 18, gsGlobal->Height - footerHeight, right,
-                 gsGlobal->Height, 0, HeaderTextColor, ALIGN_VCENTER, footer);
+  drawPromptBar(left + 18, gsGlobal->Height - footerHeight, right,
+                gsGlobal->Height, 0, HeaderTextColor, footer);
   presentBrowserFrame();
 }
 
@@ -399,12 +407,16 @@ static int editFileName(const char *title, char *name, size_t capacity,
     }
     drawTextWindow(left + 8, 351, right - 8, 379, 0, ErrorTextColor,
                    ALIGN_LEFT, message);
-    drawTextWindow(left + 8, 385, right - 8, 411, 0,
-                   HeaderTextColor, ALIGN_CENTER,
-                   "Arrows Pick  X Type  Sq Space  Tri Delete");
-    drawTextWindow(left + 8, 411, right - 8, gsGlobal->Height - 8, 0,
-                   HeaderTextColor, ALIGN_CENTER,
-                   "R1 Case  Start Save  Circle Cancel");
+    const ButtonPrompt edit[] = {
+        {ICON_DPAD, "Pick"}, {ICON_CROSS, "Type"},
+        {ICON_SQUARE, "Space"}, {ICON_TRIANGLE, "Delete"}};
+    const ButtonPrompt actions[] = {
+        {ICON_R1, "Case"}, {ICON_START, "Save"},
+        {ICON_CIRCLE, "Cancel"}};
+    drawPromptBar(left + 8, 385, right - 8, 411, 0,
+                  HeaderTextColor, (PromptBar){NULL, edit, 4});
+    drawPromptBar(left + 8, 411, right - 8, gsGlobal->Height - 8, 0,
+                  HeaderTextColor, (PromptBar){NULL, actions, 3});
     presentBrowserFrame();
     int input = waitForInput(-1);
     if (input & PAD_CIRCLE)
@@ -533,9 +545,10 @@ static void showFileDetails(const BrowserRoot *roots, int rootCount,
       drawTextWindow(left + 8, 254 + row * 25, right - 8,
                      279 + row * 25, 0, FontMainColor, ALIGN_LEFT, segment);
     }
-    drawTextWindow(left + 8, 391, right - 8, gsGlobal->Height - 8, 0,
-                   HeaderTextColor, ALIGN_CENTER,
-                   "Up/Down Scroll path     Circle Back");
+    const ButtonPrompt help[] = {
+        {ICON_DPAD, "Scroll path"}, {ICON_CIRCLE, "Back"}};
+    drawPromptBar(left + 8, 391, right - 8, gsGlobal->Height - 8, 0,
+                  HeaderTextColor, (PromptBar){NULL, help, 2});
     presentBrowserFrame();
     int input = waitForInput(-1);
     if (input & (PAD_CIRCLE | PAD_TRIANGLE))
@@ -586,7 +599,7 @@ static int chooseFileAction(const BrowserPane *pane, const CopyQueue *queue) {
   int selected = 0;
   while (1) {
     drawBrowserFrame("File Manager", "Actions", "Choose an action.",
-                     "X Select                  Circle Back",
+                     PROMPT_TWO(ICON_CROSS, "Select", ICON_CIRCLE, "Back"),
                      menu.count, selected, 0, 0, fileActionRow, &menu);
     int input = waitForInput(-1);
     if (input & (PAD_CIRCLE | PAD_TRIANGLE))
@@ -754,16 +767,7 @@ static void drawFileManagerWatermark(int x1, int x2, int y1, int y2) {
   gsKit_prim_sprite(gsGlobal, x - 25, y + 13, x - 20, y + 15, 3, color);
 }
 
-static void drawFileManagerControl(int x, int right, int top,
-                                   IconType icon, const char *label) {
-  int bottom = gsGlobal->Height - FILE_MANAGER_GLASS_MARGIN;
-  drawIconWindow(x, top + 6, 0, bottom, 0, FontMainColor,
-                 ALIGN_VCENTER, icon);
-  drawTextWindow(x + getIconWidth(icon) + 4, top + 6, right, bottom,
-                 0, HeaderTextColor, ALIGN_VCENTER, label);
-}
-
-static void drawFileManagerFooter(int left, int right, const char *footer) {
+static void drawFileManagerFooter(int left, int right, PromptBar footer) {
   int top = gsGlobal->Height - footerHeight;
   int bottom = gsGlobal->Height - FILE_MANAGER_GLASS_MARGIN;
   gsKit_prim_sprite(gsGlobal, FILE_MANAGER_GLASS_MARGIN + 2, top,
@@ -771,27 +775,23 @@ static void drawFileManagerFooter(int left, int right, const char *footer) {
                     bottom, 3, glassPresetColor(0x02, 0x10, 0x22, 0x48));
   gsKit_prim_sprite(gsGlobal, left + 8, top, right - 8, top + 1, 4,
                     glassPresetColor(0x55, 0x9A, 0xB8, 0x48));
-  if (footer != NULL) {
-    drawTextWindow(left + 8, top + 6, right - 8, bottom, 0,
-                   HeaderTextColor, ALIGN_CENTER, footer);
+  if (footer.note != NULL || footer.count > 0) {
+    drawPromptBar(left + 8, top + 6, right - 8, bottom, 0,
+                  HeaderTextColor, footer);
     return;
   }
-  int slot = (right - left - 16) / 6;
-  int x = left + 8;
-  drawTextWindow(x, top + 6, x + slot, bottom, 0,
-                 HeaderTextColor, ALIGN_VCENTER, "L/R Wide");
-  drawFileManagerControl(x + slot, x + 2 * slot, top, ICON_CROSS, "Open");
-  drawFileManagerControl(x + 2 * slot, x + 3 * slot, top, ICON_TRIANGLE, "Up");
-  drawFileManagerControl(x + 3 * slot, x + 4 * slot, top, ICON_SQUARE, "Mark");
-  drawFileManagerControl(x + 4 * slot, x + 5 * slot, top, ICON_START, "Copy");
-  drawTextWindow(x + 5 * slot, top + 6, right - 8, bottom, 0,
-                 HeaderTextColor, ALIGN_VCENTER, "R2 More");
+  const ButtonPrompt controls[] = {
+      {ICON_DPAD, "Width"}, {ICON_CROSS, "Open"},
+      {ICON_TRIANGLE, "Up"}, {ICON_SQUARE, "Mark"},
+      {ICON_START, "Copy"}, {ICON_R2, "More"}};
+  drawPromptBar(left + 8, top + 6, right - 8, bottom, 0,
+                HeaderTextColor, (PromptBar){NULL, controls, 6});
 }
 
 static void drawFileManagerFrame(const BrowserRoot *roots, int rootCount,
                                  const BrowserPane *panes, const CopyQueue *queue,
                                  int active, int expandedPane,
-                                 const char *status, const char *footer,
+                                 const char *status, PromptBar footer,
                                  int progressPercent) {
   int left = keepoutArea + 10;
   int right = gsGlobal->Width - left;
@@ -964,12 +964,13 @@ static void showCopyProgress(CopyProgress *progress, const char *name,
            (unsigned long long)((progress->totalBytes + 1048575) / 1048576),
            (unsigned long long)(speedTenths / 10),
            (unsigned long long)(speedTenths % 10));
-  snprintf(footer, sizeof(footer), "ETA %llu:%02llu  %s  |  Circle Cancel",
+  snprintf(footer, sizeof(footer), "ETA %llu:%02llu  %s",
            (unsigned long long)(secondsLeft / 60),
            (unsigned long long)(secondsLeft % 60), name);
   drawFileManagerFrame(progress->roots, progress->rootCount, progress->panes,
                        progress->queue, progress->active,
-                       progress->expandedPane, status, footer,
+                       progress->expandedPane, status,
+                       PROMPT_NOTE(footer, ICON_CIRCLE, "Cancel"),
                        percent);
 }
 
@@ -1022,7 +1023,7 @@ static int measureTree(const char *source, int depth, CopyProgress *progress) {
     drawFileManagerFrame(progress->roots, progress->rootCount, progress->panes,
                          progress->queue, progress->active,
                          progress->expandedPane, status,
-                         "Circle Cancel measurement", -1);
+                         PROMPT_ONE(ICON_CIRCLE, "Cancel measurement"), -1);
     progress->lastDrawMs = now;
   }
   return 0;
@@ -1299,7 +1300,7 @@ static int chooseConflict(const char *name, int samePath,
   while (1) {
     drawBrowserFrame("Name conflict", name,
                      "The destination already contains this name.",
-                     "X Choose                     Circle Cancel",
+                     PROMPT_TWO(ICON_CROSS, "Choose", ICON_CIRCLE, "Cancel"),
                      count, selected, 0, 0, conflictRow, NULL);
     int input = waitForInput(-1);
     if (input & (PAD_CIRCLE | PAD_TRIANGLE))
@@ -1315,7 +1316,7 @@ static int chooseConflict(const char *name, int samePath,
                        existingDirectory ?
                        "The existing folder and its contents will be removed." :
                        "The existing file will be removed.",
-                       "X Replace                    Circle Cancel",
+                       PROMPT_TWO(ICON_CROSS, "Replace", ICON_CIRCLE, "Cancel"),
                        1, 0, 0, 0, replaceConfirmRow, NULL);
       return (waitForInput(PAD_CROSS | PAD_CIRCLE | PAD_TRIANGLE) & PAD_CROSS) ?
              2 : -1;
@@ -1346,7 +1347,7 @@ static void runCopyQueue(const BrowserRoot *roots, int rootCount,
                          int active, int expandedPane, int move,
                          char *status, size_t statusSize) {
   if (queue->count == 0) {
-    snprintf(status, statusSize, "Mark items with Square first.");
+    snprintf(status, statusSize, "Mark items before copying.");
     return;
   }
   BrowserPane *destinationPane = &panes[1 - queue->sourceSide];
@@ -1366,8 +1367,8 @@ static void runCopyQueue(const BrowserRoot *roots, int rootCount,
            move ? "Move" : "Copy", queue->count, destinationPane->path);
   drawFileManagerFrame(roots, rootCount, panes, queue, active, expandedPane,
                        status,
-                       move ? "X Confirm move   Circle Cancel" :
-                              "X Confirm batch copy   Circle Cancel", -1);
+                       PROMPT_TWO(ICON_CROSS, move ? "Confirm move" :
+                                  "Confirm copy", ICON_CIRCLE, "Cancel"), -1);
   if (!(waitForInput(PAD_CROSS | PAD_CIRCLE | PAD_TRIANGLE) & PAD_CROSS)) {
     snprintf(status, statusSize, "Queue kept. %s cancelled.",
              move ? "Move" : "Copy");
@@ -1384,7 +1385,8 @@ static void runCopyQueue(const BrowserRoot *roots, int rootCount,
   progress.itemCount = queue->count;
   progress.lastDrawMs = uiNowMs();
   drawFileManagerFrame(roots, rootCount, panes, queue, active, expandedPane,
-                       "Measuring selected files...", "Circle Cancel measurement",
+                       "Measuring selected files...",
+                       PROMPT_ONE(ICON_CIRCLE, "Cancel measurement"),
                        -1);
   for (int index = 0; index < queue->count; index++) {
     uint64_t before = progress.scannedBytes;
@@ -1462,7 +1464,7 @@ static void runCopyQueue(const BrowserRoot *roots, int rootCount,
     if (result == 0) {
       drawFileManagerFrame(roots, rootCount, panes, queue, active,
                            expandedPane, "Verifying copied data...",
-                           "Circle Cancel verification", -1);
+                           PROMPT_ONE(ICON_CIRCLE, "Cancel verification"), -1);
       result = verifyTree(item->path, staging, 0, &progress);
       verificationFailed = result != 0;
     }
@@ -1533,7 +1535,7 @@ static void uiFileManagerLoop(void) {
     BrowserPane *pane = &panes[active];
     drawFileManagerFrame(roots, rootCount, panes, &queue, active,
                          expandedPane, status,
-                         NULL, -1);
+                         (PromptBar){0}, -1);
     int input = readInput();
     if (input & PAD_CIRCLE)
       break;
@@ -1652,7 +1654,8 @@ static void uiFileManagerLoop(void) {
       snprintf(status, sizeof(status), "Clear all %d marked items?", queue.count);
       drawFileManagerFrame(roots, rootCount, panes, &queue, active,
                            expandedPane, status,
-                           "X Clear queue   Circle Keep queue", -1);
+                           PROMPT_TWO(ICON_CROSS, "Clear queue",
+                                      ICON_CIRCLE, "Keep queue"), -1);
       if (waitForInput(PAD_CROSS | PAD_CIRCLE | PAD_TRIANGLE) & PAD_CROSS) {
         queueClear(&queue);
         snprintf(status, sizeof(status), "Queue cleared.");
@@ -1736,7 +1739,7 @@ static void drawVMCProgress(int percent, void *context) {
   char status[80];
   snprintf(status, sizeof(status), "Creating formatted card: %d%%", percent);
   drawBrowserFrame("Virtual Memory Cards", state->directory, status,
-                   "Please wait until creation finishes", 0, 0, 0, 0,
+                   PROMPT_TEXT("Please wait until creation finishes"), 0, 0, 0, 0,
                    vmcRow, NULL);
 }
 
@@ -1792,12 +1795,13 @@ static void uiVMCManagerLoop(void) {
       drawBrowserFrame("Virtual Memory Cards", "Choose a drive",
                        rootCount || apaDriveFound ? status :
                                                     "No supported local drives found.",
-                       "X Open                         Triangle Back",
+                       PROMPT_TWO(ICON_CROSS, "Open", ICON_TRIANGLE, "Back"),
                        rootCount, rootSelected, browserFirstRow(rootSelected), 0,
                        rootRow, roots);
     else
       drawBrowserFrame("Virtual Memory Cards", directory, status,
-                       "X Create/View                  Triangle Back",
+                       PROMPT_TWO(ICON_CROSS, "Create/View",
+                                  ICON_TRIANGLE, "Back"),
                        count + 1, selected, browserFirstRow(selected), 128,
                        vmcRow, entries);
     int input = readInput();
@@ -1873,7 +1877,7 @@ int uiMainMenuLoop(int hasLibrary) {
     drawBrowserFrame("LUNA", hasLibrary ? "Main menu" : "No games found",
                      hasLibrary ? "Browse storage or return to your games."
                                 : "Browse storage even without a game library.",
-                     "X Select                       Triangle Back",
+                     PROMPT_TWO(ICON_CROSS, "Select", ICON_TRIANGLE, "Back"),
                      count, selected, 0, selected == 1 ? 220 : 0,
                      mainMenuRow, &hasLibrary);
     int input = readInput();
@@ -1893,7 +1897,8 @@ int uiMainMenuLoop(int hasLibrary) {
       else if (selected == count - 1) {
         drawBrowserFrame("LUNA", "Confirm shutdown",
                          "Power off the console?",
-                         "X Shutdown                     Circle Cancel",
+                         PROMPT_TWO(ICON_CROSS, "Shutdown",
+                                    ICON_CIRCLE, "Cancel"),
                          count, selected, 0, 0, mainMenuRow, &hasLibrary);
         if (waitForInput(PAD_CROSS | PAD_CIRCLE | PAD_TRIANGLE) & PAD_CROSS) {
           powerOffConsole();

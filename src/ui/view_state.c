@@ -20,6 +20,10 @@ static const char orbsThemePath[] = "/orbsTheme.txt";
 static const char orbsThemeTempPath[] = "/orbsTheme.txt.tmp";
 static const char orbsAppearancePath[] = "/orbsAppearance.txt";
 static const char orbsAppearanceTempPath[] = "/orbsAppearance.txt.tmp";
+static const char orbsColorPath[] = "/orbsColor.txt";
+static const char orbsColorTempPath[] = "/orbsColor.txt.tmp";
+static const char tailsColorPath[] = "/orbsTailColor.txt";
+static const char tailsColorTempPath[] = "/orbsTailColor.txt.tmp";
 static const char glassColorPath[] = "/glassColor.txt";
 static const char glassColorTempPath[] = "/glassColor.txt.tmp";
 static const char uiFontPath[] = "/uiFont.txt";
@@ -32,6 +36,8 @@ static const char *const glassColorNames[GLASS_COLOR_COUNT] = {
     "original", "white-gray", "black"};
 static const char *const uiFontNames[UI_FONT_COUNT] = {
     "dejavu", "psbbn"};
+static const char *const orbsColorNames[ORBS_COLOR_COUNT] = {
+    "original", "cyan", "violet", "rose", "green", "gold", "white"};
 
 static struct DeviceMapEntry *viewDevice(Target *target) {
   if (target == NULL || target->device == NULL)
@@ -188,14 +194,14 @@ int saveClassicArtOverlap(Target *target, int overlap) {
   return 0;
 }
 
-int loadAmbientOrbsBackground(Target *target) {
+LibraryBackground loadLibraryBackground(Target *target) {
   struct DeviceMapEntry *device = viewDevice(target);
   const char *paths[] = {backgroundTempPath, backgroundPath};
   char path[PATH_MAX];
   char value[24];
 
   if (device == NULL || device->mountpoint == NULL)
-    return 0;
+    return LIBRARY_BACKGROUND_STARS;
   for (int i = 0; i < 2; i++) {
     if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
       continue;
@@ -208,14 +214,18 @@ int loadAmbientOrbsBackground(Target *target) {
       continue;
     value[strcspn(value, "\r\n")] = '\0';
     if (!strcmp(value, "orbs"))
-      return 1;
+      return LIBRARY_BACKGROUND_ORBS;
+    if (!strcmp(value, "red-clouds") || !strcmp(value, "tunnel"))
+      return LIBRARY_BACKGROUND_RED_CLOUDS;
+    if (!strcmp(value, "midnight-cubes"))
+      return LIBRARY_BACKGROUND_MIDNIGHT_CUBES;
     if (!strcmp(value, "stars"))
-      return 0;
+      return LIBRARY_BACKGROUND_STARS;
   }
-  return 0;
+  return LIBRARY_BACKGROUND_STARS;
 }
 
-int saveAmbientOrbsBackground(Target *target, int enabled) {
+int saveLibraryBackground(Target *target, LibraryBackground background) {
   struct DeviceMapEntry *device = viewDevice(target);
   char directory[PATH_MAX];
   char path[PATH_MAX];
@@ -234,7 +244,14 @@ int saveAmbientOrbsBackground(Target *target, int enabled) {
   file = fopen(tempPath, "w");
   if (file == NULL)
     return -EIO;
-  int writeResult = fprintf(file, "%s\n", enabled ? "orbs" : "stars");
+  static const char *const names[LIBRARY_BACKGROUND_COUNT] = {
+      "stars", "orbs", "red-clouds", "midnight-cubes"};
+  if (background < LIBRARY_BACKGROUND_STARS || background >= LIBRARY_BACKGROUND_COUNT) {
+    fclose(file);
+    remove(tempPath);
+    return -EINVAL;
+  }
+  int writeResult = fprintf(file, "%s\n", names[background]);
   int closeResult = fclose(file);
   if (writeResult < 0 || closeResult) {
     remove(tempPath);
@@ -352,6 +369,70 @@ int saveAmbientOrbsAppearance(Target *target, AmbientOrbsAppearance appearance) 
     return -EIO;
   int writeResult = fprintf(file, "%s\n", appearance == ORBS_APPEARANCE_PS2_ORIGINAL ?
                             "ps2-original" : "luna");
+  int closeResult = fclose(file);
+  if (writeResult < 0 || closeResult) {
+    remove(tempPath);
+    return -EIO;
+  }
+  remove(path);
+  if (rename(tempPath, path))
+    return -EIO;
+  return 0;
+}
+
+AmbientOrbsColor loadAmbientOrbsColor(Target *target, AmbientOrbsColorPart part) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  if (device == NULL || device->mountpoint == NULL ||
+      (part != ORBS_COLOR_PART_ORBS && part != ORBS_COLOR_PART_TAILS))
+    return ORBS_COLOR_ORIGINAL;
+  const char *paths[] = {
+      part == ORBS_COLOR_PART_ORBS ? orbsColorTempPath : tailsColorTempPath,
+      part == ORBS_COLOR_PART_ORBS ? orbsColorPath : tailsColorPath};
+  char path[PATH_MAX];
+  char value[24];
+  for (int i = 0; i < 2; i++) {
+    if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
+      continue;
+    FILE *file = fopen(path, "r");
+    if (file == NULL)
+      continue;
+    int readable = fgets(value, sizeof(value), file) != NULL;
+    fclose(file);
+    if (!readable)
+      continue;
+    value[strcspn(value, "\r\n")] = '\0';
+    for (int color = 0; color < ORBS_COLOR_COUNT; color++) {
+      if (!strcmp(value, orbsColorNames[color]))
+        return (AmbientOrbsColor)color;
+    }
+  }
+  return ORBS_COLOR_ORIGINAL;
+}
+
+int saveAmbientOrbsColor(Target *target, AmbientOrbsColorPart part,
+                         AmbientOrbsColor color) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  if (device == NULL || device->mountpoint == NULL ||
+      (part != ORBS_COLOR_PART_ORBS && part != ORBS_COLOR_PART_TAILS) ||
+      color < ORBS_COLOR_ORIGINAL || color >= ORBS_COLOR_COUNT)
+    return -EINVAL;
+  char directory[PATH_MAX];
+  char path[PATH_MAX];
+  char tempPath[PATH_MAX];
+  const char *name = part == ORBS_COLOR_PART_ORBS ? orbsColorPath : tailsColorPath;
+  const char *tempName = part == ORBS_COLOR_PART_ORBS ?
+                         orbsColorTempPath : tailsColorTempPath;
+  struct stat st;
+  if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
+      buildConfigFilePath(path, sizeof(path), device->mountpoint, name) ||
+      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, tempName))
+    return -ENAMETOOLONG;
+  if (stat(directory, &st) == -1 && mkdir(directory, 0777))
+    return -EIO;
+  FILE *file = fopen(tempPath, "w");
+  if (file == NULL)
+    return -EIO;
+  int writeResult = fprintf(file, "%s\n", orbsColorNames[color]);
   int closeResult = fclose(file);
   if (writeResult < 0 || closeResult) {
     remove(tempPath);

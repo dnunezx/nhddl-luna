@@ -122,19 +122,26 @@ static int psbbnAbsolute(int value) {
 }
 
 static void drawCollectionFooter(void) {
-  int baseY = gsGlobal->Height - footerHeight + 8;
-  int circleX = 34;
-  int crossX = gsGlobal->Width / 2 - 42;
-  int triangleX = gsGlobal->Width - 132;
-  drawIconWindow(circleX, baseY, 0, gsGlobal->Height, 6, FontMainColor, ALIGN_CENTER, ICON_CIRCLE);
-  drawTextWindow(circleX + getIconWidth(ICON_CIRCLE) + 6, baseY, crossX - 8, gsGlobal->Height, 6,
-                 FontMainColor, ALIGN_VCENTER, "Grid");
-  drawIconWindow(crossX, baseY, 0, gsGlobal->Height, 6, FontMainColor, ALIGN_CENTER, ICON_CROSS);
-  drawTextWindow(crossX + getIconWidth(ICON_CROSS) + 6, baseY, triangleX - 8, gsGlobal->Height, 6,
-                 FontMainColor, ALIGN_VCENTER, "Launch");
-  drawIconWindow(triangleX, baseY, 0, gsGlobal->Height, 6, FontMainColor, ALIGN_CENTER, ICON_TRIANGLE);
-  drawTextWindow(triangleX + getIconWidth(ICON_TRIANGLE) + 6, baseY, gsGlobal->Width - keepoutArea,
-                 gsGlobal->Height, 6, FontMainColor, ALIGN_VCENTER, "Options");
+  const ButtonPrompt prompts[] = {
+      {ICON_CIRCLE, "Grid"}, {ICON_CROSS, "Launch"},
+      {ICON_TRIANGLE, "Options"}};
+  drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
+                gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
+                (PromptBar){NULL, prompts, 3});
+}
+
+static void drawCollectionEntryFade(int entryProgress) {
+  if (entryProgress >= 1000)
+    return;
+  // Fade the whole destination scene in after its artwork has been prepared.
+  // A tinted veil keeps the shared background faintly visible at the start.
+  int alpha = (1000 - entryProgress) * 0x70 / 1000;
+  gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
+  gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+  gsKit_prim_sprite(gsGlobal, 0, 0, gsGlobal->Width, gsGlobal->Height, 0,
+                    GS_SETREG_RGBA(0x01, 0x04, 0x0D, alpha));
+  gsKit_set_test(gsGlobal, GS_ZTEST_ON);
 }
 
 void formatPSBBNTitle(const char *source, char *destination, int maxWidth) {
@@ -155,7 +162,8 @@ void formatPSBBNTitle(const char *source, char *destination, int maxWidth) {
 }
 
 void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int flowOffset,
-                         int outgoingTitleIdx, int favoritesOnly, uint32_t frameNowMs) {
+                         int outgoingTitleIdx, int favoritesOnly,
+                         int entryProgress, uint32_t frameNowMs) {
   int top = headerHeight + 12;
   int bottom = gsGlobal->Height - footerHeight - 18;
   int selectedSize = (bottom - top) * 76 / 100;
@@ -212,6 +220,7 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
                    5, HeaderTextColor, ALIGN_CENTER,
                    "NO FAVORITES YET\nAdd favorites in Classic List");
     drawCollectionFooter();
+    drawCollectionEntryFade(entryProgress);
     return;
   }
 
@@ -304,6 +313,9 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
       itemCenterX = focalCenterX - psbbnFutureCenterOffset(distance[cacheToDraw], selectedSize);
       itemCenterY = centerY + (distance[cacheToDraw] * 3.0f) / 2000.0f;
     }
+    // Settle the destination stack into focus without retaining the old view's
+    // artwork or allocating another framebuffer texture.
+    size *= (850 + entryProgress * 150 / 1000) / 1000.0f;
     float x1 = itemCenterX - size / 2.0f;
     float y1 = itemCenterY - size / 2.0f;
     int focusProgress = 1000 - ((distance[cacheToDraw] < 1000) ? distance[cacheToDraw] : 1000);
@@ -316,6 +328,7 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
         fadeDistance = 5000;
       visibility = 1000 - (fadeDistance * 850) / 5000;
     }
+    visibility = visibility * (250 + entryProgress * 750 / 1000) / 1000;
 
     if (x1 + size > 24.0f && x1 < (float)(gsGlobal->Width - keepoutArea))
       drawPSBBNCover(covers[cacheToDraw], x1, y1, size, cacheToDraw, emphasis, visibility,
@@ -323,4 +336,5 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
                                                       : PSBBN_COVER_BACKGROUND_Z);
   }
   drawCollectionFooter();
+  drawCollectionEntryFade(entryProgress);
 }

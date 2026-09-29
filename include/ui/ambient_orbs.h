@@ -13,12 +13,29 @@ typedef enum {
   ORBS_APPEARANCE_PS2_ORIGINAL
 } AmbientOrbsAppearance;
 
+typedef enum {
+  ORBS_COLOR_ORIGINAL,
+  ORBS_COLOR_CYAN,
+  ORBS_COLOR_VIOLET,
+  ORBS_COLOR_ROSE,
+  ORBS_COLOR_GREEN,
+  ORBS_COLOR_GOLD,
+  ORBS_COLOR_WHITE,
+  ORBS_COLOR_COUNT
+} AmbientOrbsColor;
+
+typedef enum {
+  ORBS_COLOR_PART_ORBS,
+  ORBS_COLOR_PART_TAILS
+} AmbientOrbsColorPart;
+
 // Ambient Orbs own their default background, placement, and animation.
 void resetAmbientOrbs(uint32_t startMs);
 void observeAmbientOrbsSelection(int selectedTitleIdx, uint32_t now);
 void setAmbientOrbsBackgroundStyle(int enabled);
 void setAmbientOrbsTheme(AmbientOrbsTheme theme, uint32_t now);
 int setAmbientOrbsAppearance(AmbientOrbsAppearance appearance);
+void setAmbientOrbsColor(AmbientOrbsColorPart part, AmbientOrbsColor color);
 // Returns 1 when the Ambient Orbs background was selected and drawn.
 int drawAmbientOrbsBackground(uint32_t now);
 

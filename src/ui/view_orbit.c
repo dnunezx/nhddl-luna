@@ -117,29 +117,16 @@ static void drawOrbitGuide(int centerX, int centerY, int radiusX, int radiusY) {
 }
 
 static void drawOrbitFooter(void) {
-  int baseY = gsGlobal->Height - footerHeight + 8;
-  int circleX = 26;
-  int squareX = gsGlobal->Width * 27 / 100;
-  int crossX = gsGlobal->Width * 52 / 100;
-  int triangleX = gsGlobal->Width * 76 / 100;
-
-  drawIconWindow(circleX, baseY, 0, gsGlobal->Height, 8, FontMainColor, ALIGN_CENTER, ICON_CIRCLE);
-  drawTextWindow(circleX + getIconWidth(ICON_CIRCLE) + 6, baseY, squareX - 8,
-                 gsGlobal->Height, 8, FontMainColor, ALIGN_VCENTER, "Classic");
-  drawIconWindow(squareX, baseY, 0, gsGlobal->Height, 8, FontMainColor, ALIGN_CENTER, ICON_SQUARE);
-  drawTextWindow(squareX + getIconWidth(ICON_SQUARE) + 6, baseY, crossX - 8,
-                 gsGlobal->Height, 8, FontMainColor, ALIGN_VCENTER, "Random");
-  drawIconWindow(crossX, baseY, 0, gsGlobal->Height, 8, FontMainColor, ALIGN_CENTER, ICON_CROSS);
-  drawTextWindow(crossX + getIconWidth(ICON_CROSS) + 6, baseY, triangleX - 8,
-                 gsGlobal->Height, 8, FontMainColor, ALIGN_VCENTER, "Launch");
-  drawIconWindow(triangleX, baseY, 0, gsGlobal->Height, 8, FontMainColor, ALIGN_CENTER, ICON_TRIANGLE);
-  drawTextWindow(triangleX + getIconWidth(ICON_TRIANGLE) + 6, baseY,
-                 gsGlobal->Width - keepoutArea, gsGlobal->Height, 8,
-                 FontMainColor, ALIGN_VCENTER, "Options");
+  const ButtonPrompt prompts[] = {
+      {ICON_CIRCLE, "Classic"}, {ICON_SQUARE, "Random"},
+      {ICON_CROSS, "Launch"}, {ICON_TRIANGLE, "Options"}};
+  drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
+                gsGlobal->Width - 20, gsGlobal->Height, 8, FontMainColor,
+                (PromptBar){NULL, prompts, 4});
 }
 
 void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int flowOffset,
-               int randomActive, uint32_t frameNowMs) {
+               int randomActive, int entryProgress, uint32_t frameNowMs) {
   const int top = headerHeight + 8;
   const int bottom = gsGlobal->Height - footerHeight - 8;
   const int centerX = gsGlobal->Width / 2;
@@ -154,6 +141,9 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
   int visualFocusDistance = 0x7FFFFFFF;
   char selectedTitle[255];
   int cacheIdx;
+  const int entryRadius = 700 + entryProgress * 300 / 1000;
+  const int entrySize = 850 + entryProgress * 150 / 1000;
+  const int entryVisibility = 300 + entryProgress * 700 / 1000;
 
   if (selectedSize > maxSelectedSize)
     selectedSize = maxSelectedSize;
@@ -187,9 +177,10 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
     int baseSize = selectedSize * (28 + (depthProgress * 30) / 1000) / 100;
     int focusProgress = (distance < 1000) ? 1000 - distance : 0;
     int focusBoost = selectedSize * 42 / 100;
-    int size = baseSize + (focusBoost * lunaNavEase(focusProgress)) / 1000;
-    int itemCenterX = centerX + (sine * radiusX) / 127;
-    int itemCenterY = centerY + ((depth - 127) * radiusY) / 254;
+    int size = (baseSize + (focusBoost * lunaNavEase(focusProgress)) / 1000) *
+               entrySize / 1000;
+    int itemCenterX = centerX + (sine * radiusX * entryRadius) / (127 * 1000);
+    int itemCenterY = centerY + ((depth - 127) * radiusY * entryRadius) / (254 * 1000);
 
     items[cacheIdx].quad = orbitCoverQuad(itemCenterX, itemCenterY, size, sine);
     items[cacheIdx].cacheIdx = cacheIdx;
@@ -197,7 +188,8 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
         selectedTitleIdx + cacheIdx - PSBBN_COVER_CACHE_FOCUS);
     items[cacheIdx].depth = depth;
     items[cacheIdx].emphasis = (focusProgress > depthProgress) ? focusProgress : depthProgress;
-    items[cacheIdx].visibility = 300 + (depthProgress * 700) / 1000;
+    items[cacheIdx].visibility = (300 + (depthProgress * 700) / 1000) *
+                                 entryVisibility / 1000;
     items[cacheIdx].centerX = itemCenterX;
     items[cacheIdx].centerY = itemCenterY;
     items[cacheIdx].size = size;

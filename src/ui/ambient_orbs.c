@@ -28,9 +28,6 @@
 #define ORB_PLAYTIME_ENTRY_MS 400
 #define ORB_PLAYTIME_SWEEP_X_MS 12000
 #define ORB_PLAYTIME_SWEEP_Y_MS 16000
-#define ORB_FORMATION_TRAVEL_MS 3600
-#define ORB_INFINITY_WOBBLE_MS 5200
-#define ORB_INFINITY_WOBBLE_PIXELS 7.0f
 #define ORB_DIAMOND_ROTATION_MS 7200
 #define ORB_CUBE_ROTATION_MS 8000
 #define ORB_OCTAHEDRON_ROTATION_MS 7600
@@ -52,6 +49,13 @@ static uint32_t splashStartMs;
 static int ambientOrbsBackgroundStyle;
 static AmbientOrbsTheme ambientOrbsTheme = ORBS_THEME_LUNA;
 static AmbientOrbsAppearance ambientOrbsAppearance = ORBS_APPEARANCE_LUNA;
+static AmbientOrbsColor ambientOrbsColor = ORBS_COLOR_ORIGINAL;
+static AmbientOrbsColor ambientTailsColor = ORBS_COLOR_ORIGINAL;
+static int orbBackgroundColorsActive;
+static const uint8_t orbPalette[ORBS_COLOR_COUNT][3] = {
+    {0, 0, 0}, {0x52, 0xE0, 0xFF}, {0xB0, 0x82, 0xFF},
+    {0xFF, 0x7A, 0xC6}, {0x72, 0xEC, 0xA0},
+    {0xFF, 0xC4, 0x66}, {0xFF, 0xFF, 0xFF}};
 static u32 originalHaloPixels[64 * 64] __attribute__((aligned(64)));
 static u32 originalCorePixels[64 * 64] __attribute__((aligned(64)));
 static GSTEXTURE originalHaloTexture;
@@ -287,6 +291,41 @@ int setAmbientOrbsAppearance(AmbientOrbsAppearance appearance) {
   ambientOrbsAppearance = appearance == ORBS_APPEARANCE_PS2_ORIGINAL ?
                           appearance : ORBS_APPEARANCE_LUNA;
   return 0;
+}
+
+void setAmbientOrbsColor(AmbientOrbsColorPart part, AmbientOrbsColor color) {
+  if (color < ORBS_COLOR_ORIGINAL || color >= ORBS_COLOR_COUNT)
+    color = ORBS_COLOR_ORIGINAL;
+  if (part == ORBS_COLOR_PART_ORBS)
+    ambientOrbsColor = color;
+  else if (part == ORBS_COLOR_PART_TAILS)
+    ambientTailsColor = color;
+}
+
+static void orbTintColor(int *red, int *green, int *blue,
+                         AmbientOrbsColorPart part) {
+  const AmbientOrbsColor color = part == ORBS_COLOR_PART_ORBS ?
+                                  ambientOrbsColor : ambientTailsColor;
+  if (!orbBackgroundColorsActive || color == ORBS_COLOR_ORIGINAL)
+    return;
+  int brightness = *red;
+  if (*green > brightness)
+    brightness = *green;
+  if (*blue > brightness)
+    brightness = *blue;
+  *red = orbPalette[color][0] * brightness / 255;
+  *green = orbPalette[color][1] * brightness / 255;
+  *blue = orbPalette[color][2] * brightness / 255;
+}
+
+static uint64_t orbLightColor(int red, int green, int blue, int alpha,
+                              AmbientOrbsColorPart part) {
+  const AmbientOrbsColor color = part == ORBS_COLOR_PART_ORBS ?
+                                  ambientOrbsColor : ambientTailsColor;
+  if (!orbBackgroundColorsActive || color == ORBS_COLOR_ORIGINAL)
+    return glassLightColor(red, green, blue, alpha);
+  orbTintColor(&red, &green, &blue, part);
+  return GS_SETREG_RGBA(red, green, blue, alpha);
 }
 
 void resetAmbientOrbsOrbit(uint32_t now) {
@@ -579,7 +618,6 @@ typedef enum {
   ORB_SHAPE_DIAMOND,
   ORB_SHAPE_CUBE,
   ORB_SHAPE_OCTAHEDRON,
-  ORB_SHAPE_INFINITY,
   ORB_SHAPE_SPHERE,
   ORB_SHAPE_LUNA,
   ORB_SHAPE_PLAYTIME,
@@ -754,35 +792,6 @@ static OrbFormation *orbFormationAt(uint32_t elapsedMs, int formationMode) {
 static float orbLogoScale(int radiusX, const OrbMotion *motion) {
   const float breath = 0.85f + motion->scale / 500.0f;
   return radiusX * 2.4f * breath / 710.0f;
-}
-
-static void orbInfinityPoint(uint32_t phase, uint32_t elapsedMs,
-                              const OrbMotion *motion, int centerX,
-                              int centerY, int radiusX, int radiusY,
-                              float *x, float *y) {
-  const float sine = orbWave(phase) / 127.0f;
-  const float cosine = orbWave(phase + 16384U) / 127.0f;
-  const float sineDouble = orbWave(phase * 2U) / 127.0f;
-  const float cosineDouble = orbWave(phase * 2U + 16384U) / 127.0f;
-  const float scale = 0.85f + motion->scale / 500.0f;
-  const float tilt = 0.92f + motion->tilt / 1000.0f;
-  const float tangentX = 0.94f * radiusX * scale * cosine;
-  const float tangentY = 1.10f * radiusY * scale * tilt * cosineDouble;
-  const float absX = tangentX < 0.0f ? -tangentX : tangentX;
-  const float absY = tangentY < 0.0f ? -tangentY : tangentY;
-  const float longer = absX > absY ? absX : absY;
-  const float shorter = absX > absY ? absY : absX;
-  const float tangentLength = longer + shorter * 0.375f;
-  const uint32_t wobblePhase = glassPhase(elapsedMs, ORB_INFINITY_WOBBLE_MS, 0);
-  // Fade the wobble at both center crossings to keep the figure eight legible.
-  const float displacement = ORB_INFINITY_WOBBLE_PIXELS * sine * sine *
-      orbWave(phase * 3U - wobblePhase) / 127.0f;
-  *x = centerX + sine * 0.94f * radiusX * scale;
-  *y = centerY + sineDouble * 0.55f * radiusY * scale * tilt;
-  if (tangentLength > 0.01f) {
-    *x -= tangentY * displacement / tangentLength;
-    *y += tangentX * displacement / tangentLength;
-  }
 }
 
 static void orbPlaytimePosition(int index, uint32_t animationMs,
@@ -992,14 +1001,9 @@ static void orbPatternPosition(OrbShape shape, int index, uint32_t elapsedMs,
     return;
   }
 
-  const uint32_t basePhase = (uint32_t)(((uint64_t)index << 16) / ORB_COUNT);
-  const int spread = (int)(orbWave(basePhase + (2 << 11)) * motion->breath *
-                           1100.0f / (127.0f * 127.0f));
-  const uint32_t phase = (glassPhase(elapsedMs, ORB_FORMATION_TRAVEL_MS, 0) +
-                          basePhase + spread) & 0xFFFFU;
-  orbInfinityPoint(phase, elapsedMs, motion, centerX, centerY,
-                   radiusX, radiusY, x, y);
-  *depth = 65.0f + orbWave(phase) * 30.0f / 127.0f;
+  *x = centerX;
+  *y = centerY;
+  *depth = 65.0f;
 }
 
 static void orbFormationPosition(const OrbFormation *formation, int index,
@@ -1153,16 +1157,20 @@ static void drawOrbTailStroke(float x1, float y1, float x2, float y2,
     drawOrbTrailSegment(ax, ay, bx, by,
                         (width + 4.0f) * fromFade,
                         (width + 4.0f) * toFade, z,
-                        glassLightColor(0x40, 0x78, 0xC8,
-                                       (int)(alpha * fromFade * 0.45f)),
-                        glassLightColor(0x40, 0x78, 0xC8,
-                                       (int)(alpha * toFade * 0.45f)));
+                        orbLightColor(0x40, 0x78, 0xC8,
+                                      (int)(alpha * fromFade * 0.45f),
+                                      ORBS_COLOR_PART_TAILS),
+                        orbLightColor(0x40, 0x78, 0xC8,
+                                      (int)(alpha * toFade * 0.45f),
+                                      ORBS_COLOR_PART_TAILS));
     drawOrbTrailSegment(ax, ay, bx, by,
                         width * fromFade, width * toFade, z,
-                        glassLightColor(0xA0, 0xD8, 0xFF,
-                                       (int)(alpha * fromFade)),
-                        glassLightColor(0xA0, 0xD8, 0xFF,
-                                       (int)(alpha * toFade)));
+                        orbLightColor(0xA0, 0xD8, 0xFF,
+                                      (int)(alpha * fromFade),
+                                      ORBS_COLOR_PART_TAILS),
+                        orbLightColor(0xA0, 0xD8, 0xFF,
+                                      (int)(alpha * toFade),
+                                      ORBS_COLOR_PART_TAILS));
   }
 }
 
@@ -1176,11 +1184,15 @@ static void drawOrbLogoStroke(float x1, float y1, float x2, float y2,
   const float tipX = x1 + (x2 - x1) * extent;
   const float tipY = y1 + (y2 - y1) * extent;
   drawOrbTrailSegment(x1, y1, tipX, tipY, width + 4.0f, width + 2.0f, z,
-                      glassLightColor(0x40, 0x78, 0xC8, alpha / 2),
-                      glassLightColor(0x40, 0x78, 0xC8, alpha / 3));
+                      orbLightColor(0x40, 0x78, 0xC8, alpha / 2,
+                                    ORBS_COLOR_PART_TAILS),
+                      orbLightColor(0x40, 0x78, 0xC8, alpha / 3,
+                                    ORBS_COLOR_PART_TAILS));
   drawOrbTrailSegment(x1, y1, tipX, tipY, width, width * 0.65f, z,
-                      glassLightColor(0xA0, 0xD8, 0xFF, alpha),
-                      glassLightColor(0xE0, 0xF0, 0xFF, alpha / 2));
+                      orbLightColor(0xA0, 0xD8, 0xFF, alpha,
+                                    ORBS_COLOR_PART_TAILS),
+                      orbLightColor(0xE0, 0xF0, 0xFF, alpha / 2,
+                                    ORBS_COLOR_PART_TAILS));
 }
 
 static void drawOrbFormationEdges(OrbShape shape, float extent,
@@ -1205,10 +1217,8 @@ static void drawOrbFormationEdges(OrbShape shape, float extent,
     {2, 5}, {2, 6}, {3, 6}, {3, 7},
     {4, 8}, {5, 8}, {6, 8}, {7, 8}
   };
-  // The moving afterimages already trace most of the infinity loop.
   if (extent <= 0.0f || shape == ORB_SHAPE_ORBIT ||
       shape == ORB_SHAPE_PLAYTIME ||
-      shape == ORB_SHAPE_INFINITY ||
       shape == ORB_SHAPE_SPHERE || shape == ORB_SHAPE_LUNA)
     return;
   float x[ORB_COUNT], y[ORB_COUNT], depth;
@@ -1375,6 +1385,9 @@ static void drawOriginalOrbSprite(float x, float y, float size, int z,
   const float haloY = 15.0f * size;
   const int haloAlpha = (int)(0x3c * opacity);
   const int coreAlpha = (int)(0x80 * opacity);
+  int coreRed = 0x80, coreGreen = 0x80, coreBlue = 0x80;
+  orbTintColor(&red, &green, &blue, ORBS_COLOR_PART_ORBS);
+  orbTintColor(&coreRed, &coreGreen, &coreBlue, ORBS_COLOR_PART_ORBS);
   // The ROM softens the whole 3D layer with five framebuffer passes. Soft
   // copies of its actual halo mask approximate that spread within the orb
   // layer, leaving the surrounding LUNA interface sharp.
@@ -1386,7 +1399,7 @@ static void drawOriginalOrbSprite(float x, float y, float size, int z,
   drawOriginalMask(&originalHaloTexture, x, y, haloX, haloY,
                    z, red, green, blue, haloAlpha * 3 / 4);
   drawOriginalMask(&originalCoreTexture, x, y, 4.5f * size, 2.25f * size,
-                   z, 0x80, 0x80, 0x80, coreAlpha);
+                   z, coreRed, coreGreen, coreBlue, coreAlpha);
 }
 
 static void drawOriginalOrbs(int centerX, int centerY, int radiusX,
@@ -1406,6 +1419,8 @@ static void drawOriginalOrbs(int centerX, int centerY, int radiusX,
     const int red = (int)(0x30 + (entryColor[i][0] - 0x30) * entry);
     const int green = (int)(0x62 + (entryColor[i][1] - 0x62) * entry);
     const int blue = (int)(0x80 + (entryColor[i][2] - 0x80) * entry);
+    int tailRed = red, tailGreen = green, tailBlue = blue;
+    orbTintColor(&tailRed, &tailGreen, &tailBlue, ORBS_COLOR_PART_TAILS);
     float headX, headY, headDepth;
     originalOrbPoint(i, now, centerX, centerY, radiusX, radiusY,
                      &headX, &headY, &headDepth);
@@ -1419,12 +1434,12 @@ static void drawOriginalOrbs(int centerX, int centerY, int radiusX,
                        &olderX, &olderY, &olderDepth);
       const float oldFade = segment < 43 ? 1.0f - segment / 43.0f : 0.0f;
       const float newFade = 1.0f - (segment - 1) / 43.0f;
-      const int oldRed = (int)(red * oldFade * oldFade * oldFade * oldFade);
-      const int oldGreen = (int)(green * oldFade * oldFade);
-      const int oldBlue = (int)(blue * oldFade);
-      const int newRed = (int)(red * newFade * newFade * newFade * newFade);
-      const int newGreen = (int)(green * newFade * newFade);
-      const int newBlue = (int)(blue * newFade);
+      const int oldRed = (int)(tailRed * oldFade * oldFade * oldFade * oldFade);
+      const int oldGreen = (int)(tailGreen * oldFade * oldFade);
+      const int oldBlue = (int)(tailBlue * oldFade);
+      const int newRed = (int)(tailRed * newFade * newFade * newFade * newFade);
+      const int newGreen = (int)(tailGreen * newFade * newFade);
+      const int newBlue = (int)(tailBlue * newFade);
       drawOrbTrailSegment(olderX, olderY, newerX, newerY,
                           1.2f, 1.6f, trailZ,
                           GS_SETREG_RGBA(oldRed, oldGreen, oldBlue,
@@ -1442,12 +1457,16 @@ static void drawOriginalOrbs(int centerX, int centerY, int radiusX,
     } else {
       drawOriginalOrbDisc(headX, headY, 30.0f * size, 15.0f * size,
                            trailZ + 1,
-                           glassLightColor(red, green, blue, 0x3C),
-                           glassLightColor(red, green, blue, 0));
+                           orbLightColor(red, green, blue, 0x3C,
+                                         ORBS_COLOR_PART_ORBS),
+                           orbLightColor(red, green, blue, 0,
+                                         ORBS_COLOR_PART_ORBS));
       drawOriginalOrbDisc(headX, headY, 4.5f * size, 2.25f * size,
                            trailZ + 1,
-                           glassLightColor(0x80, 0x80, 0x80, 0x80),
-                           glassLightColor(0x80, 0x80, 0x80, 0));
+                           orbLightColor(0x80, 0x80, 0x80, 0x80,
+                                         ORBS_COLOR_PART_ORBS),
+                           orbLightColor(0x80, 0x80, 0x80, 0,
+                                         ORBS_COLOR_PART_ORBS));
     }
   }
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
@@ -1458,6 +1477,7 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
                                uint32_t movementMs, int formationSpeed,
                                int movementSpeed, int glowScale, int trailZ,
                                int scrollFocusX, int formationMode) {
+  orbBackgroundColorsActive = formationMode == 0;
   if (formationMode != 2 && ambientOrbsTheme == ORBS_THEME_PS2_ORIGINAL) {
     drawOriginalOrbs(centerX, centerY, radiusX, radiusY,
                      glassStartMs + elapsedMs, trailZ);
@@ -1608,13 +1628,17 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
       if (oldOuterAlpha || newOuterAlpha)
         drawOrbTrailSegment(oldX, oldY, newX, newY,
                             oldOuterWidth * trailScale, newOuterWidth * trailScale, trailZ,
-                            glassLightColor(0x40, 0x78, 0xC8, oldOuterAlpha),
-                            glassLightColor(0x40, 0x78, 0xC8, newOuterAlpha));
+                            orbLightColor(0x40, 0x78, 0xC8, oldOuterAlpha,
+                                          ORBS_COLOR_PART_TAILS),
+                            orbLightColor(0x40, 0x78, 0xC8, newOuterAlpha,
+                                          ORBS_COLOR_PART_TAILS));
       if (oldInnerAlpha || newInnerAlpha)
         drawOrbTrailSegment(oldX, oldY, newX, newY,
                             oldInnerWidth * trailScale, newInnerWidth * trailScale, trailZ,
-                            glassLightColor(0xA0, 0xD8, 0xFF, oldInnerAlpha),
-                            glassLightColor(0xA0, 0xD8, 0xFF, newInnerAlpha));
+                            orbLightColor(0xA0, 0xD8, 0xFF, oldInnerAlpha,
+                                          ORBS_COLOR_PART_TAILS),
+                            orbLightColor(0xA0, 0xD8, 0xFF, newInnerAlpha,
+                                          ORBS_COLOR_PART_TAILS));
       if (letterTrailVisibility > 0.01f) {
         const float fade = (trailSegments - segment + 1) /
                            (float)trailSegments;
@@ -1624,13 +1648,17 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
                                      newOpacity);
         drawOrbTrailSegment(oldX, oldY, newX, newY,
                             3.0f * fade, 4.0f * fade, trailZ,
-                            glassLightColor(0x48, 0x90, 0xD8, outerAlpha),
-                            glassLightColor(0x70, 0xB8, 0xF0, innerAlpha));
+                            orbLightColor(0x48, 0x90, 0xD8, outerAlpha,
+                                          ORBS_COLOR_PART_TAILS),
+                            orbLightColor(0x70, 0xB8, 0xF0, innerAlpha,
+                                          ORBS_COLOR_PART_TAILS));
         drawOrbGlowDisc(newX, newY, 4.0f + fade * 3.0f, trailZ,
-                        glassLightColor(0x98, 0xD8, 0xFF,
-                                         (int)(0x24 * fade *
-                                               letterTrailVisibility * newOpacity)),
-                        glassLightColor(0x98, 0xD8, 0xFF, 0));
+                        orbLightColor(0x98, 0xD8, 0xFF,
+                                      (int)(0x24 * fade *
+                                            letterTrailVisibility * newOpacity),
+                                      ORBS_COLOR_PART_ORBS),
+                        orbLightColor(0x98, 0xD8, 0xFF, 0,
+                                      ORBS_COLOR_PART_ORBS));
       }
       newX = oldX;
       newY = oldY;
@@ -1666,9 +1694,11 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
       drawOrbGlowDisc(x + SCROLL_GLYPH_DEPTH_X * 0.75f,
                       y + SCROLL_GLYPH_DEPTH_Y * 0.75f,
                       haloRadius * 0.62f, trailZ,
-                      glassLightColor(0x30, 0x68, 0xA8,
-                                       (int)(coreAlpha * letterBlend[0] * 0.28f)),
-                      glassLightColor(0x30, 0x68, 0xA8, 0));
+                      orbLightColor(0x30, 0x68, 0xA8,
+                                    (int)(coreAlpha * letterBlend[0] * 0.28f),
+                                    ORBS_COLOR_PART_ORBS),
+                      orbLightColor(0x30, 0x68, 0xA8, 0,
+                                    ORBS_COLOR_PART_ORBS));
     if (ambientOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL &&
         originalMasksLoaded) {
       const float originalSize = 1.0f / (1.0f + depth / 640.0f);
@@ -1676,11 +1706,15 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
                             0x30, 0x62, 0x80, opacity);
     } else {
       drawOrbGlowDisc(x, y, haloRadius, trailZ + 1,
-                      glassLightColor(0x70, 0xA8, 0xE8, haloAlpha),
-                      glassLightColor(0x70, 0xA8, 0xE8, 0));
+                      orbLightColor(0x70, 0xA8, 0xE8, haloAlpha,
+                                    ORBS_COLOR_PART_ORBS),
+                      orbLightColor(0x70, 0xA8, 0xE8, 0,
+                                    ORBS_COLOR_PART_ORBS));
       drawOrbGlowDisc(x, y, coreRadius, trailZ + 1,
-                      glassLightColor(0xE0, 0xF0, 0xFF, coreAlpha),
-                      glassLightColor(0xE0, 0xF0, 0xFF, 0));
+                      orbLightColor(0xE0, 0xF0, 0xFF, coreAlpha,
+                                    ORBS_COLOR_PART_ORBS),
+                      orbLightColor(0xE0, 0xF0, 0xFF, 0,
+                                    ORBS_COLOR_PART_ORBS));
     }
   }
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);

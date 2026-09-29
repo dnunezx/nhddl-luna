@@ -346,7 +346,7 @@ int updateTitleLaunchArguments(Target *target, ArgumentList *options) {
     tArg = tArg->next;
   }
 out:
-  if (close(fd) && !ret)
+  if (close(fd) < 0 && !ret)
     ret = -EIO;
   return ret;
 }
