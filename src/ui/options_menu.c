@@ -244,12 +244,28 @@ static int optionsSelectorY(OptionsSelector *selector, OptionsPage page,
   return row / OPTIONS_GLOW_ROW_SCALE;
 }
 
+static void drawOptionsRowSelector(int left, int top, int right) {
+  const int bottom = top + getFontLineHeight();
+  const int insetLeft = left + 6;
+  const int insetRight = right - 6;
+
+  // A quiet glass plate keeps both the setting and its value readable. The
+  // bright leading edge identifies the active row without the list glow.
+  gsKit_prim_sprite(gsGlobal, insetLeft, top - 3, insetRight, bottom + 3, 2,
+                    glassPresetColor(0x16, 0x54, 0x82, 0x38));
+  gsKit_prim_sprite(gsGlobal, insetLeft, top - 3, insetRight, top - 2, 3,
+                    glassPresetColor(0x78, 0xC8, 0xE8, 0x24));
+  gsKit_prim_sprite(gsGlobal, insetLeft, bottom + 2, insetRight, bottom + 3, 3,
+                    glassPresetColor(0x78, 0xC8, 0xE8, 0x18));
+  gsKit_prim_sprite(gsGlobal, insetLeft, top - 3, insetLeft + 3, bottom + 3, 4,
+                    glassPresetColor(0x70, 0xD8, 0xF8, 0x70));
+}
+
 static void drawOptionsTextRow(int x, int y, int right, int selected,
                                int selectorY, const char *label,
                                const char *value) {
-  if (selected) {
-    drawPSBBNFocusGlow(x, selectorY, right, right - 12);
-  }
+  if (selected)
+    drawOptionsRowSelector(x, selectorY, right);
   int labelWidth = right - x - 30;
   float valueWidth = value ? getLineWidth(value) : 0;
   if (value)
