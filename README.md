@@ -47,12 +47,31 @@ space. File sizes appear when the device reports them, including files in `/VMC`
 copying does not change VMC assignments. On an APA HDD it shows the mounted OPL
 metadata partition, not the raw game partitions.
 
+The Virtual Memory Cards manager and per-game card picker use enabled local
+storage: exFAT HDD, USB, MX4SIO, iLink, or the mounted APA/PFS metadata partition.
+Create and assign cards on the game's own drive. Disabling a storage source
+hides it from the manager without deleting its cards or per-game assignments;
+re-enabling it restores access. Saved card paths follow the drive if its
+`mass` mount number changes. PFS cards also retain the correct path when OPL
+metadata lives under `pfs0:/OPL`. MMCE uses its automatic hardware card switch
+only while MMCE storage is enabled. UDPFS has no file-card creation or picker;
+the Physical card choice remains available.
+
 ### Classic title list controls
 
  - Press **Up** on the d-pad to select the **previous title** in the list
  - Press **Down** on the d-pad to select the **next title** in the list
- - Press **L1** or **L2** to switch to the **previous page** or go to the **start of the list**
- - Press **R1** or **R2** to switch to the **next page** or go to the **end of the list**
+ - Press **L2** to switch to the **previous page** or go to the **start of the list**
+ - Press **R2** to switch to the **next page** or go to the **end of the list**
+
+In every library view, hold **R1** to open the quick menu. Use **Up/Down**
+while holding R1 and **Cross** to confirm. Releasing R1 closes without choosing.
+The menu offers Show Favorites/Show All, Add/Remove from Favorites, Options,
+and Random in Orbit, sliding in from the right. While holding R1, **Select**
+switches the filter, **Square** adds/removes a favorite, **Triangle** opens
+Options, and **R3** starts Random in Orbit. **Select** alone remains a shortcut
+to switch the favorites filter.
+The footer uses one row: View, Launch, Menu, More.
 
 Press **Triangle** to open the options menu. **Per-game settings** opens the
 selected game's launch controls; **Global settings** contains **Classic art
@@ -62,11 +81,11 @@ press **Start** to save. The layout applies to Classic for the whole library on
 that drive. **Triangle** cancels an unsaved change and returns to the menu.
 
 In Luna's Collection view, Left/Up and Right/Down move between covers; holding
-a direction repeats. L1/R1 jump backward or forward by a list page. Hold L2/R2
+a direction repeats. Hold L2/R2
 to fast scan; quick L2/R2 taps do nothing.
 
 In Luna's Grid view, release a shoulder before half a second for one page. Hold
-L1/L2 or R1/R2 for at least half a second to fast-track through lightweight
+L2 or R2 for at least half a second to fast-track through lightweight
 page shells without loading artwork; releasing loads only the page where the
 fast-track stops. That final artwork fills the shell in place without replaying
 the page transition.

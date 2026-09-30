@@ -232,7 +232,8 @@ static void drawDiscOutline(int centerX, int centerY, int radius, int z, uint64_
 }
 
 
-static void drawClassicDisc(GSTEXTURE *disc, uint32_t frameNowMs) {
+static void drawClassicDisc(GSTEXTURE *disc, uint32_t frameNowMs,
+                            int opacity, int placeholderOpacity) {
   const int centerX = (discArtX1 + discArtX2) / 2;
   const int centerY = (discArtY1 + discArtY2) / 2;
   const int radius = DISC_ART_SIZE / 2;
@@ -240,23 +241,30 @@ static void drawClassicDisc(GSTEXTURE *disc, uint32_t frameNowMs) {
   const int textureZ = classicArtOverlap ? 4 : 6;
 
   gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-  if (disc == NULL) {
-    // Missing artwork stays source-truthful: a quiet empty disc, not a cover crop
-    // or a generic label that could be mistaken for the selected game's art.
-    drawDiscOutline(centerX, centerY, radius, classicArtOverlap ? 4 : 5,
-                    glassPresetColor(0x70, 0xB8, 0xD8, 0x22));
-    drawDiscOutline(centerX, centerY, 7, classicArtOverlap ? 4 : 5,
-                    glassPresetColor(0x90, 0xD0, 0xE8, 0x1C));
-    return;
+  if (disc == NULL || opacity < 1000) {
+    // Ease in the outline on view entry, then let the disc art replace it.
+    const int outlineOpacity = (disc == NULL ? 1000 : 1000 - opacity) *
+                               placeholderOpacity / 1000;
+    const int silhouetteZ = disc == NULL ? (classicArtOverlap ? 4 : 5) : outlineZ;
+    drawDiscOutline(centerX, centerY, radius, silhouetteZ,
+                    glassPresetColor(0x70, 0xB8, 0xD8,
+                                     0x22 * outlineOpacity / 1000));
+    drawDiscOutline(centerX, centerY, 7, silhouetteZ,
+                    glassPresetColor(0x90, 0xD0, 0xE8,
+                                     0x1C * outlineOpacity / 1000));
   }
+  if (disc == NULL)
+    return;
+  if (opacity <= 0)
+    return;
 
   drawOrbitalDisc(centerX, centerY, radius + 8, classicArtOverlap ? 2 : 3,
-                  glassPresetColor(0x44, 0xB8, 0xF0, 0x0D),
-                  glassPresetColor(0x28, 0x68, 0xB0, 0x02));
+                  glassPresetColor(0x44, 0xB8, 0xF0, 0x0D * opacity / 1000),
+                  glassPresetColor(0x28, 0x68, 0xB0, 0x02 * opacity / 1000));
   drawDiscOutline(centerX, centerY, radius + 5, outlineZ,
-                  glassPresetColor(0x78, 0xD8, 0xFF, 0x20));
+                  glassPresetColor(0x78, 0xD8, 0xFF, 0x20 * opacity / 1000));
   drawDiscOutline(centerX, centerY, radius + 2, outlineZ,
-                  glassPresetColor(0x38, 0x88, 0xC8, 0x18));
+                  glassPresetColor(0x38, 0x88, 0xC8, 0x18 * opacity / 1000));
 
   const uint32_t phase = discRotationPhase(frameNowMs);
   const float sine = (float)discWave(phase) / 127.0f;
@@ -281,7 +289,11 @@ static void drawClassicDisc(GSTEXTURE *disc, uint32_t frameNowMs) {
   gsGlobal->Test->ATST = 2;
   gsGlobal->Test->AREF = 0x80;
   gsGlobal->Test->AFAIL = 0;
-  gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
+  if (opacity >= 1000)
+    gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
+  else
+    gsKit_set_primalpha(gsGlobal,
+                        GS_SETREG_ALPHA(0, 1, 2, 1, (opacity * 0x80) / 1000), 0);
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
   gsKit_prim_quad_texture(gsGlobal, disc, upperLeftX, upperLeftY, 0.0f, 0.0f, upperRightX, upperRightY, disc->Width - 1, 0.0f,
                           lowerLeftX, lowerLeftY, 0.0f, disc->Height - 1, lowerRightX, lowerRightY, disc->Width - 1,
@@ -301,8 +313,7 @@ static void drawClassicCoverTexture(GSTEXTURE *cover, int opacity, int z) {
     gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
   } else {
     gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-    // Use a fixed blend factor: indexed OPL covers have inconsistent texture
-    // alpha, but their RGB pixels still blend cleanly at this opacity.
+    // Cover PNG alpha varies, so blend its RGB with a fixed fade factor.
     gsKit_set_primalpha(gsGlobal,
                         GS_SETREG_ALPHA(0, 1, 2, 1, (opacity * 0x80) / 1000), 0);
   }
@@ -314,11 +325,24 @@ static void drawClassicCoverTexture(GSTEXTURE *cover, int opacity, int z) {
     gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
 }
 
+static void drawClassicCoverSilhouette(int opacity, int coverTextureZ) {
+  if (opacity <= 0)
+    return;
+  // Draw behind the real cover so the two can crossfade without a blank frame.
+  gsKit_prim_sprite(gsGlobal, coverArtX1, coverArtY1, coverArtX2, coverArtY2,
+                    coverTextureZ - 2,
+                    glassPresetColor(0x18, 0x40, 0x68, 0x32 * opacity / 1000));
+  drawGlassDiamond((coverArtX1 + coverArtX2) / 2,
+                   (coverArtY1 + coverArtY2) / 2 - 12, 24,
+                   coverTextureZ - 1,
+                   glassMissingCoverDiamondColor(0x38 * opacity / 1000));
+}
+
 void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPage,
-                   GSTEXTURE *selectedTitleCover, GSTEXTURE *previousCover,
-                   GSTEXTURE *selectedTitleDisc, const uint8_t *favoriteFlags,
-                   int favoritesOnly, int coverPending, int coverTransitionProgress,
-                   int entryProgress, uint32_t frameNowMs,
+                   GSTEXTURE *selectedTitleCover, GSTEXTURE *selectedTitleDisc,
+                   const uint8_t *favoriteFlags, int favoritesOnly, int coverPending,
+                   int coverOpacity, int discOpacity, int placeholderOpacity,
+                   uint32_t frameNowMs,
                    const char *nextViewLabel) {
 
   classicDiscLastFrameMs = frameNowMs;
@@ -363,7 +387,7 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
   Target *curTitle = titles->first;
   int displayIdx = 0;
   int listStartY;
-  const int listTextX = baseX + (1000 - entryProgress) * 20 / 1000;
+  const int listTextX = baseX;
 
   titleY += getFontLineHeight() / 2;
   listStartY = titleY;
@@ -416,13 +440,15 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
   }
 
   if (classicArtOverlap)
-    drawClassicDisc(selectedTitleDisc, frameNowMs);
+    drawClassicDisc(selectedTitleDisc, frameNowMs, discOpacity,
+                    placeholderOpacity);
 
-  // Keep the outgoing cover in place while the next PNG is decoded. Once it
-  // arrives, blend between the two resident textures rather than flashing a
-  // missing-art message between selections.
+  // The entry silhouette covers decode time; title changes still swap art directly.
   const int coverTextureZ = classicArtOverlap ? 6 : 5;
-  if (selectedTitleCover == NULL) {
+  if (coverOpacity < 1000) {
+    drawClassicCoverSilhouette((1000 - coverOpacity) * placeholderOpacity / 1000,
+                               coverTextureZ);
+  } else if (selectedTitleCover == NULL) {
     if (getGlassColorPreset() == GLASS_COLOR_ORIGINAL)
       gsKit_prim_sprite(gsGlobal, coverArtX1, coverArtY1, coverArtX2, coverArtY2,
                         classicArtOverlap ? 6 : 5,
@@ -435,21 +461,10 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
                    glassMissingCoverTextColor(), ALIGN_CENTER,
                    coverPending ? "LOADING\nCOVER" : "COVER\nUNAVAILABLE");
   }
-  if (previousCover != NULL && coverTransitionProgress < 1000) {
-    if (selectedTitleCover != NULL) {
-      drawClassicCoverTexture(previousCover, entryProgress, coverTextureZ);
-      drawClassicCoverTexture(selectedTitleCover,
-                              coverTransitionProgress * entryProgress / 1000,
-                              coverTextureZ + 1);
-    } else {
-      drawClassicCoverTexture(previousCover,
-                              (1000 - coverTransitionProgress) * entryProgress / 1000,
-                              coverTextureZ + 1);
-    }
-  } else if (selectedTitleCover != NULL) {
-    drawClassicCoverTexture(selectedTitleCover, entryProgress, coverTextureZ);
-  }
+  if (selectedTitleCover != NULL)
+    drawClassicCoverTexture(selectedTitleCover, coverOpacity, coverTextureZ);
 
   if (!classicArtOverlap)
-    drawClassicDisc(selectedTitleDisc, frameNowMs);
+    drawClassicDisc(selectedTitleDisc, frameNowMs, discOpacity,
+                    placeholderOpacity);
 }

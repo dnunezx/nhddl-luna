@@ -58,6 +58,25 @@ static const char psbbnArtPath[] = "/ART/PSBBN";
 static int gridSaveIconArtwork;
 
 extern void *_gp;
+static int classicArtThreadId = -1;
+static int classicArtWakeSema = -1;
+static int classicArtDoneSema = -1;
+static volatile int classicArtStopping;
+static uint8_t classicArtStack[16384] __attribute__((aligned(16)));
+static volatile uint32_t classicArtGeneration;
+static volatile int classicArtPending;
+static char classicCoverPath[255];
+static char classicDiscPath[255];
+static struct {
+  volatile int state; // 0: idle, 1: decoding, 2: ready
+  uint32_t generation;
+  char coverPath[255];
+  char discPath[255];
+  GSTEXTURE cover;
+  GSTEXTURE disc;
+  int coverResult;
+  int discResult;
+} classicArtJob;
 static int collectionArtThreadId = -1;
 static int collectionArtWakeSema = -1;
 static int collectionArtDoneSema = -1;
@@ -78,6 +97,8 @@ static struct {
   int result;
 } collectionArtJob;
 
+static void classicArtWorker(void);
+static void stopClassicArtWorker(void);
 static void collectionArtWorker(void);
 static void stopCollectionArtWorker(void);
 
@@ -150,6 +171,32 @@ int artCacheInit(void) {
     }
     orbsLogoTextures[i]->Delayed = 1;
     orbsLogoTargets[i] = -1;
+  }
+  ee_sema_t classicSemaphore;
+  ee_thread_t classicThread;
+  memset(&classicSemaphore, 0, sizeof(classicSemaphore));
+  classicSemaphore.init_count = 0;
+  classicSemaphore.max_count = 1;
+  classicArtWakeSema = CreateSema(&classicSemaphore);
+  classicArtDoneSema = CreateSema(&classicSemaphore);
+  if (classicArtWakeSema >= 0 && classicArtDoneSema >= 0) {
+    memset(&classicThread, 0, sizeof(classicThread));
+    classicThread.func = classicArtWorker;
+    classicThread.stack = classicArtStack;
+    classicThread.stack_size = sizeof(classicArtStack);
+    classicThread.gp_reg = &_gp;
+    // Stay below the UI thread so decoding never interrupts a drawn frame.
+    classicThread.initial_priority = 0x21;
+    classicArtStopping = 0;
+    classicArtThreadId = CreateThread(&classicThread);
+    if (classicArtThreadId < 0 || StartThread(classicArtThreadId, NULL) < 0) {
+      if (classicArtThreadId >= 0)
+        DeleteThread(classicArtThreadId);
+      classicArtThreadId = -1;
+      stopClassicArtWorker();
+    }
+  } else {
+    stopClassicArtWorker();
   }
   ee_sema_t semaphore;
   ee_thread_t thread;
@@ -241,6 +288,157 @@ int loadDiscArt(struct DeviceMapEntry *device, char *titleID) {
   }
   discTexture->Filter = GS_FILTER_LINEAR;
   return 0;
+}
+
+static void clearClassicArtJob(void) {
+  free(classicArtJob.cover.Mem);
+  free(classicArtJob.cover.Clut);
+  free(classicArtJob.disc.Mem);
+  free(classicArtJob.disc.Clut);
+  memset(&classicArtJob.cover, 0, sizeof(classicArtJob.cover));
+  memset(&classicArtJob.disc, 0, sizeof(classicArtJob.disc));
+  classicArtJob.state = 0;
+}
+
+static void classicArtWorker(void) {
+  while (1) {
+    WaitSema(classicArtWakeSema);
+    if (classicArtStopping)
+      break;
+    classicArtJob.coverResult = decodePNGTextureRGBA(gsGlobal, &classicArtJob.cover,
+                                                     classicArtJob.coverPath);
+    if (!classicArtPending || classicArtJob.generation != classicArtGeneration) {
+      clearClassicArtJob();
+      continue;
+    }
+    classicArtJob.discResult = decodePNGTextureRGBA(gsGlobal, &classicArtJob.disc,
+                                                    classicArtJob.discPath);
+    if (classicArtJob.coverResult != 0 || classicArtJob.cover.Mem == NULL ||
+        classicArtJob.cover.Width <= 0 || classicArtJob.cover.Height <= 0) {
+      free(classicArtJob.cover.Mem);
+      free(classicArtJob.cover.Clut);
+      memset(&classicArtJob.cover, 0, sizeof(classicArtJob.cover));
+      classicArtJob.coverResult = -1;
+    }
+    if (classicArtJob.discResult != 0 || classicArtJob.disc.Mem == NULL ||
+        classicArtJob.disc.Width <= 0 || classicArtJob.disc.Height <= 0) {
+      free(classicArtJob.disc.Mem);
+      free(classicArtJob.disc.Clut);
+      memset(&classicArtJob.disc, 0, sizeof(classicArtJob.disc));
+      classicArtJob.discResult = -1;
+    }
+    if (!classicArtPending || classicArtJob.generation != classicArtGeneration) {
+      clearClassicArtJob();
+      continue;
+    }
+    __asm__ __volatile__("" ::: "memory");
+    classicArtJob.state = 2;
+  }
+  SignalSema(classicArtDoneSema);
+  ExitThread();
+}
+
+static void stopClassicArtWorker(void) {
+  if (classicArtThreadId >= 0) {
+    classicArtStopping = 1;
+    SignalSema(classicArtWakeSema);
+    WaitSema(classicArtDoneSema);
+    DeleteThread(classicArtThreadId);
+    classicArtThreadId = -1;
+  }
+  if (classicArtWakeSema >= 0)
+    DeleteSema(classicArtWakeSema);
+  if (classicArtDoneSema >= 0)
+    DeleteSema(classicArtDoneSema);
+  classicArtWakeSema = classicArtDoneSema = -1;
+  clearClassicArtJob();
+}
+
+static void queueClassicArtJob(void) {
+  classicArtJob.generation = classicArtGeneration;
+  snprintf(classicArtJob.coverPath, sizeof(classicArtJob.coverPath), "%s", classicCoverPath);
+  snprintf(classicArtJob.discPath, sizeof(classicArtJob.discPath), "%s", classicDiscPath);
+  classicArtJob.state = 1;
+  SignalSema(classicArtWakeSema);
+}
+
+int requestClassicArt(struct DeviceMapEntry *device, char *titleID) {
+  char coverPath[sizeof(classicCoverPath)];
+  char discPath[sizeof(classicDiscPath)];
+  int coverLength;
+  int discLength;
+  if (classicArtThreadId < 0 || device == NULL || titleID == NULL)
+    return -1;
+  if (device->metadev)
+    device = device->metadev;
+  if (device->mountpoint == NULL)
+    return -1;
+  coverLength = snprintf(coverPath, sizeof(coverPath), "%s%s/%s_COV.png",
+                         device->mountpoint, artPath, titleID);
+  discLength = snprintf(discPath, sizeof(discPath), "%s%s/%s_ICO.png",
+                        device->mountpoint, artPath, titleID);
+  if (coverLength < 0 || coverLength >= (int)sizeof(coverPath) ||
+      discLength < 0 || discLength >= (int)sizeof(discPath))
+    return -1;
+  // Keep a decoded prefetch when Classic requests the same title on entry.
+  if (classicArtPending && !strcmp(classicCoverPath, coverPath) &&
+      !strcmp(classicDiscPath, discPath))
+    return 0;
+  if (classicArtJob.state == 2)
+    clearClassicArtJob();
+  strcpy(classicCoverPath, coverPath);
+  strcpy(classicDiscPath, discPath);
+  classicArtGeneration++;
+  classicArtPending = 1;
+  if (classicArtJob.state == 0)
+    queueClassicArtJob();
+  return 0;
+}
+
+void pumpClassicArtPrefetch(void) {
+  if (classicArtPending && classicArtJob.state == 0)
+    queueClassicArtJob();
+}
+
+void cancelClassicArt(void) {
+  classicArtGeneration++;
+  classicArtPending = 0;
+  if (classicArtJob.state == 2)
+    clearClassicArtJob();
+}
+
+static void adoptClassicTexture(GSTEXTURE *destination, GSTEXTURE *decoded) {
+  gsKit_TexManager_invalidate(gsGlobal, destination);
+  free(destination->Mem);
+  free(destination->Clut);
+  *destination = *decoded;
+  memset(decoded, 0, sizeof(*decoded));
+  destination->Delayed = 1;
+  destination->Vram = 0;
+  destination->VramClut = 0;
+}
+
+int serviceClassicArt(int *coverAvailable, int *discAvailable) {
+  int finished = 0;
+  if (classicArtJob.state == 2) {
+    __asm__ __volatile__("" ::: "memory");
+    if (classicArtPending && classicArtJob.generation == classicArtGeneration) {
+      GSTEXTURE *previous = coverTexture;
+      *coverAvailable = classicArtJob.coverResult == 0;
+      *discAvailable = classicArtJob.discResult == 0;
+      adoptClassicTexture(classicPreviousCoverTexture, &classicArtJob.cover);
+      coverTexture = classicPreviousCoverTexture;
+      classicPreviousCoverTexture = previous;
+      adoptClassicTexture(discTexture, &classicArtJob.disc);
+      discTexture->Filter = GS_FILTER_LINEAR;
+      classicArtPending = 0;
+      finished = 1;
+    }
+    clearClassicArtJob();
+  }
+  if (classicArtPending && classicArtJob.state == 0)
+    queueClassicArtJob();
+  return finished;
 }
 
 static void releasePSBBNCoverCacheEntry(int cacheIdx) {
@@ -1197,6 +1395,7 @@ void updatePSBBNCoverResidency(int flowOffset) {
 }
 
 void artCacheShutdown(void) {
+  stopClassicArtWorker();
   stopCollectionArtWorker();
   if (saveIconSpinTexture != NULL) {
     free(saveIconSpinTexture->Mem);

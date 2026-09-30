@@ -37,6 +37,9 @@
 #define IS_GRID_VIEW(v) ((v) == UI_VIEW_GRID || (v) == UI_VIEW_SAVE_ICONS)
 #define SPLASH_MIN_VISIBLE_MS 3400
 #define LIBRARY_RETURN_FADE_MS 180
+#define CLASSIC_COVER_ENTRY_FADE_MS 360
+#define CLASSIC_DISC_ENTRY_FADE_MS 150
+#define CLASSIC_PLACEHOLDER_ENTRY_FADE_MS 320
 #define LIBRARY_VIEW_ENTRY_MS 320
 #define QUICK_MENU_SLIDE_MS 160
 
@@ -329,15 +332,23 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   int favoritesTabButtonHeld = 0;
   int favoritesOnly = 0;
   int classicArtRequestedIdx = -1;
+  int classicArtSubmittedIdx = -1;
+  int classicEntryFirstFramePending = 0;
+  Target *classicPrefetchCandidate = NULL;
+  Target *classicPrefetchSubmitted = NULL;
+  uint32_t classicPrefetchDueMs = 0;
   int classicNavHeld = 0;
   int classicDisplayedCoverAvailable = 0;
   int classicDisplayedDiscAvailable = 0;
-  int classicPreviousCoverAvailable = 0;
+  int classicEntryArtFadePending = 0;
+  int classicEntryArtFadeActive = 0;
+  uint32_t classicEntryArtFadeStartMs = 0;
+  int classicEntryPlaceholderFadeActive = 0;
+  uint32_t classicEntryPlaceholderFadeStartMs = 0;
   int classicArtOverlap = 0;
   int ambientEnabled = 1;
   uint32_t enabledViews = UI_VIEW_DEFAULT_MASK;
   uint32_t classicArtDueMs = 0;
-  uint32_t classicCoverFadeStartMs = 0;
   LunaNavRepeatState classicRepeat = {0};
   LunaScrollFast scrollFast = {0};
   UILibraryView view = UI_VIEW_CLASSIC;
@@ -483,24 +494,69 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     if (curTarget->idx != selectedTitleIdx) {
       curTarget = getTargetByIdx(titles, selectedTitleIdx);
       if (view == UI_VIEW_CLASSIC) {
+        // A title change never inherits the view-entry artwork fade.
+        classicEntryArtFadePending = 0;
+        classicEntryArtFadeActive = 0;
+        classicEntryPlaceholderFadeActive = 0;
         // Keep input polling light while moving through the list. The old art
         // remains visible, but is not eligible for a launch handoff.
+        cancelClassicArt();
         isCoverUninitialized = 1;
         isDiscUninitialized = 1;
         classicArtRequestedIdx = selectedTitleIdx;
+        classicArtSubmittedIdx = -1;
         classicArtDueMs = uiNowMs() + CLASSIC_ART_SETTLE_MS;
       }
     }
 
+    if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT) {
+      if (classicPrefetchCandidate != curTarget) {
+        classicPrefetchCandidate = curTarget;
+        classicPrefetchDueMs = uiNowMs() + 200;
+      }
+      if (classicPrefetchSubmitted != curTarget &&
+          (int32_t)(uiNowMs() - classicPrefetchDueMs) >= 0 &&
+          requestClassicArt(curTarget->device, curTarget->id) == 0)
+        classicPrefetchSubmitted = curTarget;
+      pumpClassicArtPrefetch();
+    }
+
     if (view == UI_VIEW_CLASSIC && classicArtRequestedIdx == selectedTitleIdx &&
-        !classicNavHeld && (int32_t)(uiNowMs() - classicArtDueMs) >= 0) {
-      classicPreviousCoverAvailable = classicDisplayedCoverAvailable;
-      isCoverUninitialized = loadNextClassicCoverArt(curTarget->device, curTarget->id);
-      isDiscUninitialized = loadDiscArt(curTarget->device, curTarget->id);
-      classicDisplayedCoverAvailable = !isCoverUninitialized;
-      classicDisplayedDiscAvailable = !isDiscUninitialized;
-      classicCoverFadeStartMs = uiNowMs();
-      classicArtRequestedIdx = -1;
+        classicArtSubmittedIdx != selectedTitleIdx && !classicEntryFirstFramePending &&
+        !classicNavHeld &&
+        (int32_t)(uiNowMs() - classicArtDueMs) >= 0) {
+      if (requestClassicArt(curTarget->device, curTarget->id) == 0) {
+        classicArtSubmittedIdx = selectedTitleIdx;
+      } else {
+        // Keep the original loader available if the worker could not start.
+        isCoverUninitialized = loadNextClassicCoverArt(curTarget->device, curTarget->id);
+        isDiscUninitialized = loadDiscArt(curTarget->device, curTarget->id);
+        classicDisplayedCoverAvailable = !isCoverUninitialized;
+        classicDisplayedDiscAvailable = !isDiscUninitialized;
+        classicArtRequestedIdx = -1;
+        if (classicEntryArtFadePending) {
+          classicEntryArtFadeActive = classicDisplayedCoverAvailable || classicDisplayedDiscAvailable;
+          classicEntryArtFadeStartMs = uiNowMs();
+          classicEntryArtFadePending = 0;
+        }
+      }
+    }
+    if (view == UI_VIEW_CLASSIC && classicArtSubmittedIdx == selectedTitleIdx) {
+      int coverAvailable;
+      int discAvailable;
+      if (serviceClassicArt(&coverAvailable, &discAvailable)) {
+        classicDisplayedCoverAvailable = coverAvailable;
+        classicDisplayedDiscAvailable = discAvailable;
+        isCoverUninitialized = !coverAvailable;
+        isDiscUninitialized = !discAvailable;
+        classicArtRequestedIdx = -1;
+        classicArtSubmittedIdx = -1;
+        if (classicEntryArtFadePending) {
+          classicEntryArtFadeActive = coverAvailable || discAvailable;
+          classicEntryArtFadeStartMs = uiNowMs();
+          classicEntryArtFadePending = 0;
+        }
+      }
     }
 
     if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT || view == UI_VIEW_ORBS) {
@@ -867,19 +923,37 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       int favoritesEmpty = favoritesOnly && lunaNavMarkedCount(favoriteFlags, titles->total) == 0;
       const uint32_t frameNowMs = uiNowMs();
       const int coverPending = classicArtRequestedIdx == selectedTitleIdx;
-      uint32_t fadeElapsed = frameNowMs - classicCoverFadeStartMs;
-      int coverFadeProgress = (classicPreviousCoverAvailable && !coverPending &&
-                               fadeElapsed < CLASSIC_COVER_FADE_DURATION_MS)
-                                  ? (int)(fadeElapsed * 1000U / CLASSIC_COVER_FADE_DURATION_MS)
-                                  : 1000;
+      int coverOpacity = classicEntryArtFadePending ? 0 : 1000;
+      int discOpacity = coverOpacity;
+      int placeholderOpacity = 1000;
+      if (classicEntryPlaceholderFadeActive) {
+        const uint32_t elapsed = frameNowMs - classicEntryPlaceholderFadeStartMs;
+        if (elapsed >= CLASSIC_PLACEHOLDER_ENTRY_FADE_MS)
+          classicEntryPlaceholderFadeActive = 0;
+        else
+          placeholderOpacity = lunaNavEase(
+              (int)(elapsed * 1000U / CLASSIC_PLACEHOLDER_ENTRY_FADE_MS));
+      }
+      if (classicEntryArtFadeActive) {
+        const uint32_t elapsed = frameNowMs - classicEntryArtFadeStartMs;
+        if (elapsed >= CLASSIC_COVER_ENTRY_FADE_MS) {
+          classicEntryArtFadeActive = 0;
+        } else {
+          const int progress = (int)(elapsed * 1000U / CLASSIC_COVER_ENTRY_FADE_MS);
+          coverOpacity = (int)((int64_t)progress * progress *
+                               (3000 - 2 * progress) / 1000000);
+        }
+        if (elapsed < CLASSIC_DISC_ENTRY_FADE_MS) {
+          const int progress = (int)(elapsed * 1000U / CLASSIC_DISC_ENTRY_FADE_MS);
+          discOpacity = (int)((int64_t)progress * progress *
+                              (3000 - 2 * progress) / 1000000);
+        }
+      }
       drawTitleList(titles, selectedTitleIdx, maxTitlesPerPage,
                     (classicDisplayedCoverAvailable && !favoritesEmpty) ? coverTexture : NULL,
-                    (classicPreviousCoverAvailable && !favoritesEmpty && !coverPending &&
-                     coverFadeProgress < 1000) ? classicPreviousCoverTexture : NULL,
                     (classicDisplayedDiscAvailable && !favoritesEmpty) ? discTexture : NULL,
                     favoriteFlags, favoritesOnly, coverPending && !favoritesEmpty,
-                    coverFadeProgress,
-                    libraryViewEntryProgress(entryView, view, entryStartMs, frameNowMs),
+                    coverOpacity, discOpacity, placeholderOpacity,
                     frameNowMs, nextViewLabel);
     }
 
@@ -943,12 +1017,14 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     gsKit_queue_exec(gsGlobal);
     gsKit_finish();
     gsKit_sync_flip(gsGlobal);
+    if (view == UI_VIEW_CLASSIC)
+      classicEntryFirstFramePending = 0;
     if (view == UI_VIEW_PSBBN && psbbnAnimationTargetIdx >= 0 &&
         psbbnAnimationElapsedFrames <
             lunaNavDurationFrames(psbbnAnimationDuration,
                                   gsGlobal->Mode == GS_MODE_PAL ? 50 : 60))
       psbbnAnimationElapsedFrames++;
-    usleep(1000);
+    usleep(view == UI_VIEW_CLASSIC && classicArtSubmittedIdx >= 0 ? 3000 : 1000);
 
     // Keep rendering after options close, while ignoring the Triangle press
     // that closed them until the button is released.
@@ -1334,6 +1410,21 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         releasePSBBNCovers();
       entryView = (int)view;
       entryPending = view != UI_VIEW_CLASSIC;
+      classicEntryFirstFramePending = view == UI_VIEW_CLASSIC &&
+                                      previousView != UI_VIEW_CLASSIC;
+      classicEntryArtFadePending = view == UI_VIEW_CLASSIC &&
+                                   previousView != UI_VIEW_CLASSIC && titles->total > 0;
+      classicEntryArtFadeActive = 0;
+      classicEntryPlaceholderFadeActive = classicEntryArtFadePending;
+      classicEntryPlaceholderFadeStartMs = uiNowMs();
+      if (previousView == UI_VIEW_CLASSIC || libraryListChanged ||
+          (view != UI_VIEW_CLASSIC && view != UI_VIEW_PSBBN && view != UI_VIEW_ORBIT)) {
+        cancelClassicArt();
+        classicPrefetchCandidate = NULL;
+        classicPrefetchSubmitted = NULL;
+      }
+      classicArtRequestedIdx = -1;
+      classicArtSubmittedIdx = -1;
       if (view == UI_VIEW_ORBIT)
         resetAmbientOrbsOrbit(uiNowMs());
       if (previousView == UI_VIEW_ORBS || view == UI_VIEW_ORBS)
@@ -1347,7 +1438,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         isDiscUninitialized = 1;
         classicDisplayedCoverAvailable = 0;
         classicDisplayedDiscAvailable = 0;
-        classicPreviousCoverAvailable = 0;
       } else if (previousView == UI_VIEW_PSBBN || previousView == UI_VIEW_ORBIT) {
         if (previousView == UI_VIEW_ORBIT && view == UI_VIEW_PSBBN)
           adoptOrbitCoversForCollection();
@@ -1412,19 +1502,17 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       orbitRandomTargetIdx = -1;
       orbitRandomButtonHeld = 0;
       if (view == UI_VIEW_CLASSIC && titles->total > 0) {
-        isCoverUninitialized = loadCoverArt(curTarget->device, curTarget->id);
-        isDiscUninitialized = loadDiscArt(curTarget->device, curTarget->id);
-        classicDisplayedCoverAvailable = !isCoverUninitialized;
-        classicDisplayedDiscAvailable = !isDiscUninitialized;
-        classicPreviousCoverAvailable = 0;
-        classicArtRequestedIdx = -1;
+        isCoverUninitialized = 1;
+        isDiscUninitialized = 1;
+        classicDisplayedCoverAvailable = 0;
+        classicDisplayedDiscAvailable = 0;
+        classicArtRequestedIdx = selectedTitleIdx;
+        classicArtDueMs = uiNowMs();
         classicNavHeld = 0;
         classicRepeat.direction = 0;
       }
       if (saveLastLibraryView(curTarget, view))
         DPRINTF("WARN: Could not save selected library view\n");
-      if (entryView == UI_VIEW_CLASSIC)
-        entryStartMs = uiNowMs();
     } else if ((quickAction == 1 || (view == UI_VIEW_CLASSIC && (input & PAD_SQUARE))) &&
                !favoriteButtonHeld && titles->total > 0) {
       int originalIndex = favoritesOnly

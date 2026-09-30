@@ -209,19 +209,6 @@ uint32_t lunaNavDurationFrames(uint32_t durationMs, int framesPerSecond) {
   return frames > 0 ? frames : 1;
 }
 
-int lunaNavAnimatedFrameOffset(int startOffset, uint32_t elapsedFrames,
-                               uint32_t durationFrames) {
-  int progress = (durationFrames == 0 || elapsedFrames >= durationFrames)
-                     ? 1000
-                     : (int)((elapsedFrames * 1000ULL) / durationFrames);
-  return (startOffset * (1000 - lunaNavEase(progress))) / 1000;
-}
-
-int lunaNavClassicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
-                                   uint32_t durationFrames) {
-  return lunaNavAnimatedFrameOffset(startOffset, elapsedFrames, durationFrames);
-}
-
 int lunaNavCubicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
                                  uint32_t durationFrames) {
   if (durationFrames == 0 || elapsedFrames >= durationFrames)

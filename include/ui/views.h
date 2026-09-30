@@ -9,10 +9,10 @@
 void calculateCoverArtGeometry(void);
 void setClassicArtOverlap(int overlap);
 void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPage,
-                   GSTEXTURE *selectedTitleCover, GSTEXTURE *previousCover,
-                   GSTEXTURE *selectedTitleDisc, const uint8_t *favoriteFlags,
-                   int favoritesOnly, int coverPending, int coverTransitionProgress,
-                   int entryProgress, uint32_t frameNowMs,
+                   GSTEXTURE *selectedTitleCover, GSTEXTURE *selectedTitleDisc,
+                   const uint8_t *favoriteFlags, int favoritesOnly, int coverPending,
+                   int coverOpacity, int discOpacity, int placeholderOpacity,
+                   uint32_t frameNowMs,
                    const char *nextViewLabel);
 void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers,
                          int flowOffset, int outgoingTitleIdx, int favoritesOnly, int fastScrolling,

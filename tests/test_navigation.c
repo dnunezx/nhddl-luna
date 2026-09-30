@@ -52,9 +52,6 @@ static void testTiming(void) {
   assert(lunaNavDurationFrames(420, 60) == 25);
   assert(lunaNavDurationFrames(420, 50) == 21);
   assert(lunaNavDurationFrames(1, 60) == 1);
-  assert(lunaNavClassicGlideFrameOffset(1000, 0, 20) == 1000);
-  assert(lunaNavClassicGlideFrameOffset(1000, 10, 20) == 500);
-  assert(lunaNavClassicGlideFrameOffset(1000, 20, 20) == 0);
   assert(lunaNavCubicGlideFrameOffset(1000, 0, 20) == 1000);
   assert(lunaNavCubicGlideFrameOffset(1000, 5, 20) == 421);
   assert(lunaNavCubicGlideFrameOffset(1000, 10, 20) == 125);
