@@ -27,6 +27,8 @@ extern struct DeviceMapEntry deviceModeMap[];
 
 // Initializes device mode map and returns device count
 int initDeviceMap();
+void freeDeviceMapEntries(struct DeviceMapEntry *entries);
+void syncDeviceMap(void);
 
 // Uses MMCE devctl calls to switch memory card to given title ID
 void mmceMountVMC(char *titleID);

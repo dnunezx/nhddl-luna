@@ -128,23 +128,6 @@ static int psbbnAbsolute(int value) {
   return (value < 0) ? -value : value;
 }
 
-static void drawCollectionFooter(const char *nextViewLabel, int favoritesEmpty) {
-  if (favoritesEmpty) {
-    const ButtonPrompt prompts[] = {
-        {ICON_CIRCLE, nextViewLabel}, {ICON_SELECT, "Return"},
-        {ICON_START, "Menu"}};
-    drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
-                  gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
-                  (PromptBar){NULL, prompts, 3});
-    return;
-  }
-  const ButtonPrompt prompts[] = {
-      {ICON_CIRCLE, nextViewLabel}, {ICON_CROSS, "Launch"},
-      {ICON_START, "Menu"}, {ICON_TRIANGLE, "Options"}};
-  drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
-                gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
-                (PromptBar){NULL, prompts, 4});
-}
 
 static void drawCollectionEntryFade(int entryProgress) {
   if (entryProgress >= 1000)
@@ -222,13 +205,13 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
   int selectorCenterY = psbbnFieldStableY(gsGlobal->Height - footerHeight - getFontLineHeight() - 16);
   int collectionTextY = selectorCenterY - getFontLineHeight() - 8;
   int favoritesTextY = selectorCenterY + 10;
-  const char *collectionLabel = "Collections";
+  const char *collectionLabel = "Collection";
   const char *favoritesLabel = "Favorites";
   int activeTextY = favoritesOnly ? favoritesTextY : collectionTextY;
   int activeTextRight = 70 + getLineWidth(favoritesOnly ? favoritesLabel : collectionLabel);
   drawPSBBNFocusGlow(70, activeTextY, panelRight - 8, activeTextRight);
   drawTextWindow(70, collectionTextY, panelRight - 8, 0, 6,
-                 favoritesOnly ? HeaderTextColor : FontMainColor, ALIGN_LEFT, "Collections");
+                 favoritesOnly ? HeaderTextColor : FontMainColor, ALIGN_LEFT, collectionLabel);
   drawTextWindow(70, favoritesTextY, panelRight - 8, 0, 6,
                  favoritesOnly ? FontMainColor : HeaderTextColor, ALIGN_LEFT, "Favorites");
 
@@ -237,7 +220,6 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
     drawTextWindow(40, headerHeight + 96, panelRight, selectorCenterY - getFontLineHeight() * 2,
                    5, HeaderTextColor, ALIGN_CENTER,
                    "NO FAVORITES YET\nAdd favorites in List");
-    drawCollectionFooter(nextViewLabel, 1);
     drawCollectionEntryFade(entryProgress);
     return;
   }
@@ -246,7 +228,6 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
   // each one as its worker job finishes. The ambient background keeps moving.
   if (entryProgress < 0) {
     collectionVisibleTitle = NULL;
-    drawCollectionFooter(nextViewLabel, 0);
     drawCollectionEntryFade(0);
     return;
   }
@@ -273,9 +254,9 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
     char focusCounter[32];
     int counterRight = gsGlobal->Width - keepoutArea;
 
-    // Show the title only after the cover settles. Fast scanning keeps it
-    // hidden even between individual scan steps.
-    if (!fastScrolling && flowOffset == 0) {
+    // Show the title only for a confirmed missing cover after the selection
+    // settles. Fast scanning keeps it hidden between individual scan steps.
+    if (!fastScrolling && flowOffset == 0 && collectionCoverMissing(visualFocus)) {
       Target *focusTitle = getTargetByIdx(titles, targetIndex[visualFocus]);
       int titleY = selectedY - getFontLineHeight() - 8;
       float titleWidth = getLineWidth(focusTitle->name);
@@ -286,8 +267,7 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
       uint32_t titleElapsedMs = frameNowMs - collectionTitleStartMs;
       int slideProgress = titleElapsedMs >= COLLECTION_TITLE_SLIDE_MS ? 1000
           : lunaNavEase((int)(titleElapsedMs * 1000U / COLLECTION_TITLE_SLIDE_MS));
-      // Begin inside the selected jacket and let its higher depth hide the
-      // title until it rises past the jacket's top edge.
+      // Begin inside the selected cover area and rise above its top edge.
       int slideStartY = selectedY + getFontLineHeight() + 20;
       int slideY = titleY + (slideStartY - titleY) * (1000 - slideProgress) / 1000;
       if (titleWidth <= selectedSize) {
@@ -408,6 +388,5 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
                      (cacheToDraw == foregroundCacheIdx) ? PSBBN_COVER_FOREGROUND_Z
                                                       : PSBBN_COVER_BACKGROUND_Z);
   }
-  drawCollectionFooter(nextViewLabel, 0);
   drawCollectionEntryFade(entryProgress);
 }

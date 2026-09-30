@@ -48,6 +48,8 @@ static int threadId = -1;
 static int controlSema = -1;
 static int doneSema = -1;
 static int audioInitialized;
+static int audioDriversLoaded;
+void ambientForgetDrivers(void) { audioDriversLoaded = 0; }
 static uint8_t threadStack[8192] __attribute__((aligned(16)));
 static uint8_t encodedBlock[AMBIENT_BLOCK_BYTES] __attribute__((aligned(16)));
 static int16_t decodedBlock[AMBIENT_BLOCK_FRAMES * 2] __attribute__((aligned(16)));
@@ -281,9 +283,13 @@ void ambientStart(int shouldPlay) {
       DPRINTF("WARN: Ambient audio cache unavailable; streaming from storage\n");
     }
   }
-  if (SifLoadModule("rom0:LIBSD", 0, NULL) < 0 ||
-      SifExecModuleBuffer(audsrv_irx, size_audsrv_irx, 0, NULL, &iopResult) < 0 ||
-      audsrv_init()) {
+  if (!audioDriversLoaded) {
+    if (SifLoadModule("rom0:LIBSD", 0, NULL) < 0 ||
+        SifExecModuleBuffer(audsrv_irx, size_audsrv_irx, 0, NULL, &iopResult) < 0 || iopResult < 0)
+      goto fail;
+    audioDriversLoaded = 1;
+  }
+  if (audsrv_init()) {
     DPRINTF("WARN: Could not initialize ambient audio\n");
     goto fail;
   }

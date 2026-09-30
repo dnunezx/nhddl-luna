@@ -51,6 +51,10 @@ static int openingCaptureReady;
 #define CONFIG_CAPTURE_SIZE 256
 
 void initOpeningCubeCapture(void) {
+  // A library refresh creates a new GS context; ROM textures must be rebound.
+  biosFogTextureLoaded = biosCubeTextureLoaded = 0;
+  biosOpeningCubeTexturesLoaded = biosConfigTexturesLoaded = 0;
+  configCaptureReady = configClockInitialized = 0;
   memset(&openingCaptureTexture, 0, sizeof(openingCaptureTexture));
   memset(&openingWorkTexture, 0, sizeof(openingWorkTexture));
   openingCaptureReady = 0;
@@ -1736,10 +1740,5 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
     }
   }
 
-  const int footerY = height - footerHeight + 8;
-  const ButtonPrompt prompts[] = {
-      {ICON_CIRCLE, nextViewLabel}, {ICON_CROSS, "Launch"},
-      {ICON_START, "Menu"}, {ICON_TRIANGLE, "Options"}};
-  drawPromptBar(20, footerY, width - 20, height, 8, FontMainColor,
-                (PromptBar){NULL, prompts, 4});
+
 }

@@ -61,6 +61,11 @@ static u32 originalCorePixels[64 * 64] __attribute__((aligned(64)));
 static GSTEXTURE originalHaloTexture;
 static GSTEXTURE originalCoreTexture;
 static int originalMasksLoaded;
+void resetAmbientOrbsTextures(void) {
+  originalMasksLoaded = 0;
+  originalHaloTexture.Vram = originalCoreTexture.Vram = 0;
+  originalHaloTexture.VramClut = originalCoreTexture.VramClut = 0;
+}
 static uint32_t originalClockAnchorMs;
 static uint32_t originalClockStartMs;
 static uint32_t originalScatterPhase;

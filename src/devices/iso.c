@@ -55,13 +55,13 @@ int findISO(TargetList *result, struct DeviceMapEntry *device) {
   // Check if the directory can be opened
   if (directory == NULL) {
     uiSplashLogString(LEVEL_ERROR, "ERROR: Can't open %s\n", device->mountpoint);
-    return -ENOENT;
+    return -EIO;
   }
 
   chdir(device->mountpoint);
   if (_findISO(directory, result, device)) {
     closedir(directory);
-    return -ENOENT;
+    return -EIO;
   }
   closedir(directory);
 

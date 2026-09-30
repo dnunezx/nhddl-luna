@@ -2,6 +2,8 @@
 #include "common.h"
 #include "dprintf.h"
 #include "ui/ui.h"
+#include "ui/ambient.h"
+#include "storage.h"
 #include <ctype.h>
 #include <debug.h>
 #include <fcntl.h>
@@ -124,6 +126,20 @@ int loadModule(ModuleListEntry *mod);
 
 uint32_t loadedModules = 0;
 uint8_t isWarmReboot = 0;
+static int storageBestEffort;
+static ModeType storageFailures;
+
+ModeType initStorageModules(ModeType modes, int restart) {
+  if (restart) {
+    loadedModules = 0;
+    LAUNCHER_OPTIONS.mode = MODE_NONE;
+  }
+  storageBestEffort = 1;
+  storageFailures = MODE_NONE;
+  if (initModules(modes) != 0) storageFailures |= modes;
+  storageBestEffort = 0;
+  return storageFailures;
+}
 
 void powerOffConsole(void) {
   // Finish metadata writes before shutting down the HDD and DEV9.
@@ -177,6 +193,7 @@ int initModules(ModeType modeType) {
 
   // Skip rebooting IOP if modules were loaded previously
   if (!loadedModules) {
+    ambientForgetDrivers();
     DPRINTF("Rebooting IOP\n");
     if (isWarmReboot)
       fileXioExit();
@@ -213,8 +230,9 @@ int initModules(ModeType modeType) {
 
     if ((moduleList[i].irx != NULL) && (moduleList[i].size != NULL)) {
       if ((ret = loadModule(&moduleList[i]))) {
-        if ((modeType == MODE_ALL) && (moduleList[i].mode != MODE_ALL)) {
+        if ((modeType == MODE_ALL || storageBestEffort) && (moduleList[i].mode != MODE_ALL)) {
           // Ignore errors and disable the failed mode when loading all modes
+          storageFailures |= modeType & moduleList[i].mode;
           modeType &= ~(moduleList[i].mode);
           LAUNCHER_OPTIONS.mode &= ~(moduleList[i].mode);
           DPRINTF("Failed to initialize module %s: %d\n", moduleList[i].name, ret);
@@ -270,8 +288,8 @@ int parseIPConfig() {
   // The 'X' in "mcX" will be replaced with memory card number
   static char ipconfigPath[] = "mcX:/SYS-CONF/IPCONFIG.DAT";
 
-  int ipconfigFd, count;
-  char ipAddr[16]; // IP address will not be longer than 15 characters
+  int ipconfigFd = -1, count = 0;
+  char ipAddr[16] = {0};
   for (char i = '0'; i < '2'; i++) {
     ipconfigPath[2] = i;
     // Attempt to open IPCONFIG.DAT
@@ -283,21 +301,24 @@ int parseIPConfig() {
     }
   }
 
-  if ((ipconfigFd < 0) || (count < sizeof(ipAddr) - 1)) {
+  if ((ipconfigFd < 0) || count <= 0) {
     if (LAUNCHER_OPTIONS.mode & MODE_UDPFS) {
       uiSplashLogString(LEVEL_WARN, "Failed to get IP address from IPCONFIG.DAT\n");
     }
     return -ENOENT;
   }
 
-  count = 0; // Reuse count as line index
+  ipAddr[count] = '\0';
+  count = 0;
   // In case IP address is shorter than 15 chars
-  while (!isspace((unsigned char)ipAddr[count])) {
+  while (ipAddr[count] && !isspace((unsigned char)ipAddr[count])) {
     // Advance index until we read a whitespace character
     count++;
   }
 
-  strlcpy(LAUNCHER_OPTIONS.udpfsIp, ipAddr, count + 1);
+  ipAddr[count] = '\0';
+  if (!ipAddr[0] || !storageValidIP(ipAddr)) return -EINVAL;
+  strlcpy(LAUNCHER_OPTIONS.udpfsIp, ipAddr, sizeof(LAUNCHER_OPTIONS.udpfsIp));
   return strlen(LAUNCHER_OPTIONS.udpfsIp);
 }
 
@@ -311,6 +332,7 @@ char *initMinistackArguments(uint32_t *argLength) {
   char ipArg[19]; // 15 bytes for IP string + 3 bytes for 'ip='
   *argLength = 19;
   char *argStr = calloc(sizeof(char), 19);
+  if (!argStr) return NULL;
   snprintf(argStr, sizeof(ipArg), "ip=%s", LAUNCHER_OPTIONS.udpfsIp);
   DPRINTF("with argument: %s\n", argStr);
   return argStr;

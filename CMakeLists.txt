@@ -20,6 +20,7 @@ set(SOURCES
     src/favorites.c
     src/neutrino.c
     src/target.c
+    src/storage.c
     src/forwarder.c
 
     # UI

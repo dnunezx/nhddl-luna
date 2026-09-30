@@ -8,6 +8,7 @@
 #include "neutrino.h"
 #include "options.h"
 #include "target.h"
+#include "storage.h"
 #include "ui/ui.h"
 #include "ui/ambient.h"
 #include "ui/art_cache.h"
@@ -60,7 +61,7 @@ void parseArgv(int argc, char *argv[]);
 // Parses argv[0] for mode postfix
 ModeType parseFilename(const char *path);
 // Tries to load IPCONFIG.DAT from memory card
-void parseIPConfig();
+int parseIPConfig(void);
 
 int main(int argc, char *argv[]) {
   DPRINTF("*************\nLUNA %s\nLayered Unified Neutrino Architecture\nBased on NHDDL by pcm720\n*************\n", GIT_VERSION);
@@ -108,31 +109,9 @@ int main(int argc, char *argv[]) {
 
   uiSplashLogString(LEVEL_INFO_NODELAY, "Building target list...\n");
 
-  titles = calloc(1, sizeof(TargetList));
+  titles = storageRefresh(NULL);
   if (titles == NULL)
     goto fail;
-
-  // Scan every initialized device for entries
-  for (int i = 0; i < MAX_DEVICES; i++) {
-    if (deviceModeMap[i].mode == MODE_NONE || deviceModeMap[i].mountpoint == NULL)
-      break;
-
-    // Ignore devices without a scan function
-    if (deviceModeMap[i].scan == NULL)
-      continue;
-
-    // Only scan optional storage modes selected in the options file. The
-    // runtime mode can also include drivers loaded to access the boot path.
-    if (!(deviceModeMap[i].mode & (LUNA_LIBRARY_DEFAULT_MODES | configuredLibraryModes))) {
-      DPRINTF("Skipping unconfigured library device %s\n", deviceModeMap[i].mountpoint);
-      continue;
-    }
-
-    res = deviceModeMap[i].scan(titles, &deviceModeMap[i]);
-    if (res != 0) {
-      DPRINTF("WARN: failed to scan %s: %d\n", deviceModeMap[i].mountpoint, res);
-    }
-  }
 
   if (titles->total == 0) {
     uiSplashLogString(LEVEL_INFO_NODELAY, "No targets found; file manager available\n");
@@ -182,13 +161,24 @@ int main(int argc, char *argv[]) {
   }
 
   stopUISplashThread();
-  if ((res = uiLoop(titles, preparedCollectionIdx))) {
+  while ((res = uiLoop(titles, preparedCollectionIdx)) == STORAGE_UI_REFRESH) {
+    // uiLoop has stopped audio/art workers and closed input before this point.
+    if (uiInit() || startSplashScreen() < 0) goto fail;
+    TargetList *updated = storageRefresh(titles);
+    if (updated) titles = updated;
+    stopUISplashThread();
+    preparedCollectionIdx = -1;
+    if (titles->total) ambientStart(loadAmbientSoundEnabled(titles->first));
+  }
+  if (res) {
     init_scr();
     logString("\n\nERROR: UI loop failed: %d\n", res);
     goto fail;
   }
   DPRINTF("UI loop done, exiting\n");
   freeTargetList(titles);
+  syncDeviceMap();
+  freeDeviceMapEntries(deviceModeMap);
   return 0;
 
 fail:
@@ -208,8 +198,7 @@ int initDevices() {
     return -EIO;
   }
   if (!res) {
-    uiSplashLogString(LEVEL_ERROR, "No devices found\n");
-    return -ENODEV;
+    uiSplashLogString(LEVEL_INFO_NODELAY, "No storage devices found; settings available\n");
   }
   return 0;
 }
@@ -233,6 +222,10 @@ int argInit() {
   if ((res = initModules(LAUNCHER_OPTIONS.mode)) != 0)
     return res;
 
+  getcwd(cwdPath, sizeof(cwdPath));
+  storageConfigure(cwdPath, LAUNCHER_OPTIONS.mode & STORAGE_SUPPORTED,
+                   LAUNCHER_OPTIONS.mode & MODE_BASIC, 0);
+
   // Initialize device map
   if (initDevices() < 0)
     return -EIO;
@@ -245,6 +238,7 @@ int argInit() {
   }
 
   showNeutrinoSplash();
+  storageProtectRuntime(NEUTRINO_ELF_PATH);
   return 0;
 }
 
@@ -265,18 +259,17 @@ int init(char *elfPath) {
     if (loadOptions(elfPath)) {
       DPRINTF("Failed to load options file, will use defaults\n");
       // Default to loading all devices
-      LAUNCHER_OPTIONS.mode = MODE_ALL;
+      LAUNCHER_OPTIONS.mode = LUNA_LIBRARY_DEFAULT_MODES | MODE_BASIC;
     }
+    storageConfigure(elfPath,
+        (LAUNCHER_OPTIONS.mode & LUNA_LIBRARY_DEFAULT_MODES) | configuredLibraryModes,
+        initialModules, 1);
   }
 
   int res = 0;
-  if (initialModules != LAUNCHER_OPTIONS.mode) {
-    // Load modules
-    if ((res = initModules(LAUNCHER_OPTIONS.mode)) != 0) {
-      free(elfPath);
-      return res;
-    }
-  }
+  // Basic startup already loads MMCE. MX4SIO needs a clean driver setup.
+  initStorageModules(STORAGE_SETTINGS.enabled | initialModules | MODE_BASIC,
+                     (STORAGE_SETTINGS.enabled & MODE_MX4SIO) != 0);
 
   // Initialize device map
   if (initDevices() < 0) {
@@ -293,6 +286,7 @@ int init(char *elfPath) {
   }
 
   showNeutrinoSplash();
+  storageProtectRuntime(NEUTRINO_ELF_PATH);
   return 0;
 }
 

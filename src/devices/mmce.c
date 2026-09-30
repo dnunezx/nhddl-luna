@@ -1,13 +1,16 @@
 // Implements support for MMCE devices
 #include "common.h"
 #include "devices/devices.h"
+#include "storage.h"
 #include "dprintf.h"
 #include "ui/ui.h"
 #include <errno.h>
+#include <dirent.h>
 #include <kernel.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 // Used to make devctl calls
 #define NEWLIB_PORT_AWARE
@@ -43,6 +46,8 @@ int initMMCEDevices(int newDeviceIdx) {
 
 // Uses MMCE devctl calls to switch memory card to given title ID
 void mmceMountVMC(char *titleID) {
+  if (!(STORAGE_SETTINGS.enabled & MODE_MMCE) || !titleID || !titleID[0])
+    return;
   char mcMountpoint[] = "mcX:";
   // Send GameID to both MMCE devices
   for (int i = '0'; i < '2'; i++) {

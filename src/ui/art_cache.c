@@ -1076,6 +1076,14 @@ int collectionCoversReady(TargetList *titles, int selectedTitleIdx) {
   return 1;
 }
 
+int collectionCoverMissing(int cacheIdx) {
+  if (cacheIdx < 0 || cacheIdx >= PSBBN_COVER_CACHE_COUNT)
+    return 0;
+  // An unresolved asynchronous request is still loading, not missing.
+  return !psbbnCoverLoaded[cacheIdx] &&
+         (collectionArtThreadId < 0 || collectionCoverResolved[cacheIdx]);
+}
+
 static void setCollectionCoverResidentSize(int cacheIdx, int level) {
   GSTEXTURE *texture = psbbnCoverTextures[cacheIdx];
   if (!psbbnCoverLoaded[cacheIdx] || psbbnCoverSourcePixels[cacheIdx] == NULL ||

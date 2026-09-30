@@ -147,6 +147,8 @@ void launchTitleWithProgress(Target *target, ArgumentList *arguments,
   // Append bsd and ISO path
   appendArgument(arguments, newArgument(bsdArgument, bsdValue));
   appendArgument(arguments, newArgument(isoArgument, target->fullPath));
+  if (target->device->mode == MODE_UDPFS && LAUNCHER_OPTIONS.udpfsIp[0])
+    appendArgument(arguments, newArgument("udpfs_ip", LAUNCHER_OPTIONS.udpfsIp));
   if (LAUNCHER_OPTIONS.returnPath[0] != '\0')
     appendArgument(arguments, newArgument(igrArgument, LAUNCHER_OPTIONS.returnPath));
   // Use quickboot to reduce load times (except for HDL mode because it requires hdlfs module)

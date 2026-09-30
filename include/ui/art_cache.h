@@ -48,6 +48,7 @@ void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previ
 int collectionArtBackgroundAvailable(void);
 void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx);
 int collectionCoversReady(TargetList *titles, int selectedTitleIdx);
+int collectionCoverMissing(int cacheIdx);
 void suspendCollectionCovers(void);
 void adoptOrbitCoversForCollection(void);
 void updateCollectionCoverResidency(int flowOffset);

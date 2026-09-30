@@ -42,6 +42,26 @@ static SupportedBackends backends[] = {
 // Device must be ignored if mode is MODE_ALL or MODE_NONE
 struct DeviceMapEntry deviceModeMap[MAX_DEVICES] = {};
 
+void syncDeviceMap(void) {
+  int pfs = 0;
+  for (int i = 0; i < MAX_DEVICES; i++) {
+    if (deviceModeMap[i].sync) deviceModeMap[i].sync();
+    if (deviceModeMap[i].metadev) pfs = 1;
+  }
+  if (pfs) fileXioUmount("pfs0:");
+}
+
+void freeDeviceMapEntries(struct DeviceMapEntry *entries) {
+  for (int i = 0; i < MAX_DEVICES; i++) {
+    free(entries[i].mountpoint);
+    if (entries[i].metadev) {
+      free(entries[i].metadev->mountpoint);
+      free(entries[i].metadev);
+    }
+    memset(&entries[i], 0, sizeof(entries[i]));
+  }
+}
+
 // Initializes device mode map and returns device count
 int initDeviceMap() {
   int deviceCount = 0;
@@ -55,6 +75,12 @@ int initDeviceMap() {
     uiSplashLogString(LEVEL_INFO_NODELAY, "Initializing %s backend\n", backends[i].name);
     if ((res = backends[i].initFunction(deviceCount)) < 0) {
       DPRINTF("ERROR: Failed to initialize %s backend: %d\n", backends[i].name, res);
+      free(deviceModeMap[deviceCount].mountpoint);
+      if (deviceModeMap[deviceCount].metadev) {
+        free(deviceModeMap[deviceCount].metadev->mountpoint);
+        free(deviceModeMap[deviceCount].metadev);
+      }
+      memset(&deviceModeMap[deviceCount], 0, sizeof(deviceModeMap[deviceCount]));
       continue;
     }
     deviceCount += res;

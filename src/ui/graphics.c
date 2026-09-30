@@ -5,6 +5,7 @@
 #include "ui/psbbn_font.h"
 #include "ui/icons.h"
 #include "ui/grid_selector.h"
+#include "ui/view_internal.h"
 #include <dmaKit.h>
 #include <gsKit.h>
 #include <gsToolkit.h>
@@ -294,6 +295,19 @@ void drawIconWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8
   drawIcon(x1, y1, z, color, iconType);
 }
 
+void drawMenuRowSelector(int left, int top, int right) {
+  const int plateTop = psbbnFieldStableY(top - 3);
+  const int plateBottom = psbbnFieldStableY(top + getFontLineHeight() + 3);
+  const int insetLeft = left + 6;
+  const int insetRight = right - 6;
+
+  // Cover both interlaced fields without thin horizontal rules that shimmer.
+  gsKit_prim_sprite(gsGlobal, insetLeft, plateTop, insetRight, plateBottom, 2,
+                    glassPresetColor(0x16, 0x54, 0x82, 0x38));
+  gsKit_prim_sprite(gsGlobal, insetLeft, plateTop, insetLeft + 5, plateBottom, 3,
+                    glassPresetColor(0x70, 0xD8, 0xF8, 0x68));
+}
+
 void drawPromptBar(int left, int top, int right, int bottom, int z,
                    uint64_t labelColor, PromptBar bar) {
   if (right <= left || bottom <= top)
@@ -311,6 +325,8 @@ void drawPromptBar(int left, int top, int right, int bottom, int z,
   int slot = (right - left) / bar.count;
   for (int i = 0; i < bar.count; i++) {
     const ButtonPrompt *prompt = &bar.items[i];
+    if (prompt->label == NULL)
+      continue;
     int slotLeft = left + i * slot;
     int slotRight = i == bar.count - 1 ? right : slotLeft + slot;
     int labelWidth = (int)getLineWidth(prompt->label);

@@ -8,6 +8,7 @@
 #include "ui/view_state.h"
 #include "options.h"
 #include "vmc_create.h"
+#include "storage.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <libpad.h>
@@ -244,27 +245,12 @@ static int optionsSelectorY(OptionsSelector *selector, OptionsPage page,
   return row / OPTIONS_SELECTOR_ROW_SCALE;
 }
 
-static void drawOptionsRowSelector(int left, int top, int right) {
-  const int plateTop = psbbnFieldStableY(top - 3);
-  const int plateBottom = psbbnFieldStableY(top + getFontLineHeight() + 3);
-  const int insetLeft = left + 6;
-  const int insetRight = right - 6;
-
-  // Fill and leading edge span both interlaced fields; thin horizontal rules
-  // would shimmer on a CRT. Keep the plate quiet behind the setting text.
-  gsKit_prim_sprite(gsGlobal, insetLeft, plateTop,
-                    insetRight, plateBottom, 2,
-                    glassPresetColor(0x16, 0x54, 0x82, 0x38));
-  gsKit_prim_sprite(gsGlobal, insetLeft, plateTop,
-                    insetLeft + 5, plateBottom, 3,
-                    glassPresetColor(0x70, 0xD8, 0xF8, 0x68));
-}
 
 static void drawOptionsTextRow(int x, int y, int right, int selected,
                                int selectorY, const char *label,
                                const char *value) {
   if (selected)
-    drawOptionsRowSelector(x, selectorY, right);
+    drawMenuRowSelector(x, selectorY, right);
   int labelWidth = right - x - 30;
   float valueWidth = value ? getLineWidth(value) : 0;
   if (value)
@@ -677,9 +663,8 @@ static int optionsGlobalDirty(int pendingBackground, int pendingGlassColor,
 #define VMC_PICKER_MAX_FILES 128
 
 static int gameVMCDirectory(Target *target, char *path, size_t pathSize) {
-  const char *mountpoint = target->device->metadev ?
-                           target->device->metadev->mountpoint :
-                           target->device->mountpoint;
+  const char *mountpoint = storageVMCRoot(target->device);
+  if (!mountpoint || !mountpoint[0]) return 0;
   size_t mountLength = strlen(mountpoint);
   int written = snprintf(path, pathSize, "%s%sVMC", mountpoint,
                          mountLength > 0 && mountpoint[mountLength - 1] == '/' ?
@@ -711,10 +696,6 @@ static void drawGameVMCProgress(int percent, void *context) {
 
 static int createNextGameVMC(OptionsMenuState *state, char *created,
                              size_t createdSize) {
-  const int mode = state->target->device->mode;
-  if (mode != MODE_ATA && mode != MODE_HDL && mode != MODE_USB && mode != MODE_MX4SIO &&
-      mode != MODE_ILINK)
-    return 0;
   char directory[PATH_MAX + 1];
   struct stat info;
   if (!gameVMCDirectory(state->target, directory, sizeof(directory)))
@@ -755,9 +736,8 @@ static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
   int count = 0;
   int selected = 0;
   int changed = 0;
-  if (!gameVMCDirectory(target, directoryPath, sizeof(directoryPath)))
-    return 0;
-  DIR *directory = opendir(directoryPath);
+  int supported = gameVMCDirectory(target, directoryPath, sizeof(directoryPath));
+  DIR *directory = supported ? opendir(directoryPath) : NULL;
   if (directory != NULL) {
     struct dirent *entry;
     while (count < VMC_PICKER_MAX_FILES && (entry = readdir(directory)) != NULL) {
@@ -801,7 +781,8 @@ static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
     }
     drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
                    gsGlobal->Height - footerHeight, 0, HeaderTextColor,
-                   ALIGN_LEFT, count ? "Select a card from /VMC on this drive."
+                   ALIGN_LEFT, !supported ? "File cards need enabled local storage. Use a physical card."
+                               : count ? "Select a card from /VMC on this drive."
                                      : "Create a card from the Virtual memory cards page.");
     const ButtonPrompt assign[] = {
         {ICON_CROSS, "Assign"}, {ICON_TRIANGLE, "Back"}};
@@ -1101,6 +1082,11 @@ static int handleGameInput(OptionsMenuState *state, int input) {
       (input & (PAD_CROSS | PAD_CIRCLE))) {
     if (state->selectedGameRow == 2) {
       char created[PATH_MAX + 1];
+      if (!storageVMCRoot(state->target->device)) {
+        snprintf(state->vmcStatus, sizeof(state->vmcStatus),
+                 "File cards need enabled local storage. MMCE switches cards automatically when enabled.");
+        return 0;
+      }
       if (createNextGameVMC(state, created, sizeof(created)))
         snprintf(state->vmcStatus, sizeof(state->vmcStatus),
                  "Created %.24s. Select a slot to assign it.",

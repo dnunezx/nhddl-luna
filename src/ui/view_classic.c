@@ -218,24 +218,6 @@ void setClassicArtOverlap(int overlap) {
 }
 
 
-static void drawTitleListFooter(const char *nextViewLabel, int favoritesEmpty) {
-  if (favoritesEmpty) {
-    const ButtonPrompt prompts[] = {
-        {ICON_CIRCLE, nextViewLabel}, {ICON_SELECT, "Return"},
-        {ICON_START, "Menu"}};
-    drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
-                  gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
-                  (PromptBar){NULL, prompts, 3});
-    return;
-  }
-  const ButtonPrompt prompts[] = {
-      {ICON_CIRCLE, nextViewLabel}, {ICON_SQUARE, "Favorite"},
-      {ICON_CROSS, "Launch"}, {ICON_START, "Menu"},
-      {ICON_TRIANGLE, "Options"}};
-  drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
-                gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
-                (PromptBar){NULL, prompts, 5});
-}
 
 
 static void drawDiscOutline(int centerX, int centerY, int radius, int z, uint64_t color) {
@@ -376,8 +358,6 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
                  favoritesOnly ? FontMainColor : HeaderTextColor, ALIGN_LEFT, "Favorites");
   snprintf(lineBuffer, 255, "%d/%d", curPage + 1, pageCount);
   drawTextWindow(baseX, headerHeight - getFontLineHeight(), gsGlobal->Width - baseX, 0, 3, HeaderTextColor, ALIGN_RIGHT, lineBuffer);
-
-  drawTitleListFooter(nextViewLabel, favoritesOnly && favoriteTotal == 0);
 
   // Draw title list
   Target *curTitle = titles->first;

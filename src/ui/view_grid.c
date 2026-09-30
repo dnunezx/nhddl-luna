@@ -380,10 +380,5 @@ void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBas
   snprintf(lineBuffer, sizeof(lineBuffer), "%d/%d", selectedTitleIdx + 1, titles->total);
   drawTextWindow(rightLeft, selectedY + selectedSize + 4, rightRight, 0, 6, FontMainColor, ALIGN_RIGHT, lineBuffer);
 
-  const ButtonPrompt prompts[] = {
-      {ICON_CIRCLE, nextViewLabel}, {ICON_CROSS, "Launch"},
-      {ICON_START, "Menu"}, {ICON_TRIANGLE, "Options"}};
-  drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
-                gsGlobal->Width - 20, gsGlobal->Height, 6, FontMainColor,
-                (PromptBar){NULL, prompts, 4});
+
 }

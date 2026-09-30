@@ -4,7 +4,9 @@
 #include "devices/devices.h"
 #include "dprintf.h"
 #include "ui/game_options.h"
+#include "storage.h"
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <libcdvd.h>
@@ -12,6 +14,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 int loadArgumentList(ArgumentList *options, struct DeviceMapEntry *device, char *filePath);
 int parseOptionsFile(ArgumentList *result, FILE *file, struct DeviceMapEntry *device);
@@ -433,9 +437,15 @@ int updateTitleLaunchArguments(Target *target, ArgumentList *options) {
     // Write disabled global arguments as disabled empty arguments
     if (!tArg->isGlobal) {
       // Check if arg is a file path and trim mountpoint
-      len = getRelativePathIdx(tArg->value);
+      const char *value = tArg->value;
+      if (!strcmp(tArg->arg, "mc0") || !strcmp(tArg->arg, "mc1"))
+        value = storageVMCRelativePath(target->device, value);
+      else {
+        len = getRelativePathIdx(tArg->value);
+        if (len > 0) value += len;
+      }
       len = snprintf(lineBuffer, sizeof(lineBuffer), "%s%s: %s\n", (tArg->isDisabled) ? "$" : "", tArg->arg,
-                     len > 0 ? &tArg->value[len] : tArg->value);
+                     value);
     } else if (tArg->isDisabled && strcmp(tArg->arg, "logo")) {
       // The disabled library logo default is not a per-game override.
       len = snprintf(lineBuffer, sizeof(lineBuffer), "$%s:\n", tArg->arg);

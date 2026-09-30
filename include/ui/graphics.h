@@ -130,6 +130,9 @@ void drawIconWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8
 void drawPromptBar(int left, int top, int right, int bottom, int z,
                    uint64_t labelColor, PromptBar bar);
 
+// Quiet selection plate with the Options menu's leading accent.
+void drawMenuRowSelector(int left, int top, int right);
+
 // Draws bundled memory-card artwork at the requested square size.
 void drawCardArt(CardArtType card, float x, float y, float size);
 

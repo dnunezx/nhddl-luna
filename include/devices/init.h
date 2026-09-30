@@ -5,6 +5,9 @@
 
 // Initializes IOP modules
 int initModules(ModeType modeType);
+// Best-effort optional drivers; returns modes whose initialization failed.
+ModeType initStorageModules(ModeType modes, int restart);
+int parseIPConfig(void);
 
 // Flush storage and power off the console.
 void powerOffConsole(void);

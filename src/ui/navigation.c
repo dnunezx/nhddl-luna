@@ -2,6 +2,44 @@
 #include "ui/navigation.h"
 #include <stddef.h>
 
+int lunaQuickMenuUpdate(LunaQuickMenu *menu, int held, int direction,
+                        int confirm, int controlsHeld, int count,
+                        int shortcut, uint32_t now) {
+  if (!held) {
+    menu->open = 0;
+    if (!controlsHeld) {
+      menu->captured = 0;
+      menu->consumed = 0;
+      menu->confirmHeld = 0;
+      menu->repeat.direction = 0;
+    }
+    return -1;
+  }
+  menu->captured = 1;
+  if (menu->consumed)
+    return -1;
+  if (!menu->open) {
+    menu->open = 1;
+    menu->selected = 0;
+    menu->confirmHeld = confirm;
+    menu->repeat.direction = 0;
+    return -1;
+  }
+  if (lunaNavRepeatStep(&menu->repeat, direction, now, 280, 120) && count > 0)
+    menu->selected = lunaNavWrap(count, menu->selected + direction);
+  int direct = shortcut >= 0 && shortcut < count;
+  int confirmed = direct || (confirm && !menu->confirmHeld);
+  menu->confirmHeld = confirm;
+  if (confirmed && count > 0) {
+    if (direct)
+      menu->selected = shortcut;
+    menu->open = 0;
+    menu->consumed = 1;
+    return menu->selected;
+  }
+  return -1;
+}
+
 int lunaCollectionScanUpdate(LunaCollectionScan *scan, int direction, uint32_t now,
                              uint32_t stepMs) {
   if (direction != scan->heldDirection) {
@@ -171,16 +209,19 @@ uint32_t lunaNavDurationFrames(uint32_t durationMs, int framesPerSecond) {
   return frames > 0 ? frames : 1;
 }
 
-// Classic Glide: the previous Collection motion, preserved for quick rollback.
-int lunaNavClassicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
-                                   uint32_t durationFrames) {
+int lunaNavAnimatedFrameOffset(int startOffset, uint32_t elapsedFrames,
+                               uint32_t durationFrames) {
   int progress = (durationFrames == 0 || elapsedFrames >= durationFrames)
                      ? 1000
                      : (int)((elapsedFrames * 1000ULL) / durationFrames);
   return (startOffset * (1000 - lunaNavEase(progress))) / 1000;
 }
 
-// Match the PR's remaining-frames-cubed glide: brisk at first, then soft at rest.
+int lunaNavClassicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
+                                   uint32_t durationFrames) {
+  return lunaNavAnimatedFrameOffset(startOffset, elapsedFrames, durationFrames);
+}
+
 int lunaNavCubicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
                                  uint32_t durationFrames) {
   if (durationFrames == 0 || elapsedFrames >= durationFrames)

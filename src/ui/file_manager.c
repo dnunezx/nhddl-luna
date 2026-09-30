@@ -3,6 +3,7 @@
 #include "vmc_create.h"
 #include "devices/devices.h"
 #include "devices/init.h"
+#include "storage.h"
 #include "ui/graphics.h"
 #include "ui/pad.h"
 #include "ui/view_internal.h"
@@ -30,6 +31,7 @@
 #define FILE_MANAGER_GLASS_MARGIN 8
 #define FILE_MANAGER_LIST_TOP 114
 #define FILE_MANAGER_NAME_MAX 255
+#define BROWSER_SELECTOR_GLIDE_MS 110
 
 #define PROMPT_TEXT(text) ((PromptBar){text, NULL, 0})
 #define PROMPT_ONE(icon, label) \
@@ -73,6 +75,42 @@ typedef struct {
   int sourceSide;
 } CopyQueue;
 
+typedef struct {
+  int selected;
+  int wordOnly;
+  int first;
+  int fromY;
+  int toY;
+  uint32_t startMs;
+} BrowserSelector;
+
+typedef struct {
+  int hasLibrary;
+} MainMenuContext;
+
+static int browserSelectorProgress(const BrowserSelector *menu, uint32_t now) {
+  uint32_t elapsed = now - menu->startMs;
+  return elapsed >= BROWSER_SELECTOR_GLIDE_MS ? 1000 :
+      lunaNavEase((int)(elapsed * 1000U / BROWSER_SELECTOR_GLIDE_MS));
+}
+
+static int browserSelectorY(BrowserSelector *menu, int selected, int first, int y) {
+  uint32_t now = uiNowMs();
+  int progress = browserSelectorProgress(menu, now);
+  if (menu->selected < 0 || menu->first != first) {
+    menu->fromY = menu->toY = y * 256;
+    menu->selected = selected;
+    menu->first = first;
+  } else if (menu->selected != selected) {
+    menu->fromY += (menu->toY - menu->fromY) * progress / 1000;
+    menu->toY = y * 256;
+    menu->startMs = now;
+    menu->selected = selected;
+    progress = 0;
+  }
+  return (menu->fromY + (menu->toY - menu->fromY) * progress / 1000) / 256;
+}
+
 static void drawBrowserSheet(int fileManager) {
   int width = gsGlobal->Width;
   int height = gsGlobal->Height;
@@ -105,14 +143,26 @@ static void presentBrowserFrame(void) {
 }
 
 static void drawBrowserRow(int y, int selected, const char *name,
-                           const char *detail, int right) {
+                           const char *detail, int right, int selectorY,
+                           int selectorRight) {
   int left = keepoutArea + 30;
   int lineHeight = getFontLineHeight();
   int detailWidth = detail == NULL ? 0 : (int)getLineWidth(detail) + 14;
-  if (selected)
-    drawPSBBNFocusGlow(left, y, right, right - 12);
+  if (selected) {
+    if (selectorY >= 0) {
+      if (selectorRight <= 0) {
+        selectorRight = left + 36 + (int)getLineWidth(name);
+        if (selectorRight > right - detailWidth)
+          selectorRight = right - detailWidth;
+      }
+      drawMenuRowSelector(left, selectorY, selectorRight);
+    } else {
+      drawPSBBNFocusGlow(left, y, right, right - 12);
+    }
+  }
   drawTextWindow(left + 18, y, right - detailWidth - 10, y + lineHeight,
-                 0, selected ? FontMainColor : HeaderTextColor,
+                 0, selected ? (selectorY >= 0 ? GS_SETREG_RGBA(0xF0, 0xFA, 0xFF, 0x80)
+                                                : FontMainColor) : HeaderTextColor,
                  ALIGN_LEFT, name);
   if (detail != NULL)
     drawTextWindow(right - detailWidth, y, right - 12, y + lineHeight,
@@ -120,13 +170,14 @@ static void drawBrowserRow(int y, int selected, const char *name,
                    ALIGN_RIGHT, detail);
 }
 
-static void drawBrowserFrame(const char *heading, const char *path,
+static void drawBrowserFrameSelected(const char *heading, const char *path,
                              const char *status, PromptBar footer,
                              int count, int selected, int first,
                              int previewColumn,
                              int (*row)(int, char *, size_t, char *, size_t,
                                         CardArtType *,
-                                        void *), void *context) {
+                                        void *), void *context,
+                                     BrowserSelector *selector) {
   int left = keepoutArea + 30;
   int right = gsGlobal->Width - left;
   int lineHeight = getFontLineHeight();
@@ -135,6 +186,9 @@ static void drawBrowserFrame(const char *heading, const char *path,
   int listBottom = gsGlobal->Height - footerHeight - lineHeight;
   int visible = (listBottom - listTop) / rowStep;
   int rowRight = previewColumn ? right - previewColumn : right;
+  int selectorY = selector != NULL
+      ? browserSelectorY(selector, selected, first,
+                           listTop + (selected - first) * rowStep) : -1;
   CardArtType selectedArt = CARD_ART_NONE;
   gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
   drawBrowserSheet(0);
@@ -153,7 +207,8 @@ static void drawBrowserFrame(const char *heading, const char *path,
       selectedArt = cardArt;
     drawBrowserRow(listTop + (index - first) * rowStep,
                    index == selected, name, detail[0] ? detail : NULL,
-                   rowRight);
+                   rowRight, selectorY,
+                   selector != NULL && !selector->wordOnly ? right : 0);
   }
   if (previewColumn && selectedArt != CARD_ART_NONE)
     drawCardArt(selectedArt, right - previewColumn + 10, listTop + 8,
@@ -166,6 +221,16 @@ static void drawBrowserFrame(const char *heading, const char *path,
   drawPromptBar(left + 18, gsGlobal->Height - footerHeight, right,
                 gsGlobal->Height, 0, HeaderTextColor, footer);
   presentBrowserFrame();
+}
+
+static void drawBrowserFrame(const char *heading, const char *path,
+                             const char *status, PromptBar footer,
+                             int count, int selected, int first,
+                             int previewColumn,
+                             int (*row)(int, char *, size_t, char *, size_t,
+                                        CardArtType *, void *), void *context) {
+  drawBrowserFrameSelected(heading, path, status, footer, count, selected, first,
+                           previewColumn, row, context, NULL);
 }
 
 static int browserVisibleRows(void) {
@@ -233,6 +298,8 @@ static int collectRoots(BrowserRoot *roots) {
     char label[64];
     if (device->mode == MODE_NONE || device->mountpoint == NULL)
       break;
+    if (!(STORAGE_SETTINGS.enabled & device->mode))
+      continue;
     if (device->mode == MODE_HDL) {
       // hdd0: lists APA partitions, not ordinary files. The mounted PFS
       // metadata partition is the safe directory view for this backend.
@@ -422,7 +489,8 @@ static int editFileName(const char *title, char *name, size_t capacity,
     if (input & PAD_CIRCLE)
       return 0;
     if (input & PAD_START) {
-      if (length <= maxLength && validFileName(name))
+      if (length <= maxLength && (validFileName(name) ||
+          (!name[0] && !strncmp(title, "UDPFS console IP", 16))))
         return 1;
       snprintf(message, sizeof(message), "Enter a valid name (%u characters max).",
                (unsigned)maxLength);
@@ -1772,37 +1840,37 @@ static void uiVMCManagerLoop(void) {
   }
   int rootCount = 0, rootSelected = 0, activeRoot = -1;
   int count = 0, selected = 0;
+  BrowserSelector driveSelector = {.selected = -1};
+  BrowserSelector cardSelector = {.selected = -1};
   char directory[PATH_MAX + 1] = "";
   char status[96] = "Choose the drive that holds your games.";
   for (int index = 0; index < MAX_DEVICES; index++) {
     struct DeviceMapEntry *device = &deviceModeMap[index];
     if (device->mode == MODE_NONE || device->mountpoint == NULL)
       break;
-    if (device->mode == MODE_HDL) {
-      if (device->metadev && device->metadev->mountpoint)
-        rootCount = addRoot(roots, rootCount, device->metadev->mountpoint,
-                            "APA HDD");
-      continue;
+    const char *root = storageVMCRoot(device);
+    if (root) {
+      const char *label = "Local storage";
+      for (int source = 0; source < STORAGE_SOURCE_COUNT; source++)
+        if (storageSourceMode(source) == device->mode)
+          label = storageSourceName(source);
+      rootCount = addRoot(roots, rootCount, root, label);
     }
-    if (device->mode == MODE_ATA || device->mode == MODE_USB ||
-        device->mode == MODE_MX4SIO || device->mode == MODE_ILINK)
-      rootCount = addRoot(roots, rootCount, device->mountpoint,
-                          device->mode == MODE_ATA ? "ATA HDD" : "Local storage");
   }
   while (1) {
     if (activeRoot < 0)
-      drawBrowserFrame("Virtual Memory Cards", "Choose a drive",
+      drawBrowserFrameSelected("Virtual Memory Cards", "Choose a drive",
                        rootCount ? status :
                                                     "No supported local drives found.",
                        PROMPT_TWO(ICON_CROSS, "Open", ICON_TRIANGLE, "Back"),
                        rootCount, rootSelected, browserFirstRow(rootSelected), 0,
-                       rootRow, roots);
+                       rootRow, roots, &driveSelector);
     else
-      drawBrowserFrame("Virtual Memory Cards", directory, status,
+      drawBrowserFrameSelected("Virtual Memory Cards", directory, status,
                        PROMPT_TWO(ICON_CROSS, "Create/View",
                                   ICON_TRIANGLE, "Back"),
                        count + 1, selected, browserFirstRow(selected), 128,
-                       vmcRow, entries);
+                       vmcRow, entries, &cardSelector);
     int input = readInput();
     if (input & (PAD_TRIANGLE | PAD_CIRCLE)) {
       if (activeRoot < 0)
@@ -1830,6 +1898,7 @@ static void uiVMCManagerLoop(void) {
         }
         activeRoot = rootSelected;
         selected = 0;
+        cardSelector.selected = -1;
         loadVMCCards(directory, entries, &count);
         snprintf(status, sizeof(status), "Create a card, then assign it in pregame settings.");
       } else if (activeRoot >= 0 && selected == 0) {
@@ -1902,14 +1971,107 @@ static int unlockFileExplorer(void) {
   }
 }
 
+static int storageRow(int index, char *name, size_t nameSize,
+                      char *detail, size_t detailSize, CardArtType *art,
+                      void *context) {
+  StorageSettings *settings = context;
+  *art = CARD_ART_NONE;
+  if (index < STORAGE_SOURCE_COUNT) {
+    ModeType mode = storageSourceMode(index);
+    snprintf(name, nameSize, "%s", storageSourceName(index));
+    if (!(settings->enabled & mode)) snprintf(detail, detailSize, "Disabled");
+    else if (!(STORAGE_SETTINGS.enabled & mode)) snprintf(detail, detailSize, "Enable pending");
+    else if (STORAGE_STATUS[index].error) snprintf(detail, detailSize, "Scan failed");
+    else if (!STORAGE_STATUS[index].devices) snprintf(detail, detailSize, "No device found");
+    else snprintf(detail, detailSize, "Ready - %d games", STORAGE_STATUS[index].games);
+  } else {
+    snprintf(name, nameSize, "%s", index == 7 ? "UDPFS console IP address" :
+             index == 8 ? "Apply changes & scan" : "Rescan all enabled devices");
+    snprintf(detail, detailSize, "%s", index == 7 ?
+             (settings->ip[0] ? settings->ip : "Use IPCONFIG.DAT") : "");
+  }
+  return 1;
+}
+
+static int uiStorageLoop(void) {
+  StorageSettings settings = STORAGE_SETTINGS;
+  char status[160] = "Select a source to enable or disable it.";
+  int selected = 0;
+  BrowserSelector selector = {.selected = -1};
+  while (1) {
+    const ButtonPrompt prompts[] = {{ICON_CROSS, "Select"}, {ICON_SQUARE, "Rescan"},
+                                   {ICON_CIRCLE, "Back"}};
+    drawBrowserFrameSelected("Storage Devices", "Connected devices only", status,
+                     (PromptBar){NULL, prompts, 3}, 10, selected,
+                     browserFirstRow(selected), 0, storageRow, &settings, &selector);
+    int input = readInput();
+    if (input & PAD_CIRCLE) return 0; // Discard pending edits.
+    if (input & PAD_UP) selected = (selected + 9) % 10;
+    else if (input & PAD_DOWN) selected = (selected + 1) % 10;
+    else if ((input & PAD_CROSS) && selected < STORAGE_SOURCE_COUNT) {
+      StorageSettings before = settings;
+      ModeType mode = storageSourceMode(selected);
+      settings.enabled ^= mode;
+      if ((settings.enabled & MODE_MX4SIO) && (settings.enabled & MODE_MMCE)) {
+        settings.enabled &= ~(mode == MODE_MX4SIO ? MODE_MMCE : MODE_MX4SIO);
+        snprintf(status, sizeof(status), "MX4SIO and MMCE cannot be enabled together.");
+      } else snprintf(status, sizeof(status), "Choose Apply changes & scan to save your selection.");
+      if (storageRequiredConflict(&settings)) {
+        settings = before;
+        snprintf(status, sizeof(status), "This conflicts with the device LUNA was started from.");
+      }
+    } else if ((input & PAD_CROSS) && selected == 7) {
+      char ip[16];
+      snprintf(ip, sizeof(ip), "%s", settings.ip);
+      // The shared keyboard supports digits and dots; an empty value uses IPCONFIG.
+      if (editFileName("UDPFS console IP (empty uses IPCONFIG.DAT)", ip, sizeof(ip), 15)) {
+        if (storageValidIP(ip)) {
+          strcpy(settings.ip, ip);
+          snprintf(status, sizeof(status), "Apply changes to use this address for scanning and games.");
+        } else snprintf(status, sizeof(status), "Enter a valid unicast IPv4 address, such as 192.168.1.10.");
+      }
+    } else if ((input & PAD_CROSS) && selected == 8) {
+      if (storageRequiredConflict(&settings) || !storageValidSettings(&settings)) {
+        snprintf(status, sizeof(status), "These device settings conflict with the startup device.");
+        continue;
+      }
+      if (storageNeedsRestart(&settings)) {
+        drawBrowserFrameSelected("Restart storage drivers", "Apply changes",
+                         "LUNA will reopen the library after restarting its drivers.",
+                         PROMPT_TWO(ICON_CROSS, "Apply", ICON_CIRCLE, "Cancel"),
+                         10, selected, browserFirstRow(selected), 0, storageRow, &settings, &selector);
+        if (!(waitForInput(PAD_CROSS | PAD_CIRCLE) & PAD_CROSS)) continue;
+      }
+      if (storageSave(&settings)) {
+        snprintf(status, sizeof(status), "Could not save storage.cfg beside LUNA. Changes were not applied.");
+        continue;
+      }
+      if (!storageRequest(&settings, settings.enabled)) return STORAGE_UI_REFRESH;
+    } else if (((input & PAD_CROSS) && selected == 9) ||
+               ((input & PAD_SQUARE) && selected < STORAGE_SOURCE_COUNT)) {
+      if (settings.enabled != STORAGE_SETTINGS.enabled || strcmp(settings.ip, STORAGE_SETTINGS.ip)) {
+        snprintf(status, sizeof(status), "Apply changes before rescanning, or go Back to discard them.");
+        continue;
+      }
+      ModeType scan = selected == 9 ? settings.enabled : storageSourceMode(selected);
+      if (!(scan & settings.enabled)) {
+        snprintf(status, sizeof(status), "Enable this source and apply changes before scanning it.");
+        continue;
+      }
+      if (!storageRequest(&settings, scan)) return STORAGE_UI_REFRESH;
+    }
+  }
+}
+
 static int mainMenuRow(int index, char *name, size_t nameSize,
                        char *detail, size_t detailSize, CardArtType *cardArt,
                        void *context) {
-  int hasLibrary = *(int *)context;
+  int hasLibrary = ((MainMenuContext *)context)->hasLibrary;
   const char *label = index == 0 ? "File Explorer" :
                       index == 1 ? "Virtual Memory Cards" :
-                      (hasLibrary && index == 2 ? "Return to Library" :
-                       index == (hasLibrary ? 4 : 3) ? "Shutdown" : "Exit LUNA");
+                      index == 2 ? "Storage Devices" :
+                      (hasLibrary && index == 3 ? "Return to Library" :
+                       index == (hasLibrary ? 5 : 4) ? "Shutdown" : "Exit LUNA");
   snprintf(name, nameSize, "%s", label);
   detail[0] = '\0';
   *cardArt = index == 0 ? CARD_ART_FILE_EXPLORER :
@@ -1921,9 +2083,11 @@ static int mainMenuRow(int index, char *name, size_t nameSize,
 int uiMainMenuLoop(int hasLibrary) {
   static int fileExplorerUnlocked;
   int selected = 0;
-  int count = hasLibrary ? 5 : 4;
+  int count = hasLibrary ? 6 : 5;
+  MainMenuContext menu = {.hasLibrary = hasLibrary};
+  BrowserSelector selector = {.selected = -1, .wordOnly = 1};
   while (1) {
-    drawBrowserFrame("LUNA", hasLibrary ? "Main menu" : "No games found",
+    drawBrowserFrameSelected("LUNA", hasLibrary ? "Main menu" : "No games found",
                      hasLibrary ? "Browse storage or return to your games."
                                 : "Browse storage even without a game library.",
                      hasLibrary ?
@@ -1931,7 +2095,7 @@ int uiMainMenuLoop(int hasLibrary) {
                          PROMPT_ONE(ICON_CROSS, "Select"),
                      count, selected, 0,
                      selected == 0 || selected == 1 ? 220 : 0,
-                     mainMenuRow, &hasLibrary);
+                     mainMenuRow, &menu, &selector);
     int input = readInput();
     if ((input & (PAD_TRIANGLE | PAD_CIRCLE)) && hasLibrary)
       return 0;
@@ -1948,14 +2112,17 @@ int uiMainMenuLoop(int hasLibrary) {
       }
       else if (selected == 1)
         uiVMCManagerLoop();
-      else if (hasLibrary && selected == 2)
+      else if (selected == 2) {
+        if (uiStorageLoop() == STORAGE_UI_REFRESH) return STORAGE_UI_REFRESH;
+      }
+      else if (hasLibrary && selected == 3)
         return 0;
       else if (selected == count - 1) {
-        drawBrowserFrame("LUNA", "Confirm shutdown",
+        drawBrowserFrameSelected("LUNA", "Confirm shutdown",
                          "Power off the console?",
                          PROMPT_TWO(ICON_CROSS, "Shutdown",
                                     ICON_CIRCLE, "Cancel"),
-                         count, selected, 0, 0, mainMenuRow, &hasLibrary);
+                         count, selected, 0, 0, mainMenuRow, &menu, &selector);
         if (waitForInput(PAD_CROSS | PAD_CIRCLE | PAD_TRIANGLE) & PAD_CROSS) {
           powerOffConsole();
           while (1)

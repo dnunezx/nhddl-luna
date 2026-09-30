@@ -4,6 +4,7 @@
 #include "neutrino.h"
 #include "devices/init.h"
 #include "options.h"
+#include "storage.h"
 #include "devices/title_id.h"
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,8 @@ int forwardBoot() {
     DPRINTF("Failed to init modules: %d\n", res);
     return res;
   }
+
+  storageConfigure(NULL, LAUNCHER_OPTIONS.mode & STORAGE_SUPPORTED, MODE_NONE, 0);
 
   int deviceCount = initDeviceMap();
   if (deviceCount <= 0) {

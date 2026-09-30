@@ -6,6 +6,10 @@
 
 #define ORBIT_PHASE_UNITS (PSBBN_COVER_CACHE_COUNT * 1000)
 
+static int visibleTitleIndex = -1;
+
+int orbitVisibleTitleIndex(void) { return visibleTitleIndex; }
+
 typedef struct {
   float upperLeftX;
   float upperLeftY;
@@ -116,15 +120,6 @@ static void drawOrbitGuide(int centerX, int centerY, int radiusX, int radiusY) {
   }
 }
 
-static void drawOrbitFooter(const char *nextViewLabel) {
-  const ButtonPrompt prompts[] = {
-      {ICON_CIRCLE, nextViewLabel}, {ICON_SQUARE, "Random"},
-      {ICON_CROSS, "Launch"}, {ICON_START, "Menu"},
-      {ICON_TRIANGLE, "Options"}};
-  drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
-                gsGlobal->Width - 20, gsGlobal->Height, 8, FontMainColor,
-                (PromptBar){NULL, prompts, 5});
-}
 
 void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int flowOffset,
                int randomActive, int entryProgress, uint32_t frameNowMs,
@@ -284,6 +279,7 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
 
   if (visualFocus >= 0) {
     int focusTargetIdx = items[visualFocus].targetIdx;
+    visibleTitleIndex = focusTargetIdx;
     int titleLeft = keepoutArea + 34;
     int titleRight = gsGlobal->Width - keepoutArea - 34;
     int titleY = bottom - getFontLineHeight() * 2 - 2;
@@ -296,6 +292,4 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
     drawTextWindow(titleLeft, titleY + getFontLineHeight(), titleRight, 0, 8,
                    HeaderTextColor, ALIGN_HCENTER, lineBuffer);
   }
-
-  drawOrbitFooter(nextViewLabel);
 }

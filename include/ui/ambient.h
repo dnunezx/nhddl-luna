@@ -6,5 +6,7 @@
 void ambientStart(int enabled);
 void ambientSetEnabled(int enabled);
 void ambientStop(void);
+// Call only after ambientStop, when resetting the IOP.
+void ambientForgetDrivers(void);
 
 #endif

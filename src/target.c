@@ -39,12 +39,20 @@ Target *getTargetByIdx(TargetList *targets, int idx) {
 
 // Makes and returns a deep copy of src without prev/next pointers.
 Target *copyTarget(Target *src) {
-  Target *copy = calloc(sizeof(Target), 1);
+  Target *copy = calloc(1, sizeof(Target));
+  if (!copy) return NULL;
   copy->idx = src->idx;
 
   copy->fullPath = strdup(src->fullPath);
   copy->name = strdup(src->name);
-  copy->id = strdup(src->id);
+  copy->id = src->id ? strdup(src->id) : NULL;
+  if (!copy->fullPath || !copy->name || (src->id && !copy->id)) {
+    free(copy->fullPath);
+    free(copy->name);
+    free(copy->id);
+    free(copy);
+    return NULL;
+  }
   copy->device = src->device;
 
   return copy;
@@ -52,7 +60,7 @@ Target *copyTarget(Target *src) {
 
 // Converts lowercase ASCII string into uppercase
 void toUppercase(char *str) {
-  for (int i = 0; i <= strlen(str); i++)
+  for (size_t i = 0; str[i]; i++)
     if (str[i] >= 0x61 && str[i] <= 0x7A) {
       str[i] -= 32;
     }

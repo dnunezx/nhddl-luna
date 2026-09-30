@@ -15,8 +15,11 @@ if [ -f /src/build-emulator/libtiff.a ] && [ ! -f "$PS2SDK/ports/lib/libtiff.a" 
   cp /src/build-emulator/libtiff.a "$PS2SDK/ports/lib/libtiff.a"
 fi
 
-cmake -S /src -B /src/build-emulator \
+# Defaults remain the canonical emulator build; overrides also build hardware.
+build_dir="${LUNA_BUILD_DIR:-/src/build-emulator}"
+emulator_build="${LUNA_EMULATOR_OPTION:-ON}"
+cmake -S /src -B "$build_dir" \
   -DCMAKE_BUILD_TYPE=Release \
-  -DLUNA_EMULATOR_BUILD=ON
+  -DLUNA_EMULATOR_BUILD="$emulator_build"
 
-cmake --build /src/build-emulator --parallel 2
+cmake --build "$build_dir" --parallel 2

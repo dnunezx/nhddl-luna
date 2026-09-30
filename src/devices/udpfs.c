@@ -18,8 +18,8 @@ int initUDPFSDevices(int newDeviceIdx) {
   int deviceCount = 0;
 
   // Wait for IOP to initialize device driver
-  for (int attempts = 0; attempts < 20; attempts++) {
-    sleep(2);
+  for (int attempts = 0; attempts < 5; attempts++) {
+    sleep(1);
     directory = opendir(udpfsMountpoint);
     if (directory != NULL) {
       closedir(directory);

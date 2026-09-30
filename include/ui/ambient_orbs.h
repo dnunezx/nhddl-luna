@@ -1,5 +1,6 @@
 #ifndef LUNA_UI_AMBIENT_ORBS_H
 #define LUNA_UI_AMBIENT_ORBS_H
+void resetAmbientOrbsTextures(void);
 
 #include <stdint.h>
 
