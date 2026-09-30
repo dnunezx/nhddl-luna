@@ -6,10 +6,12 @@
 
 #include <malloc.h>
 #include <gsToolkit.h>
+#include <kernel.h>
 #include <stdio.h>
 #include <string.h>
 
 #define PSBBN_THUMBNAIL_SIZE 64
+#define PSBBN_PREVIEW_SIZE 128
 #define GRID_THUMBNAIL_BYTES (GRID_THUMBNAIL_SIZE * GRID_THUMBNAIL_SIZE * sizeof(PSBBNPixel))
 #define GRID_THUMBNAIL_CACHE_COUNT (GRID_PAGE_BUFFERS * GRID_PAGE_SIZE)
 
@@ -26,6 +28,9 @@ static uint8_t psbbnCoverFullResolution[PSBBN_COVER_CACHE_COUNT];
 static void *psbbnCoverSourcePixels[PSBBN_COVER_CACHE_COUNT];
 static int psbbnCoverSourceWidth[PSBBN_COVER_CACHE_COUNT];
 static int psbbnCoverSourceHeight[PSBBN_COVER_CACHE_COUNT];
+static void *collectionCoverThumbnailPixels[PSBBN_COVER_CACHE_COUNT];
+static void *collectionCoverPreviewPixels[PSBBN_COVER_CACHE_COUNT];
+static uint8_t collectionCoverResidentLevel[PSBBN_COVER_CACHE_COUNT];
 GSTEXTURE *gridCoverTextures[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
 uint8_t gridCoverLoaded[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
 static uint8_t gridCoverAttempted[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
@@ -51,6 +56,30 @@ static int orbsBackgroundTarget = -1;
 static const char artPath[] = "/ART";
 static const char psbbnArtPath[] = "/ART/PSBBN";
 static int gridSaveIconArtwork;
+
+extern void *_gp;
+static int collectionArtThreadId = -1;
+static int collectionArtWakeSema = -1;
+static int collectionArtDoneSema = -1;
+static volatile int collectionArtStopping;
+static uint8_t collectionArtStack[16384] __attribute__((aligned(16)));
+static uint32_t collectionArtGeneration;
+static uint8_t collectionCoverAttempted[PSBBN_COVER_CACHE_COUNT];
+static uint8_t collectionCoverResolved[PSBBN_COVER_CACHE_COUNT];
+static struct {
+  volatile int state; // 0: idle, 1: decoding, 2: ready
+  uint32_t generation;
+  char path[255];
+  GSTEXTURE texture;
+  void *sourcePixels;
+  void *previewPixels;
+  int sourceWidth;
+  int sourceHeight;
+  int result;
+} collectionArtJob;
+
+static void collectionArtWorker(void);
+static void stopCollectionArtWorker(void);
 
 void setGridSaveIconArtwork(int enabled) {
   gridSaveIconArtwork = enabled != 0;
@@ -122,6 +151,33 @@ int artCacheInit(void) {
     orbsLogoTextures[i]->Delayed = 1;
     orbsLogoTargets[i] = -1;
   }
+  ee_sema_t semaphore;
+  ee_thread_t thread;
+  memset(&semaphore, 0, sizeof(semaphore));
+  semaphore.init_count = 0;
+  semaphore.max_count = 1;
+  collectionArtWakeSema = CreateSema(&semaphore);
+  collectionArtDoneSema = CreateSema(&semaphore);
+  if (collectionArtWakeSema < 0 || collectionArtDoneSema < 0) {
+    stopCollectionArtWorker();
+    return 0; // Collection can still use the synchronous loader.
+  }
+  memset(&thread, 0, sizeof(thread));
+  thread.func = collectionArtWorker;
+  thread.stack = collectionArtStack;
+  thread.stack_size = sizeof(collectionArtStack);
+  thread.gp_reg = &_gp;
+  // The UI thread runs at 0x20 and can busy-wait for vblank. Stay just ahead
+  // of it so the next cover job is not starved for seconds during scrolling.
+  thread.initial_priority = 0x1f;
+  collectionArtStopping = 0;
+  collectionArtThreadId = CreateThread(&thread);
+  if (collectionArtThreadId < 0 || StartThread(collectionArtThreadId, NULL) < 0) {
+    if (collectionArtThreadId >= 0)
+      DeleteThread(collectionArtThreadId);
+    collectionArtThreadId = -1;
+    stopCollectionArtWorker();
+  }
   return 0;
 }
 
@@ -190,19 +246,29 @@ int loadDiscArt(struct DeviceMapEntry *device, char *titleID) {
 static void releasePSBBNCoverCacheEntry(int cacheIdx) {
   GSTEXTURE *texture = psbbnCoverTextures[cacheIdx];
   void *sourcePixels = psbbnCoverSourcePixels[cacheIdx];
+  void *thumbnailPixels = collectionCoverThumbnailPixels[cacheIdx];
+  void *previewPixels = collectionCoverPreviewPixels[cacheIdx];
 
   if (texture->Vram != 0)
     gsKit_TexManager_free(gsGlobal, texture);
   texture->Vram = 0;
-  if (texture->Mem != NULL && texture->Mem != sourcePixels)
+  if (texture->Mem != NULL && texture->Mem != sourcePixels &&
+      texture->Mem != thumbnailPixels && texture->Mem != previewPixels)
     free(texture->Mem);
   texture->Mem = NULL;
   free(sourcePixels);
+  free(thumbnailPixels);
+  free(previewPixels);
   psbbnCoverSourcePixels[cacheIdx] = NULL;
+  collectionCoverThumbnailPixels[cacheIdx] = NULL;
+  collectionCoverPreviewPixels[cacheIdx] = NULL;
   psbbnCoverSourceWidth[cacheIdx] = 0;
   psbbnCoverSourceHeight[cacheIdx] = 0;
   psbbnCoverLoaded[cacheIdx] = 0;
   psbbnCoverFullResolution[cacheIdx] = 0;
+  collectionCoverAttempted[cacheIdx] = 0;
+  collectionCoverResolved[cacheIdx] = 0;
+  collectionCoverResidentLevel[cacheIdx] = 0;
 }
 
 // PSBBN jacket art fades into the scene instead of sitting inside a hard
@@ -243,79 +309,43 @@ static void featherPSBBNCoverEdges(GSTEXTURE *texture) {
   }
 }
 
-static void setPSBBNCoverResidentSize(int cacheIdx, int selected) {
-  GSTEXTURE *texture = psbbnCoverTextures[cacheIdx];
-  void *previousUpload = texture->Mem;
-  void *uploadPixels;
-
-  if (!psbbnCoverLoaded[cacheIdx] || psbbnCoverSourcePixels[cacheIdx] == NULL)
-    return;
-  if (texture->Vram != 0 && psbbnCoverFullResolution[cacheIdx] == (selected != 0))
-    return;
-
-  if (texture->Vram != 0)
-    gsKit_TexManager_free(gsGlobal, texture);
-  texture->Vram = 0;
-  if (previousUpload != NULL && previousUpload != psbbnCoverSourcePixels[cacheIdx])
-    free(previousUpload);
-  texture->VramClut = 0;
-  texture->Clut = NULL;
-  texture->PSM = GS_PSM_CT32;
-  texture->Filter = GS_FILTER_LINEAR;
-
-  if (selected) {
-    texture->Width = psbbnCoverSourceWidth[cacheIdx];
-    texture->Height = psbbnCoverSourceHeight[cacheIdx];
-    uploadPixels = psbbnCoverSourcePixels[cacheIdx];
-  } else {
-    PSBBNPixel *thumbnail = memalign(128, PSBBN_THUMBNAIL_SIZE * PSBBN_THUMBNAIL_SIZE * sizeof(PSBBNPixel));
-    PSBBNPixel *source = (PSBBNPixel *)psbbnCoverSourcePixels[cacheIdx];
-    for (int y = 0; y < PSBBN_THUMBNAIL_SIZE; y++) {
-      int sourceY1 = y * psbbnCoverSourceHeight[cacheIdx] / PSBBN_THUMBNAIL_SIZE;
-      int sourceY2 = (y + 1) * psbbnCoverSourceHeight[cacheIdx] / PSBBN_THUMBNAIL_SIZE;
-      if (sourceY2 <= sourceY1)
-        sourceY2 = sourceY1 + 1;
-      for (int x = 0; x < PSBBN_THUMBNAIL_SIZE; x++) {
-        int sourceX1 = x * psbbnCoverSourceWidth[cacheIdx] / PSBBN_THUMBNAIL_SIZE;
-        int sourceX2 = (x + 1) * psbbnCoverSourceWidth[cacheIdx] / PSBBN_THUMBNAIL_SIZE;
-        int red = 0;
-        int green = 0;
-        int blue = 0;
-        int alpha = 0;
-        int samples = 0;
-
-        if (sourceX2 <= sourceX1)
-          sourceX2 = sourceX1 + 1;
-        for (int sourceY = sourceY1; sourceY < sourceY2; sourceY++) {
-          for (int sourceX = sourceX1; sourceX < sourceX2; sourceX++) {
-            PSBBNPixel pixel = source[sourceY * psbbnCoverSourceWidth[cacheIdx] + sourceX];
-            red += pixel.r;
-            green += pixel.g;
-            blue += pixel.b;
-            alpha += pixel.a;
-            samples++;
-          }
+static PSBBNPixel *createPSBBNThumbnail(const PSBBNPixel *source, int width, int height,
+                                         int size) {
+  PSBBNPixel *thumbnail = memalign(128, size * size * sizeof(*thumbnail));
+  if (thumbnail == NULL)
+    return NULL;
+  for (int y = 0; y < size; y++) {
+    int sourceY1 = y * height / size;
+    int sourceY2 = (y + 1) * height / size;
+    if (sourceY2 <= sourceY1)
+      sourceY2 = sourceY1 + 1;
+    for (int x = 0; x < size; x++) {
+      int sourceX1 = x * width / size;
+      int sourceX2 = (x + 1) * width / size;
+      int red = 0, green = 0, blue = 0, alpha = 0, samples = 0;
+      if (sourceX2 <= sourceX1)
+        sourceX2 = sourceX1 + 1;
+      for (int sourceY = sourceY1; sourceY < sourceY2; sourceY++) {
+        for (int sourceX = sourceX1; sourceX < sourceX2; sourceX++) {
+          PSBBNPixel pixel = source[sourceY * width + sourceX];
+          red += pixel.r;
+          green += pixel.g;
+          blue += pixel.b;
+          alpha += pixel.a;
+          samples++;
         }
-        thumbnail[y * PSBBN_THUMBNAIL_SIZE + x].r = red / samples;
-        thumbnail[y * PSBBN_THUMBNAIL_SIZE + x].g = green / samples;
-        thumbnail[y * PSBBN_THUMBNAIL_SIZE + x].b = blue / samples;
-        thumbnail[y * PSBBN_THUMBNAIL_SIZE + x].a = alpha / samples;
       }
+      thumbnail[y * size + x].r = red / samples;
+      thumbnail[y * size + x].g = green / samples;
+      thumbnail[y * size + x].b = blue / samples;
+      thumbnail[y * size + x].a = alpha / samples;
     }
-    texture->Width = PSBBN_THUMBNAIL_SIZE;
-    texture->Height = PSBBN_THUMBNAIL_SIZE;
-    uploadPixels = thumbnail;
   }
-
-  texture->Mem = uploadPixels;
-  gsKit_TexManager_bind(gsGlobal, texture);
-  psbbnCoverFullResolution[cacheIdx] = (selected != 0);
+  return thumbnail;
 }
 
-// Loads one PSBBN square artwork asset from the metadata device. The decoded
-// source stays in EE RAM. Collection uses compact runtime thumbnails for every
-// cover; Orbit can keep its focused and transition covers full-size in GS VRAM.
-// Source PNG files are not altered, and Orbit promotion reuses decoded pixels.
+// Orbit keeps the decoded source and both smaller sizes in EE RAM, so a cover
+// can change resolution without resampling it on the drawing thread.
 static int loadPSBBNCoverArt(struct DeviceMapEntry *device, char *titleID, int cacheIdx, int selected) {
   GSTEXTURE *texture = psbbnCoverTextures[cacheIdx];
 
@@ -324,22 +354,148 @@ static int loadPSBBNCoverArt(struct DeviceMapEntry *device, char *titleID, int c
   }
   releasePSBBNCoverCacheEntry(cacheIdx);
   snprintf(artPathBuffer, 255, "%s%s/%s.png", device->mountpoint, psbbnArtPath, titleID);
-  if (loadPNGTextureRGBA(gsGlobal, texture, artPathBuffer)) {
+  if (decodePNGTextureRGBA(gsGlobal, texture, artPathBuffer) ||
+      texture->Mem == NULL || texture->Width <= 0 || texture->Height <= 0) {
+    releasePSBBNCoverCacheEntry(cacheIdx);
     return -1;
   }
 
   featherPSBBNCoverEdges(texture);
+  PSBBNPixel *preview = createPSBBNThumbnail((const PSBBNPixel *)texture->Mem,
+                                               texture->Width, texture->Height,
+                                               PSBBN_PREVIEW_SIZE);
+  PSBBNPixel *thumbnail = preview != NULL ?
+      createPSBBNThumbnail(preview, PSBBN_PREVIEW_SIZE, PSBBN_PREVIEW_SIZE,
+                           PSBBN_THUMBNAIL_SIZE) : NULL;
+  if (thumbnail == NULL) {
+    free(preview);
+    releasePSBBNCoverCacheEntry(cacheIdx);
+    return -1;
+  }
   psbbnCoverSourcePixels[cacheIdx] = texture->Mem;
   psbbnCoverSourceWidth[cacheIdx] = texture->Width;
   psbbnCoverSourceHeight[cacheIdx] = texture->Height;
+  collectionCoverThumbnailPixels[cacheIdx] = thumbnail;
+  collectionCoverPreviewPixels[cacheIdx] = preview;
+  texture->Mem = selected ? psbbnCoverSourcePixels[cacheIdx] : thumbnail;
+  texture->Width = selected ? psbbnCoverSourceWidth[cacheIdx] : PSBBN_THUMBNAIL_SIZE;
+  texture->Height = selected ? psbbnCoverSourceHeight[cacheIdx] : PSBBN_THUMBNAIL_SIZE;
+  texture->PSM = GS_PSM_CT32;
+  texture->Filter = GS_FILTER_LINEAR;
+  texture->Delayed = 1;
+  texture->VramClut = 0;
   psbbnCoverLoaded[cacheIdx] = 1;
-  setPSBBNCoverResidentSize(cacheIdx, selected);
+  collectionCoverResidentLevel[cacheIdx] = selected ? 2 : 0;
+  psbbnCoverFullResolution[cacheIdx] = selected != 0;
+  gsKit_TexManager_bind(gsGlobal, texture);
   return 0;
 }
 
+static int collectionCoverPath(TargetList *titles, int selectedTitleIdx, int cacheIdx,
+                               char *path, size_t capacity) {
+  int targetIdx = lunaNavWrap(titles->total, selectedTitleIdx + cacheIdx - PSBBN_COVER_CACHE_FOCUS);
+  Target *target = getTargetByIdx(titles, targetIdx);
+  struct DeviceMapEntry *device;
+  if (target == NULL || target->id == NULL || target->device == NULL)
+    return -1;
+  device = target->device->metadev ? target->device->metadev : target->device;
+  if (device->mountpoint == NULL)
+    return -1;
+  int length = snprintf(path, capacity, "%s%s/%s.png", device->mountpoint,
+                        psbbnArtPath, target->id);
+  return length >= 0 && length < (int)capacity ? 0 : -1;
+}
+
+static void collectionArtWorker(void) {
+  while (1) {
+    WaitSema(collectionArtWakeSema);
+    if (collectionArtStopping)
+      break;
+    GSTEXTURE decoded = {0};
+    collectionArtJob.result = decodePNGTextureRGBA(gsGlobal, &decoded, collectionArtJob.path);
+    if (collectionArtJob.result == 0 && decoded.Mem != NULL &&
+        decoded.Width > 0 && decoded.Height > 0) {
+      featherPSBBNCoverEdges(&decoded);
+      PSBBNPixel *preview = createPSBBNThumbnail((const PSBBNPixel *)decoded.Mem,
+                                                  decoded.Width, decoded.Height,
+                                                  PSBBN_PREVIEW_SIZE);
+      PSBBNPixel *thumbnail = preview != NULL ?
+          createPSBBNThumbnail(preview, PSBBN_PREVIEW_SIZE, PSBBN_PREVIEW_SIZE,
+                               PSBBN_THUMBNAIL_SIZE) : NULL;
+      if (thumbnail != NULL && preview != NULL) {
+        collectionArtJob.sourcePixels = decoded.Mem;
+        collectionArtJob.previewPixels = preview;
+        collectionArtJob.sourceWidth = decoded.Width;
+        collectionArtJob.sourceHeight = decoded.Height;
+        decoded.Mem = (u32 *)thumbnail;
+        decoded.Width = PSBBN_THUMBNAIL_SIZE;
+        decoded.Height = PSBBN_THUMBNAIL_SIZE;
+        decoded.PSM = GS_PSM_CT32;
+        decoded.Filter = GS_FILTER_LINEAR;
+        decoded.Delayed = 1;
+        decoded.Vram = 0;
+        decoded.VramClut = 0;
+        collectionArtJob.texture = decoded;
+      } else {
+        free(thumbnail);
+        free(preview);
+        collectionArtJob.result = -1;
+      }
+    } else {
+      collectionArtJob.result = -1;
+    }
+    if (collectionArtJob.result != 0) {
+      free(decoded.Mem);
+      free(decoded.Clut);
+    }
+    __asm__ __volatile__("" ::: "memory");
+    collectionArtJob.state = 2;
+  }
+  SignalSema(collectionArtDoneSema);
+  ExitThread();
+}
+
+static void stopCollectionArtWorker(void) {
+  if (collectionArtThreadId >= 0) {
+    collectionArtStopping = 1;
+    SignalSema(collectionArtWakeSema);
+    WaitSema(collectionArtDoneSema);
+    DeleteThread(collectionArtThreadId);
+    collectionArtThreadId = -1;
+  }
+  if (collectionArtWakeSema >= 0)
+    DeleteSema(collectionArtWakeSema);
+  if (collectionArtDoneSema >= 0)
+    DeleteSema(collectionArtDoneSema);
+  collectionArtWakeSema = collectionArtDoneSema = -1;
+  free(collectionArtJob.texture.Mem);
+  free(collectionArtJob.texture.Clut);
+  free(collectionArtJob.sourcePixels);
+  free(collectionArtJob.previewPixels);
+  memset(&collectionArtJob, 0, sizeof(collectionArtJob));
+}
+
 void releasePSBBNCovers(void) {
+  collectionArtGeneration++;
   for (int cacheIdx = 0; cacheIdx < PSBBN_COVER_CACHE_COUNT; cacheIdx++)
     releasePSBBNCoverCacheEntry(cacheIdx);
+}
+
+void suspendCollectionCovers(void) {
+  for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
+    if (psbbnCoverTextures[i]->Vram != 0)
+      gsKit_TexManager_free(gsGlobal, psbbnCoverTextures[i]);
+    psbbnCoverTextures[i]->Vram = 0;
+  }
+}
+
+void adoptOrbitCoversForCollection(void) {
+  // Orbit has already tried every slot using the same PSBBN artwork paths.
+  // Loaded jackets and known missing files are both ready for the reveal.
+  for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
+    collectionCoverAttempted[i] = 1;
+    collectionCoverResolved[i] = 1;
+  }
 }
 
 void releaseGridTexture(GSTEXTURE *texture) {
@@ -678,22 +834,31 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
   if (previousTitleIdx >= 0 && direction > 0 && lunaNavWrap(titles->total, previousTitleIdx + 1) == selectedTitleIdx) {
     GSTEXTURE *recycledTexture = psbbnCoverTextures[0];
     void *recycledSource = psbbnCoverSourcePixels[0];
+    void *recycledThumbnail = collectionCoverThumbnailPixels[0];
+    void *recycledPreview = collectionCoverPreviewPixels[0];
     int recycledWidth = psbbnCoverSourceWidth[0];
     int recycledHeight = psbbnCoverSourceHeight[0];
     uint8_t recycledFullResolution = psbbnCoverFullResolution[0];
+    uint8_t recycledLevel = collectionCoverResidentLevel[0];
     for (int cacheIdx = 0; cacheIdx < PSBBN_COVER_CACHE_COUNT - 1; cacheIdx++) {
       psbbnCoverTextures[cacheIdx] = psbbnCoverTextures[cacheIdx + 1];
       psbbnCoverLoaded[cacheIdx] = psbbnCoverLoaded[cacheIdx + 1];
       psbbnCoverSourcePixels[cacheIdx] = psbbnCoverSourcePixels[cacheIdx + 1];
+      collectionCoverThumbnailPixels[cacheIdx] = collectionCoverThumbnailPixels[cacheIdx + 1];
+      collectionCoverPreviewPixels[cacheIdx] = collectionCoverPreviewPixels[cacheIdx + 1];
       psbbnCoverSourceWidth[cacheIdx] = psbbnCoverSourceWidth[cacheIdx + 1];
       psbbnCoverSourceHeight[cacheIdx] = psbbnCoverSourceHeight[cacheIdx + 1];
       psbbnCoverFullResolution[cacheIdx] = psbbnCoverFullResolution[cacheIdx + 1];
+      collectionCoverResidentLevel[cacheIdx] = collectionCoverResidentLevel[cacheIdx + 1];
     }
     psbbnCoverTextures[PSBBN_COVER_CACHE_COUNT - 1] = recycledTexture;
     psbbnCoverSourcePixels[PSBBN_COVER_CACHE_COUNT - 1] = recycledSource;
+    collectionCoverThumbnailPixels[PSBBN_COVER_CACHE_COUNT - 1] = recycledThumbnail;
+    collectionCoverPreviewPixels[PSBBN_COVER_CACHE_COUNT - 1] = recycledPreview;
     psbbnCoverSourceWidth[PSBBN_COVER_CACHE_COUNT - 1] = recycledWidth;
     psbbnCoverSourceHeight[PSBBN_COVER_CACHE_COUNT - 1] = recycledHeight;
     psbbnCoverFullResolution[PSBBN_COVER_CACHE_COUNT - 1] = recycledFullResolution;
+    collectionCoverResidentLevel[PSBBN_COVER_CACHE_COUNT - 1] = recycledLevel;
     releasePSBBNCoverCacheEntry(PSBBN_COVER_CACHE_COUNT - 1);
     loadPSBBNCoverCacheEntry(titles, selectedTitleIdx, PSBBN_COVER_CACHE_COUNT - 1,
                             useFullResolution);
@@ -703,22 +868,31 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
   if (previousTitleIdx >= 0 && direction < 0 && lunaNavWrap(titles->total, previousTitleIdx - 1) == selectedTitleIdx) {
     GSTEXTURE *recycledTexture = psbbnCoverTextures[PSBBN_COVER_CACHE_COUNT - 1];
     void *recycledSource = psbbnCoverSourcePixels[PSBBN_COVER_CACHE_COUNT - 1];
+    void *recycledThumbnail = collectionCoverThumbnailPixels[PSBBN_COVER_CACHE_COUNT - 1];
+    void *recycledPreview = collectionCoverPreviewPixels[PSBBN_COVER_CACHE_COUNT - 1];
     int recycledWidth = psbbnCoverSourceWidth[PSBBN_COVER_CACHE_COUNT - 1];
     int recycledHeight = psbbnCoverSourceHeight[PSBBN_COVER_CACHE_COUNT - 1];
     uint8_t recycledFullResolution = psbbnCoverFullResolution[PSBBN_COVER_CACHE_COUNT - 1];
+    uint8_t recycledLevel = collectionCoverResidentLevel[PSBBN_COVER_CACHE_COUNT - 1];
     for (int cacheIdx = PSBBN_COVER_CACHE_COUNT - 1; cacheIdx > 0; cacheIdx--) {
       psbbnCoverTextures[cacheIdx] = psbbnCoverTextures[cacheIdx - 1];
       psbbnCoverLoaded[cacheIdx] = psbbnCoverLoaded[cacheIdx - 1];
       psbbnCoverSourcePixels[cacheIdx] = psbbnCoverSourcePixels[cacheIdx - 1];
+      collectionCoverThumbnailPixels[cacheIdx] = collectionCoverThumbnailPixels[cacheIdx - 1];
+      collectionCoverPreviewPixels[cacheIdx] = collectionCoverPreviewPixels[cacheIdx - 1];
       psbbnCoverSourceWidth[cacheIdx] = psbbnCoverSourceWidth[cacheIdx - 1];
       psbbnCoverSourceHeight[cacheIdx] = psbbnCoverSourceHeight[cacheIdx - 1];
       psbbnCoverFullResolution[cacheIdx] = psbbnCoverFullResolution[cacheIdx - 1];
+      collectionCoverResidentLevel[cacheIdx] = collectionCoverResidentLevel[cacheIdx - 1];
     }
     psbbnCoverTextures[0] = recycledTexture;
     psbbnCoverSourcePixels[0] = recycledSource;
+    collectionCoverThumbnailPixels[0] = recycledThumbnail;
+    collectionCoverPreviewPixels[0] = recycledPreview;
     psbbnCoverSourceWidth[0] = recycledWidth;
     psbbnCoverSourceHeight[0] = recycledHeight;
     psbbnCoverFullResolution[0] = recycledFullResolution;
+    collectionCoverResidentLevel[0] = recycledLevel;
     releasePSBBNCoverCacheEntry(0);
     loadPSBBNCoverCacheEntry(titles, selectedTitleIdx, 0, useFullResolution);
     return;
@@ -729,15 +903,255 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
     loadPSBBNCoverCacheEntry(titles, selectedTitleIdx, cacheIdx, useFullResolution);
 }
 
-// Orbit held input can leave the rendered focal point more than one title behind
-// the logical selection. Keep its two nearest textures at full resolution.
-// Collection does not call this function, so all its covers remain thumbnails.
+void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx) {
+  if (collectionArtThreadId < 0) {
+    refreshPSBBNCovers(titles, selectedTitleIdx, previousTitleIdx, 0);
+    return;
+  }
+  int direction = lunaNavDirection(titles->total, previousTitleIdx, selectedTitleIdx);
+  if (previousTitleIdx >= 0 && direction > 0 &&
+      lunaNavWrap(titles->total, previousTitleIdx + 1) == selectedTitleIdx) {
+    GSTEXTURE *recycled = psbbnCoverTextures[0];
+    void *recycledSource = psbbnCoverSourcePixels[0];
+    void *recycledThumbnail = collectionCoverThumbnailPixels[0];
+    void *recycledPreview = collectionCoverPreviewPixels[0];
+    int recycledWidth = psbbnCoverSourceWidth[0];
+    int recycledHeight = psbbnCoverSourceHeight[0];
+    uint8_t recycledFull = psbbnCoverFullResolution[0];
+    uint8_t recycledLevel = collectionCoverResidentLevel[0];
+    uint8_t recycledResolved = collectionCoverResolved[0];
+    for (int i = 0; i < PSBBN_COVER_CACHE_COUNT - 1; i++) {
+      psbbnCoverTextures[i] = psbbnCoverTextures[i + 1];
+      psbbnCoverLoaded[i] = psbbnCoverLoaded[i + 1];
+      collectionCoverAttempted[i] = collectionCoverAttempted[i + 1];
+      collectionCoverResolved[i] = collectionCoverResolved[i + 1];
+      psbbnCoverSourcePixels[i] = psbbnCoverSourcePixels[i + 1];
+      collectionCoverThumbnailPixels[i] = collectionCoverThumbnailPixels[i + 1];
+      collectionCoverPreviewPixels[i] = collectionCoverPreviewPixels[i + 1];
+      psbbnCoverSourceWidth[i] = psbbnCoverSourceWidth[i + 1];
+      psbbnCoverSourceHeight[i] = psbbnCoverSourceHeight[i + 1];
+      psbbnCoverFullResolution[i] = psbbnCoverFullResolution[i + 1];
+      collectionCoverResidentLevel[i] = collectionCoverResidentLevel[i + 1];
+    }
+    psbbnCoverTextures[PSBBN_COVER_CACHE_COUNT - 1] = recycled;
+    psbbnCoverSourcePixels[PSBBN_COVER_CACHE_COUNT - 1] = recycledSource;
+    collectionCoverThumbnailPixels[PSBBN_COVER_CACHE_COUNT - 1] = recycledThumbnail;
+    collectionCoverPreviewPixels[PSBBN_COVER_CACHE_COUNT - 1] = recycledPreview;
+    psbbnCoverSourceWidth[PSBBN_COVER_CACHE_COUNT - 1] = recycledWidth;
+    psbbnCoverSourceHeight[PSBBN_COVER_CACHE_COUNT - 1] = recycledHeight;
+    psbbnCoverFullResolution[PSBBN_COVER_CACHE_COUNT - 1] = recycledFull;
+    collectionCoverResidentLevel[PSBBN_COVER_CACHE_COUNT - 1] = recycledLevel;
+    collectionCoverResolved[PSBBN_COVER_CACHE_COUNT - 1] = recycledResolved;
+    releasePSBBNCoverCacheEntry(PSBBN_COVER_CACHE_COUNT - 1);
+  } else if (previousTitleIdx >= 0 && direction < 0 &&
+             lunaNavWrap(titles->total, previousTitleIdx - 1) == selectedTitleIdx) {
+    GSTEXTURE *recycled = psbbnCoverTextures[PSBBN_COVER_CACHE_COUNT - 1];
+    void *recycledSource = psbbnCoverSourcePixels[PSBBN_COVER_CACHE_COUNT - 1];
+    void *recycledThumbnail = collectionCoverThumbnailPixels[PSBBN_COVER_CACHE_COUNT - 1];
+    void *recycledPreview = collectionCoverPreviewPixels[PSBBN_COVER_CACHE_COUNT - 1];
+    int recycledWidth = psbbnCoverSourceWidth[PSBBN_COVER_CACHE_COUNT - 1];
+    int recycledHeight = psbbnCoverSourceHeight[PSBBN_COVER_CACHE_COUNT - 1];
+    uint8_t recycledFull = psbbnCoverFullResolution[PSBBN_COVER_CACHE_COUNT - 1];
+    uint8_t recycledLevel = collectionCoverResidentLevel[PSBBN_COVER_CACHE_COUNT - 1];
+    uint8_t recycledResolved = collectionCoverResolved[PSBBN_COVER_CACHE_COUNT - 1];
+    for (int i = PSBBN_COVER_CACHE_COUNT - 1; i > 0; i--) {
+      psbbnCoverTextures[i] = psbbnCoverTextures[i - 1];
+      psbbnCoverLoaded[i] = psbbnCoverLoaded[i - 1];
+      collectionCoverAttempted[i] = collectionCoverAttempted[i - 1];
+      collectionCoverResolved[i] = collectionCoverResolved[i - 1];
+      psbbnCoverSourcePixels[i] = psbbnCoverSourcePixels[i - 1];
+      collectionCoverThumbnailPixels[i] = collectionCoverThumbnailPixels[i - 1];
+      collectionCoverPreviewPixels[i] = collectionCoverPreviewPixels[i - 1];
+      psbbnCoverSourceWidth[i] = psbbnCoverSourceWidth[i - 1];
+      psbbnCoverSourceHeight[i] = psbbnCoverSourceHeight[i - 1];
+      psbbnCoverFullResolution[i] = psbbnCoverFullResolution[i - 1];
+      collectionCoverResidentLevel[i] = collectionCoverResidentLevel[i - 1];
+    }
+    psbbnCoverTextures[0] = recycled;
+    psbbnCoverSourcePixels[0] = recycledSource;
+    collectionCoverThumbnailPixels[0] = recycledThumbnail;
+    collectionCoverPreviewPixels[0] = recycledPreview;
+    psbbnCoverSourceWidth[0] = recycledWidth;
+    psbbnCoverSourceHeight[0] = recycledHeight;
+    psbbnCoverFullResolution[0] = recycledFull;
+    collectionCoverResidentLevel[0] = recycledLevel;
+    collectionCoverResolved[0] = recycledResolved;
+    releasePSBBNCoverCacheEntry(0);
+  } else {
+    releasePSBBNCovers();
+  }
+}
+
+int collectionArtBackgroundAvailable(void) {
+  return collectionArtThreadId >= 0;
+}
+
+void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx) {
+  static const uint8_t priority[PSBBN_COVER_CACHE_COUNT] = {3, 4, 2, 5, 1, 6, 7, 8, 9, 0};
+  char path[255];
+  if (collectionArtThreadId < 0 || titles->total <= 0)
+    return;
+
+  if (collectionArtJob.state == 2) {
+    __asm__ __volatile__("" ::: "memory");
+    if (collectionArtJob.generation == collectionArtGeneration) {
+      for (int p = 0; p < PSBBN_COVER_CACHE_COUNT; p++) {
+        int i = priority[p];
+        if (!collectionCoverAttempted[i] || collectionCoverResolved[i] ||
+            collectionCoverPath(titles, selectedTitleIdx, i, path, sizeof(path)) < 0 ||
+            strcmp(path, collectionArtJob.path) != 0)
+          continue;
+        if (collectionArtJob.result == 0) {
+          GSTEXTURE *texture = psbbnCoverTextures[i];
+          // Only the drawing thread touches the texture manager and cache slots.
+          releasePSBBNCoverCacheEntry(i);
+          *texture = collectionArtJob.texture;
+          psbbnCoverSourcePixels[i] = collectionArtJob.sourcePixels;
+          collectionCoverThumbnailPixels[i] = texture->Mem;
+          collectionCoverPreviewPixels[i] = collectionArtJob.previewPixels;
+          psbbnCoverSourceWidth[i] = collectionArtJob.sourceWidth;
+          psbbnCoverSourceHeight[i] = collectionArtJob.sourceHeight;
+          memset(&collectionArtJob.texture, 0, sizeof(collectionArtJob.texture));
+          collectionArtJob.sourcePixels = NULL;
+          collectionArtJob.previewPixels = NULL;
+          psbbnCoverLoaded[i] = 1;
+        }
+        collectionCoverAttempted[i] = 1;
+        collectionCoverResolved[i] = 1;
+        break;
+      }
+    }
+    free(collectionArtJob.texture.Mem);
+    free(collectionArtJob.texture.Clut);
+    free(collectionArtJob.sourcePixels);
+    free(collectionArtJob.previewPixels);
+    memset(&collectionArtJob.texture, 0, sizeof(collectionArtJob.texture));
+    collectionArtJob.sourcePixels = NULL;
+    collectionArtJob.previewPixels = NULL;
+    collectionArtJob.state = 0;
+  }
+  if (collectionArtJob.state != 0)
+    return;
+  for (int p = 0; p < PSBBN_COVER_CACHE_COUNT; p++) {
+    int i = priority[p];
+    if (collectionCoverAttempted[i] ||
+        collectionCoverPath(titles, selectedTitleIdx, i, path, sizeof(path)) < 0)
+      continue;
+    collectionCoverAttempted[i] = 1;
+    snprintf(collectionArtJob.path, sizeof(collectionArtJob.path), "%s", path);
+    collectionArtJob.generation = collectionArtGeneration;
+    collectionArtJob.result = -1;
+    collectionArtJob.sourceWidth = collectionArtJob.sourceHeight = 0;
+    collectionArtJob.state = 1;
+    SignalSema(collectionArtWakeSema);
+    break;
+  }
+}
+
+int collectionCoversReady(TargetList *titles, int selectedTitleIdx) {
+  char path[255];
+  if (collectionArtThreadId < 0 || titles->total <= 0)
+    return 1;
+  for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
+    int targetIdx = lunaNavWrap(titles->total, selectedTitleIdx + i - PSBBN_COVER_CACHE_FOCUS);
+    int distance = i - PSBBN_COVER_CACHE_FOCUS;
+    int nearest = 1;
+    if (distance < 0)
+      distance = -distance;
+    for (int j = 0; j < PSBBN_COVER_CACHE_COUNT; j++) {
+      int otherDistance = j - PSBBN_COVER_CACHE_FOCUS;
+      if (otherDistance < 0)
+        otherDistance = -otherDistance;
+      if (j != i &&
+          lunaNavWrap(titles->total, selectedTitleIdx + j - PSBBN_COVER_CACHE_FOCUS) == targetIdx &&
+          (otherDistance < distance || (otherDistance == distance && j < i))) {
+        nearest = 0;
+        break;
+      }
+    }
+    if (nearest && collectionCoverPath(titles, selectedTitleIdx, i, path, sizeof(path)) == 0 &&
+        !collectionCoverResolved[i])
+      return 0;
+  }
+  return 1;
+}
+
+static void setCollectionCoverResidentSize(int cacheIdx, int level) {
+  GSTEXTURE *texture = psbbnCoverTextures[cacheIdx];
+  if (!psbbnCoverLoaded[cacheIdx] || psbbnCoverSourcePixels[cacheIdx] == NULL ||
+      collectionCoverThumbnailPixels[cacheIdx] == NULL ||
+      collectionCoverPreviewPixels[cacheIdx] == NULL ||
+      collectionCoverResidentLevel[cacheIdx] == level)
+    return;
+  if (texture->Vram != 0)
+    gsKit_TexManager_free(gsGlobal, texture);
+  texture->Vram = 0;
+  texture->VramClut = 0;
+  texture->Mem = level == 2 ? psbbnCoverSourcePixels[cacheIdx] :
+                 level == 1 ? collectionCoverPreviewPixels[cacheIdx] :
+                              collectionCoverThumbnailPixels[cacheIdx];
+  texture->Width = level == 2 ? psbbnCoverSourceWidth[cacheIdx] :
+                   level == 1 ? PSBBN_PREVIEW_SIZE : PSBBN_THUMBNAIL_SIZE;
+  texture->Height = level == 2 ? psbbnCoverSourceHeight[cacheIdx] :
+                    level == 1 ? PSBBN_PREVIEW_SIZE : PSBBN_THUMBNAIL_SIZE;
+  collectionCoverResidentLevel[cacheIdx] = level;
+  psbbnCoverFullResolution[cacheIdx] = level == 2;
+}
+
+void updateCollectionCoverResidency(int flowOffset) {
+  int closest = -1, nextClosest = -1;
+  int closestDistance = 0x7fffffff, nextDistance = 0x7fffffff;
+  int desired[PSBBN_COVER_CACHE_COUNT] = {0};
+  for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
+    int position = (i - PSBBN_COVER_CACHE_FOCUS) * 1000 + flowOffset;
+    int distance = position < 0 ? -position : position;
+    if (!psbbnCoverLoaded[i])
+      continue;
+    if (distance < closestDistance) {
+      nextClosest = closest;
+      nextDistance = closestDistance;
+      closest = i;
+      closestDistance = distance;
+    } else if (distance < nextDistance) {
+      nextClosest = i;
+      nextDistance = distance;
+    }
+  }
+  // Keep the next and previous covers at 128 pixels, with full detail on the
+  // focal cover and its moving partner. Demote first to limit peak GS use.
+  if (PSBBN_COVER_CACHE_FOCUS > 0)
+    desired[PSBBN_COVER_CACHE_FOCUS - 1] = 1;
+  if (PSBBN_COVER_CACHE_FOCUS + 1 < PSBBN_COVER_CACHE_COUNT)
+    desired[PSBBN_COVER_CACHE_FOCUS + 1] = 1;
+  for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
+    int position = (i - PSBBN_COVER_CACHE_FOCUS) * 1000 + flowOffset;
+    int distance = position < 0 ? -position : position;
+    if (distance <= 1500)
+      desired[i] = 1;
+  }
+  if (closest >= 0)
+    desired[closest] = 2;
+  if (flowOffset != 0 && nextClosest >= 0)
+    desired[nextClosest] = 2;
+  for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
+    if (collectionCoverResidentLevel[i] > desired[i])
+      setCollectionCoverResidentSize(i, desired[i]);
+  }
+  for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
+    if (collectionCoverResidentLevel[i] < desired[i])
+      setCollectionCoverResidentSize(i, desired[i]);
+  }
+}
+
+// Orbit held input can leave the rendered focal point behind the logical
+// selection. Keep its two nearest covers full-size and nearby covers at 128.
 // Demote first to avoid a temporary third full-size GS allocation.
 void updatePSBBNCoverResidency(int flowOffset) {
   int closest = -1;
   int nextClosest = -1;
   int closestDistance = 0x7FFFFFFF;
   int nextClosestDistance = 0x7FFFFFFF;
+  int desired[PSBBN_COVER_CACHE_COUNT] = {0};
 
   for (int cacheIdx = 0; cacheIdx < PSBBN_COVER_CACHE_COUNT; cacheIdx++) {
     int position;
@@ -747,6 +1161,8 @@ void updatePSBBNCoverResidency(int flowOffset) {
       continue;
     position = (cacheIdx - PSBBN_COVER_CACHE_FOCUS) * 1000 + flowOffset;
     distance = (position < 0) ? -position : position;
+    if (distance <= 1500)
+      desired[cacheIdx] = 1;
     if (distance < closestDistance) {
       nextClosest = closest;
       nextClosestDistance = closestDistance;
@@ -758,17 +1174,22 @@ void updatePSBBNCoverResidency(int flowOffset) {
     }
   }
 
-  for (int cacheIdx = 0; cacheIdx < PSBBN_COVER_CACHE_COUNT; cacheIdx++) {
-    if (cacheIdx != closest && cacheIdx != nextClosest)
-      setPSBBNCoverResidentSize(cacheIdx, 0);
-  }
   if (closest >= 0)
-    setPSBBNCoverResidentSize(closest, 1);
+    desired[closest] = 2;
   if (nextClosest >= 0)
-    setPSBBNCoverResidentSize(nextClosest, 1);
+    desired[nextClosest] = 2;
+  for (int cacheIdx = 0; cacheIdx < PSBBN_COVER_CACHE_COUNT; cacheIdx++) {
+    if (collectionCoverResidentLevel[cacheIdx] > desired[cacheIdx])
+      setCollectionCoverResidentSize(cacheIdx, desired[cacheIdx]);
+  }
+  for (int cacheIdx = 0; cacheIdx < PSBBN_COVER_CACHE_COUNT; cacheIdx++) {
+    if (collectionCoverResidentLevel[cacheIdx] < desired[cacheIdx])
+      setCollectionCoverResidentSize(cacheIdx, desired[cacheIdx]);
+  }
 }
 
 void artCacheShutdown(void) {
+  stopCollectionArtWorker();
   if (saveIconSpinTexture != NULL) {
     free(saveIconSpinTexture->Mem);
     free(saveIconSpinTexture->Clut);
@@ -815,13 +1236,19 @@ void artCacheShutdown(void) {
   for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
     if (psbbnCoverTextures[i] != NULL) {
       if (psbbnCoverTextures[i]->Mem != NULL &&
-          psbbnCoverTextures[i]->Mem != psbbnCoverSourcePixels[i])
+          psbbnCoverTextures[i]->Mem != psbbnCoverSourcePixels[i] &&
+          psbbnCoverTextures[i]->Mem != collectionCoverThumbnailPixels[i] &&
+          psbbnCoverTextures[i]->Mem != collectionCoverPreviewPixels[i])
         free(psbbnCoverTextures[i]->Mem);
       free(psbbnCoverTextures[i]);
       psbbnCoverTextures[i] = NULL;
     }
     free(psbbnCoverSourcePixels[i]);
+    free(collectionCoverThumbnailPixels[i]);
+    free(collectionCoverPreviewPixels[i]);
     psbbnCoverSourcePixels[i] = NULL;
+    collectionCoverThumbnailPixels[i] = NULL;
+    collectionCoverPreviewPixels[i] = NULL;
     psbbnCoverSourceWidth[i] = 0;
     psbbnCoverSourceHeight[i] = 0;
     psbbnCoverLoaded[i] = 0;

@@ -44,6 +44,13 @@ void prepareGridPageBuffer(int buffer, int pageBase, int *pageBases,
                            int *pageComplete, int *pageNextSlot);
 void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx,
                         int useFullResolution);
+void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx);
+int collectionArtBackgroundAvailable(void);
+void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx);
+int collectionCoversReady(TargetList *titles, int selectedTitleIdx);
+void suspendCollectionCovers(void);
+void adoptOrbitCoversForCollection(void);
+void updateCollectionCoverResidency(int flowOffset);
 void updatePSBBNCoverResidency(int flowOffset);
 void refreshOrbsLogos(TargetList *titles, int selectedTitleIdx);
 void refreshOrbsBackground(Target *target);

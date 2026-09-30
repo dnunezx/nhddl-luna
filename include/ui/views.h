@@ -15,7 +15,7 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
                    int entryProgress, uint32_t frameNowMs,
                    const char *nextViewLabel);
 void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers,
-                         int flowOffset, int outgoingTitleIdx, int favoritesOnly,
+                         int flowOffset, int outgoingTitleIdx, int favoritesOnly, int fastScrolling,
                          int entryProgress, uint32_t frameNowMs,
                          const char *nextViewLabel);
 void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBase,

@@ -105,6 +105,9 @@ int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, c
 // Use the faster drawText method if window limits are not important.
 int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_t alignment, const char *text);
 
+// Draws a single line shifted left within a clipped horizontal window.
+int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *text, int scrollX);
+
 // Frees memory used by the font
 void closeFont();
 

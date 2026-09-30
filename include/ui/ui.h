@@ -4,9 +4,11 @@
 #include "target.h"
 #include "options.h"
 #include <gsKit.h>
+#include <stdint.h>
 
 int uiInit();
-int uiLoop(TargetList *titles);
+uint32_t uiNowMs(void);
+int uiLoop(TargetList *titles, int preparedCollectionIdx);
 void uiLaunchTitle(Target *target, ArgumentList *arguments);
 
 // Splash screen log level types

@@ -546,6 +546,55 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
   return curY + font->lineHeight;
 }
 
+int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *text, int scrollX) {
+  float curX = x1 - scrollX;
+  const int previousAlphaTest = gsGlobal->Test->ATST;
+  const int previousAlphaReference = gsGlobal->Test->AREF;
+  const int previousAlphaFail = gsGlobal->Test->AFAIL;
+
+  gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
+  gsGlobal->Test->ATST = 2;
+  gsGlobal->Test->AREF = 0x80;
+  gsGlobal->Test->AFAIL = 0;
+  gsKit_set_test(gsGlobal, GS_ATEST_ON);
+
+  for (int i = 0; text[i] != '\0' && text[i] != '\n'; i++) {
+    const BMFontChar *glyph = getGlyph(text[i]);
+    if (glyph == NULL)
+      continue;
+
+    float glyphLeft = curX + glyph->xoffset;
+    float glyphRight = glyphLeft + glyph->width;
+    if (glyph->width > 0 && glyphRight > x1 && glyphLeft < x2) {
+      float clippedLeft = (glyphLeft < x1) ? x1 : glyphLeft;
+      float clippedRight = (glyphRight > x2) ? x2 : glyphRight;
+      float textureScale = (glyph->width + 1.0f) / glyph->width;
+      float u1 = glyph->x + (clippedLeft - glyphLeft) * textureScale;
+      float u2 = glyph->x + (clippedRight - glyphLeft) * textureScale;
+      gsKit_TexManager_bind(gsGlobal, fontPages[glyph->page]);
+      gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],
+                                clippedLeft, y + glyph->yoffset, u1, glyph->y,
+                                clippedRight, y + glyph->yoffset + glyph->height,
+                                u2, glyph->y + glyph->height + 1, z, color);
+    }
+
+    curX += glyph->xadvance;
+    if (glyph->kernings && text[i + 1] != '\0') {
+      for (int k = 0; k < glyph->kerningsCount; k++) {
+        if (glyph->kernings[k].secondChar == text[i + 1])
+          curX += glyph->kernings[k].amount;
+      }
+    }
+  }
+
+  gsGlobal->Test->ATST = previousAlphaTest;
+  gsGlobal->Test->AREF = previousAlphaReference;
+  gsGlobal->Test->AFAIL = previousAlphaFail;
+  gsKit_set_test(gsGlobal, GS_ATEST_ON);
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+  return y + font->lineHeight;
+}
+
 // Loads a 32-bit RGBA PNG texture from memory. Callers that are going to
 // resize the decoded pixels can defer the GS upload and bind only the final
 // texture, avoiding a redundant full-resolution transfer.

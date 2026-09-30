@@ -6,7 +6,14 @@
 enum {
   PSBBN_COVER_BACKGROUND_Z = 4,
   PSBBN_COVER_FOREGROUND_Z = 7,
+  COLLECTION_TITLE_SCROLL_SPEED = 24,
+  COLLECTION_TITLE_START_PAUSE_MS = 1000,
+  COLLECTION_TITLE_END_PAUSE_MS = 1400,
+  COLLECTION_TITLE_SLIDE_MS = 1200,
 };
+
+static const Target *collectionVisibleTitle;
+static uint32_t collectionTitleStartMs;
 
 void drawPSBBNCover(GSTEXTURE *cover, float x1, float y1, float size, int cacheIdx, int emphasis, int visibility, int z) {
   float x2 = x1 + size;
@@ -171,7 +178,7 @@ void formatPSBBNTitle(const char *source, char *destination, int maxWidth) {
 }
 
 void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int flowOffset,
-                         int outgoingTitleIdx, int favoritesOnly,
+                         int outgoingTitleIdx, int favoritesOnly, int fastScrolling,
                          int entryProgress, uint32_t frameNowMs,
                          const char *nextViewLabel) {
   int top = headerHeight + 12;
@@ -226,6 +233,7 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
                  favoritesOnly ? FontMainColor : HeaderTextColor, ALIGN_LEFT, "Favorites");
 
   if (titles->total <= 0) {
+    collectionVisibleTitle = NULL;
     drawTextWindow(40, headerHeight + 96, panelRight, selectorCenterY - getFontLineHeight() * 2,
                    5, HeaderTextColor, ALIGN_CENTER,
                    "NO FAVORITES YET\nAdd favorites in List");
@@ -233,6 +241,17 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
     drawCollectionEntryFade(entryProgress);
     return;
   }
+
+  // On a cold entry, reveal the prepared jackets together instead of drawing
+  // each one as its worker job finishes. The ambient background keeps moving.
+  if (entryProgress < 0) {
+    collectionVisibleTitle = NULL;
+    drawCollectionFooter(nextViewLabel, 0);
+    drawCollectionEntryFade(0);
+    return;
+  }
+  if (entryProgress == 0)
+    collectionVisibleTitle = NULL;
 
   // Every cached title occupies one point on the same continuous horizontal
   // path. A fractional flow offset moves the whole sequence; size and glow are
@@ -249,11 +268,55 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
     }
   }
 
-  // Keep the position counter tied to the cover nearest the animated focal
-  // point. Collection intentionally omits the title above the focal cover.
+  // Keep the position counter tied to the cover nearest the animated focal point.
   if (visualFocus >= 0) {
     char focusCounter[32];
     int counterRight = gsGlobal->Width - keepoutArea;
+
+    // Show the title only after the cover settles. Fast scanning keeps it
+    // hidden even between individual scan steps.
+    if (!fastScrolling && flowOffset == 0) {
+      Target *focusTitle = getTargetByIdx(titles, targetIndex[visualFocus]);
+      int titleY = selectedY - getFontLineHeight() - 8;
+      float titleWidth = getLineWidth(focusTitle->name);
+      if (collectionVisibleTitle != focusTitle) {
+        collectionVisibleTitle = focusTitle;
+        collectionTitleStartMs = frameNowMs;
+      }
+      uint32_t titleElapsedMs = frameNowMs - collectionTitleStartMs;
+      int slideProgress = titleElapsedMs >= COLLECTION_TITLE_SLIDE_MS ? 1000
+          : lunaNavEase((int)(titleElapsedMs * 1000U / COLLECTION_TITLE_SLIDE_MS));
+      // Begin inside the selected jacket and let its higher depth hide the
+      // title until it rises past the jacket's top edge.
+      int slideStartY = selectedY + getFontLineHeight() + 20;
+      int slideY = titleY + (slideStartY - titleY) * (1000 - slideProgress) / 1000;
+      if (titleWidth <= selectedSize) {
+        drawTextWindow(selectedX, slideY, selectedX + selectedSize, 0, 3,
+                       FontMainColor, ALIGN_HCENTER, focusTitle->name);
+      } else {
+        int overflow = (int)(titleWidth - selectedSize + 0.99f);
+        uint32_t travelMs = (uint32_t)overflow * 1000 / COLLECTION_TITLE_SCROLL_SPEED;
+        uint32_t cycleMs = COLLECTION_TITLE_START_PAUSE_MS +
+                           COLLECTION_TITLE_END_PAUSE_MS + 2 * travelMs;
+        uint32_t phase = titleElapsedMs < COLLECTION_TITLE_SLIDE_MS ? 0
+            : (titleElapsedMs - COLLECTION_TITLE_SLIDE_MS) % cycleMs;
+        int scrollX = 0;
+        if (phase > COLLECTION_TITLE_START_PAUSE_MS) {
+          phase -= COLLECTION_TITLE_START_PAUSE_MS;
+          if (phase < travelMs)
+            scrollX = (int)((uint64_t)phase * overflow / travelMs);
+          else if (phase < travelMs + COLLECTION_TITLE_END_PAUSE_MS)
+            scrollX = overflow;
+          else
+            scrollX = overflow - (int)((uint64_t)(phase - travelMs -
+                      COLLECTION_TITLE_END_PAUSE_MS) * overflow / travelMs);
+        }
+        drawTextMarquee(selectedX, slideY, selectedX + selectedSize, 3,
+                        FontMainColor, focusTitle->name, scrollX);
+      }
+    } else {
+      collectionVisibleTitle = NULL;
+    }
 
     snprintf(focusCounter, sizeof(focusCounter), "%d/%d", targetIndex[visualFocus] + 1, titles->total);
     drawTextWindow(selectedX + selectedSize - 58, favoritesTextY, counterRight, 0, 5,

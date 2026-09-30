@@ -21,8 +21,8 @@
 #define OPTIONS_OPEN_DURATION_MS 360
 #define OPTIONS_CLOSE_DURATION_MS 180
 #define OPTIONS_GLASS_FADE_DURATION_MS 180
-#define OPTIONS_SELECTION_GLOW_DURATION_MS 110
-#define OPTIONS_GLOW_ROW_SCALE 256
+#define OPTIONS_SELECTOR_GLIDE_DURATION_MS 110
+#define OPTIONS_SELECTOR_ROW_SCALE 256
 
 typedef enum {
   OPTIONS_PER_GAME,
@@ -215,9 +215,9 @@ static void drawOptionsFooter(int gamePage, int argumentList, int dirty,
 
 static int optionsSelectorProgress(const OptionsSelector *selector, uint32_t now) {
   uint32_t elapsed = now - selector->startMs;
-  if (elapsed >= OPTIONS_SELECTION_GLOW_DURATION_MS)
+  if (elapsed >= OPTIONS_SELECTOR_GLIDE_DURATION_MS)
     return 1000;
-  int progress = (int)(elapsed * 1000ULL / OPTIONS_SELECTION_GLOW_DURATION_MS);
+  int progress = (int)(elapsed * 1000ULL / OPTIONS_SELECTOR_GLIDE_DURATION_MS);
   return (int)((int64_t)progress * progress * (3000 - 2 * progress) / 1000000);
 }
 
@@ -227,38 +227,37 @@ static int optionsSelectorY(OptionsSelector *selector, OptionsPage page,
   if (!selector->initialized || selector->page != page) {
     selector->page = page;
     selector->selectedRow = selectedRow;
-    selector->fromRow = selectedY * OPTIONS_GLOW_ROW_SCALE;
+    selector->fromRow = selectedY * OPTIONS_SELECTOR_ROW_SCALE;
     selector->toRow = selector->fromRow;
     selector->startMs = now;
     selector->initialized = 1;
   } else if (selector->selectedRow != selectedRow) {
     int progress = optionsSelectorProgress(selector, now);
     selector->fromRow += (selector->toRow - selector->fromRow) * progress / 1000;
-    selector->toRow = selectedY * OPTIONS_GLOW_ROW_SCALE;
+    selector->toRow = selectedY * OPTIONS_SELECTOR_ROW_SCALE;
     selector->selectedRow = selectedRow;
     selector->startMs = now;
   }
   int progress = optionsSelectorProgress(selector, now);
   int row = selector->fromRow +
             (selector->toRow - selector->fromRow) * progress / 1000;
-  return row / OPTIONS_GLOW_ROW_SCALE;
+  return row / OPTIONS_SELECTOR_ROW_SCALE;
 }
 
 static void drawOptionsRowSelector(int left, int top, int right) {
-  const int bottom = top + getFontLineHeight();
+  const int plateTop = psbbnFieldStableY(top - 3);
+  const int plateBottom = psbbnFieldStableY(top + getFontLineHeight() + 3);
   const int insetLeft = left + 6;
   const int insetRight = right - 6;
 
-  // A quiet glass plate keeps both the setting and its value readable. The
-  // bright leading edge identifies the active row without the list glow.
-  gsKit_prim_sprite(gsGlobal, insetLeft, top - 3, insetRight, bottom + 3, 2,
+  // Fill and leading edge span both interlaced fields; thin horizontal rules
+  // would shimmer on a CRT. Keep the plate quiet behind the setting text.
+  gsKit_prim_sprite(gsGlobal, insetLeft, plateTop,
+                    insetRight, plateBottom, 2,
                     glassPresetColor(0x16, 0x54, 0x82, 0x38));
-  gsKit_prim_sprite(gsGlobal, insetLeft, top - 3, insetRight, top - 2, 3,
-                    glassPresetColor(0x78, 0xC8, 0xE8, 0x24));
-  gsKit_prim_sprite(gsGlobal, insetLeft, bottom + 2, insetRight, bottom + 3, 3,
-                    glassPresetColor(0x78, 0xC8, 0xE8, 0x18));
-  gsKit_prim_sprite(gsGlobal, insetLeft, top - 3, insetLeft + 3, bottom + 3, 4,
-                    glassPresetColor(0x70, 0xD8, 0xF8, 0x70));
+  gsKit_prim_sprite(gsGlobal, insetLeft, plateTop,
+                    insetLeft + 5, plateBottom, 3,
+                    glassPresetColor(0x70, 0xD8, 0xF8, 0x68));
 }
 
 static void drawOptionsTextRow(int x, int y, int right, int selected,

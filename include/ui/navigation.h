@@ -87,6 +87,11 @@ int lunaNavDirection(int total, int fromIdx, int toIdx);
 int lunaNavEase(int progress);
 int lunaNavAnimatedOffset(int startOffset, uint32_t startTime, uint32_t duration,
                           uint32_t now);
+uint32_t lunaNavDurationFrames(uint32_t durationMs, int framesPerSecond);
+int lunaNavClassicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
+                                   uint32_t durationFrames);
+int lunaNavCubicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
+                                 uint32_t durationFrames);
 int lunaNavGridCascadeProgress(int progress, int row, int incoming);
 int lunaNavRandomTarget(int total, int selectedIndex, uint32_t randomSeed);
 int lunaNavMarkedCount(const uint8_t *marked, int total);

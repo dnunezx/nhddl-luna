@@ -166,6 +166,31 @@ int lunaNavAnimatedOffset(int startOffset, uint32_t startTime, uint32_t duration
   return (startOffset * (1000 - lunaNavEase(progress))) / 1000;
 }
 
+uint32_t lunaNavDurationFrames(uint32_t durationMs, int framesPerSecond) {
+  uint32_t frames = (uint32_t)(((uint64_t)durationMs * framesPerSecond + 500) / 1000);
+  return frames > 0 ? frames : 1;
+}
+
+// Classic Glide: the previous Collection motion, preserved for quick rollback.
+int lunaNavClassicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
+                                   uint32_t durationFrames) {
+  int progress = (durationFrames == 0 || elapsedFrames >= durationFrames)
+                     ? 1000
+                     : (int)((elapsedFrames * 1000ULL) / durationFrames);
+  return (startOffset * (1000 - lunaNavEase(progress))) / 1000;
+}
+
+// Match the PR's remaining-frames-cubed glide: brisk at first, then soft at rest.
+int lunaNavCubicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
+                                 uint32_t durationFrames) {
+  if (durationFrames == 0 || elapsedFrames >= durationFrames)
+    return 0;
+  int64_t remaining = durationFrames - elapsedFrames;
+  int64_t duration = durationFrames;
+  return (int)((startOffset * remaining * remaining * remaining) /
+               (duration * duration * duration));
+}
+
 int lunaNavGridCascadeProgress(int progress, int row, int incoming) {
   int start = row * GRID_CASCADE_ROW_STAGGER +
               (incoming ? GRID_CASCADE_FOLLOW_DELAY : 0);

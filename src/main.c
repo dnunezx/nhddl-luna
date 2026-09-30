@@ -10,6 +10,7 @@
 #include "target.h"
 #include "ui/ui.h"
 #include "ui/ambient.h"
+#include "ui/art_cache.h"
 #include "ui/view_state.h"
 #include <ctype.h>
 #include <debug.h>
@@ -40,6 +41,7 @@ static const char legacyRootFallbackPath[] = "/nhddl/nhddl.yaml";
 // require an explicit mode entry in the options file.
 #define LUNA_LIBRARY_DEFAULT_MODES (MODE_ATA | MODE_HDL)
 #define LUNA_LIBRARY_OPT_IN_MODES (MODE_USB | MODE_MX4SIO | MODE_MMCE | MODE_ILINK | MODE_UDPFS)
+#define COLLECTION_BOOT_PREPARE_MAX_MS 5000
 static ModeType configuredLibraryModes = MODE_NONE;
 
 #ifndef GIT_VERSION
@@ -140,6 +142,7 @@ int main(int argc, char *argv[]) {
   if (ChangeThreadPriority(GetThreadId(), 0x20) < 0)
     DPRINTF("WARN: Could not lower UI thread priority for ambient audio\n");
 
+  int preparedCollectionIdx = -1;
   // Start the soundtrack as soon as the library drive is ready, while the
   // splash is still visible. Use the restored title for its audio preference.
   if (titles->total > 0) {
@@ -158,10 +161,28 @@ int main(int argc, char *argv[]) {
       }
     }
     ambientStart(loadAmbientSoundEnabled(audioTarget));
+
+    UILibraryView startupView = loadLastLibraryView(audioTarget);
+    uint32_t enabledViews = loadEnabledLibraryViews(audioTarget);
+    if (!(enabledViews & (1U << startupView)))
+      startupView = lunaNavNextView(startupView, enabledViews);
+    if (startupView == UI_VIEW_PSBBN && collectionArtBackgroundAvailable()) {
+      // Decode the opening jacket window while the existing splash animation
+      // continues. The UI loop adopts these exact cache slots after splash.
+      preparedCollectionIdx = audioTarget->idx;
+      refreshCollectionCovers(titles, preparedCollectionIdx, -1);
+      uint32_t prepareStartMs = uiNowMs();
+      while (!collectionCoversReady(titles, preparedCollectionIdx) &&
+             (uint32_t)(uiNowMs() - prepareStartMs) < COLLECTION_BOOT_PREPARE_MAX_MS) {
+        serviceCollectionCovers(titles, preparedCollectionIdx);
+        usleep(16000);
+      }
+      serviceCollectionCovers(titles, preparedCollectionIdx);
+    }
   }
 
   stopUISplashThread();
-  if ((res = uiLoop(titles))) {
+  if ((res = uiLoop(titles, preparedCollectionIdx))) {
     init_scr();
     logString("\n\nERROR: UI loop failed: %d\n", res);
     goto fail;
