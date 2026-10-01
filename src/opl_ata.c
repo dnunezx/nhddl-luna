@@ -24,9 +24,10 @@
 #include <fileXio_rpc.h>
 
 #define OPL_STORAGE_START 0x00097000u
-#define OPL_STORAGE_LIMIT 0x000F8000u // LUNA's Neutrino trampoline begins here.
+#define OPL_STORAGE_LIMIT 0x000D0000u // Match OPL's reserved module region.
 #define OPL_CORE_START 0x00084000u
 #define OPL_CORE_LIMIT OPL_STORAGE_START
+#define OPL_CLEAR_END 0x00100000u
 #define OPL_PAYLOAD_LIMIT (128 * 1024)
 #define OPL_MODULE_INFO(id, size) (((id) << 24) | (size))
 #define ATA_DEVCTL_IS_48BIT 0x6840
@@ -35,6 +36,7 @@
 #define OPL_COMPAT_DVD_DL 0x0004
 #define OPL_COMPAT_ACCURATE_READS 0x0008
 #define OPL_COMPAT_ENABLE_POFF 0x0100
+#define OPL_COMPAT_IOP_POFF 0x80000000u
 
 typedef struct {
   unsigned char ident[16];
@@ -165,7 +167,7 @@ static int prepareDisc(Target *target, uint8_t compat) {
       ((compat & (1U << 1)) ? OPL_COMPAT_ALT_READ : 0) |
       ((compat & (1U << 3)) ? OPL_COMPAT_SKIP_VIDEOS : 0) |
       ((compat & (1U << 4)) ? OPL_COMPAT_DVD_DL : 0) |
-      ((compat & (1U << 5)) ? OPL_COMPAT_ENABLE_POFF : 0);
+      OPL_COMPAT_ENABLE_POFF;
   memset(settings->common.DiscID, 0, sizeof(settings->common.DiscID));
   settings->common.zso_cache = 0;
   settings->common.fakemodule_flags = (1 << 0) | (1 << 3) | (1 << 4) | (1 << 5);
@@ -343,20 +345,16 @@ int launchOplAta(Target *target, ArgumentList *arguments,
                           payloads[PAYLOAD_IMGDRV].size,
                           payloads[PAYLOAD_RESETSPU].size};
   uintptr_t cursor = ((uintptr_t)(modules + 4) + 15) & ~15u;
+  uintptr_t moduleAddresses[4];
   for (int i = 0; i < 4; i++) {
     if (cursor + sizes[i] >= OPL_STORAGE_LIMIT) {
       free(ioprp);
       freePayloads();
       return -EFBIG;
     }
-    memcpy((void *)cursor, data[i], sizes[i]);
-    modules[i].ptr = (void *)cursor;
-    modules[i].info = OPL_MODULE_INFO(ids[i], sizes[i]);
+    moduleAddresses[i] = cursor;
     cursor += (sizes[i] + 15) & ~15u;
   }
-  table->modules = modules;
-  table->count = 4;
-  free(ioprp);
   void *storageEnd = (void *)((cursor + 63) & ~63u);
 
   OplElfHeader *elf = (OplElfHeader *)payloads[PAYLOAD_CORE].data;
@@ -365,6 +363,8 @@ int launchOplAta(Target *target, ArgumentList *arguments,
   config->magic[0] = OPL_ATA_CORE_MAGIC_0;
   config->magic[1] = OPL_ATA_CORE_MAGIC_1;
   strcpy(config->GameModeDesc, "BDM_ATA_MODE");
+  Argument *debug = getArgument(arguments, "dbc");
+  config->EnableDebug = debug != NULL && !debug->isDisabled;
   // The HDD return target uses the console's browser boot chain, which
   // routes the held START button back into LUNA. Other configured targets
   // are launcher ELFs that OPL can load directly after IGR.
@@ -375,12 +375,15 @@ int launchOplAta(Target *target, ArgumentList *arguments,
     strcpy(config->ExitPath, returnPath);
   else {
     DPRINTF("OPL: return path exceeds core limit\n");
+    free(ioprp);
     freePayloads();
     return -ENAMETOOLONG;
   }
   DPRINTF("OPL: IGR return target %s\n", config->ExitPath);
   strlcpy(config->GameID, target->id, sizeof(config->GameID));
-  config->_CompatMask = compat;
+  // Leave controller IGR configurable, but always hand a physical power press
+  // to CDVDMAN's IOP shutdown thread, even before a game opens its pad.
+  config->_CompatMask = compat | OPL_COMPAT_IOP_POFF;
   config->ModStorageStart = table;
   config->ModStorageEnd = storageEnd;
   GetOsdConfigParam(&config->CustomOSDConfigParam);
@@ -389,9 +392,24 @@ int launchOplAta(Target *target, ArgumentList *arguments,
                        &config->eeloadCopy, &config->initUserMemory);
   if (result) {
     DPRINTF("OPL: unsupported kernel; handoff cancelled\n");
+    free(ioprp);
     freePayloads();
     return result;
   }
+
+  // Commit the handoff only after all checks that can fall back to Neutrino.
+  // OPL clears this range before installing its EE core and IOP modules.
+  ambientStop();
+  memset((void *)OPL_CORE_START, 0, OPL_CLEAR_END - OPL_CORE_START);
+  for (int i = 0; i < 4; i++) {
+    memcpy((void *)moduleAddresses[i], data[i], sizes[i]);
+    modules[i].ptr = (void *)moduleAddresses[i];
+    modules[i].info = OPL_MODULE_INFO(ids[i], sizes[i]);
+  }
+  table->modules = modules;
+  table->count = 4;
+  free(ioprp);
+
   OplElfProgram *segments = (OplElfProgram *)(payloads[PAYLOAD_CORE].data + elf->phoff);
   for (int i = 0; i < elf->phnum; i++) {
     if (segments[i].type != 1)
@@ -409,11 +427,11 @@ int launchOplAta(Target *target, ArgumentList *arguments,
   if (progress)
     progress(LAUNCH_STAGE_STARTING, userdata);
   DPRINTF("OPL: starting EE core at %08x with %s\n", elf->entry, bootPath);
-  ambientStop();
   FlushCache(WRITEBACK_DCACHE);
   FlushCache(INVALIDATE_ICACHE);
   fileXioExit();
   SifExitRpc();
   ExecPS2((void *)elf->entry, NULL, 1, argv);
-  return -EIO;
+  DPRINTF("OPL: ExecPS2 returned after handoff\n");
+  __builtin_trap();
 }
