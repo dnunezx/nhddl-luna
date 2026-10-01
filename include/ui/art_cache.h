@@ -63,6 +63,7 @@ int collectionCoversReady(TargetList *titles, int selectedTitleIdx);
 int collectionCoverMissing(int cacheIdx);
 void suspendCollectionCovers(void);
 void adoptOrbitCoversForCollection(void);
+void adoptCollectionCoversForOrbit(void);
 void updateCollectionCoverResidency(int flowOffset);
 void updatePSBBNCoverResidency(int flowOffset);
 void refreshOrbsLogos(TargetList *titles, int selectedTitleIdx);

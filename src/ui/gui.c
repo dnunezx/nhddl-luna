@@ -1433,6 +1433,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       } else if (previousView == UI_VIEW_PSBBN || previousView == UI_VIEW_ORBIT) {
         if (previousView == UI_VIEW_ORBIT && view == UI_VIEW_PSBBN)
           adoptOrbitCoversForCollection();
+        else if (previousView == UI_VIEW_PSBBN && view == UI_VIEW_ORBIT &&
+                 !libraryListChanged)
+          adoptCollectionCoversForOrbit();
         else if (previousView == UI_VIEW_ORBIT || view == UI_VIEW_ORBIT || wasCollectionFavorites || libraryListChanged)
           releasePSBBNCovers();
         else
@@ -1448,7 +1451,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         releasePSBBNCovers();
 
       if ((previousView == UI_VIEW_ORBIT && view != UI_VIEW_PSBBN) ||
-          view == UI_VIEW_ORBIT || wasCollectionFavorites || libraryListChanged)
+          (view == UI_VIEW_ORBIT && previousView != UI_VIEW_PSBBN) ||
+          (wasCollectionFavorites && view != UI_VIEW_ORBIT) || libraryListChanged)
         psbbnCoverBaseIdx = -1;
       psbbnAnimationTargetIdx = -1;
       psbbnOutgoingTitleIdx = -1;

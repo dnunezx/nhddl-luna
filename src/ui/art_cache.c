@@ -981,6 +981,14 @@ void adoptOrbitCoversForCollection(void) {
   }
 }
 
+void adoptCollectionCoversForOrbit(void) {
+  // Finished Collection jackets already occupy the same slots Orbit needs.
+  // Let Orbit request unfinished slots while a pending Collection decode winds down.
+  collectionArtGeneration++;
+  for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++)
+    collectionCoverAttempted[i] = collectionCoverResolved[i];
+}
+
 void releaseGridTexture(GSTEXTURE *texture) {
   for (int buffer = 0; buffer < GRID_SELECTED_BUFFERS; buffer++) {
     if (texture == gridSelectedTextures[buffer]) {
@@ -2041,9 +2049,35 @@ void recordCollectionCoverBind(uint32_t elapsedMs) {
 
 void serviceOrbitCovers(TargetList *titles, int selectedTitleIdx) {
   static const uint8_t priority[PSBBN_COVER_CACHE_COUNT] = {3, 4, 2, 5, 1, 6, 7, 8, 9, 0};
-  if (orbitArtThreadId >= 0 && titles->total > 0)
+  if (orbitArtThreadId >= 0 && titles->total > 0) {
+    // Reattach decoded covers on the UI thread before scheduling disk work.
+    for (int p = 0; p < PSBBN_COVER_CACHE_COUNT; p++) {
+      int i = priority[p];
+      char path[255];
+      CollectionArtPixels pixels = {0};
+      if (collectionCoverResolved[i] ||
+          collectionCoverPath(titles, selectedTitleIdx, i, path, sizeof(path)) < 0 ||
+          !collectionArtReuseTake(&collectionReuseCache, path, &pixels))
+        continue;
+      releasePSBBNCoverCacheEntry(i);
+      GSTEXTURE *texture = psbbnCoverTextures[i];
+      memset(texture, 0, sizeof(*texture));
+      texture->Mem = pixels.thumbnail;
+      texture->Width = texture->Height = PSBBN_THUMBNAIL_SIZE;
+      texture->PSM = GS_PSM_CT32;
+      texture->Filter = GS_FILTER_LINEAR;
+      texture->Delayed = 1;
+      psbbnCoverSourcePixels[i] = pixels.source;
+      collectionCoverPreviewPixels[i] = pixels.preview;
+      collectionCoverThumbnailPixels[i] = pixels.thumbnail;
+      psbbnCoverSourceWidth[i] = pixels.width;
+      psbbnCoverSourceHeight[i] = pixels.height;
+      strcpy(collectionCoverKeys[i], path);
+      psbbnCoverLoaded[i] = collectionCoverAttempted[i] = collectionCoverResolved[i] = 1;
+    }
     serviceBackgroundCovers(titles, selectedTitleIdx, &orbitArtJob,
                             orbitArtGeneration, orbitArtWakeSema, priority, NULL);
+  }
 }
 
 int collectionCoversReady(TargetList *titles, int selectedTitleIdx) {
