@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define LUNA_GAME_COMPAT_COUNT 5
-#define LUNA_GAME_ROW_COUNT 12
+#define LUNA_GAME_ROW_COUNT 13
 
 typedef enum {
   LUNA_GAME_FAST_READS,
@@ -19,7 +19,8 @@ typedef enum {
   LUNA_GAME_VIDEO_MODE,
   LUNA_GAME_FIELD_FLIP,
   LUNA_GAME_PS2_LOGO,
-  LUNA_GAME_DEBUG_COLORS
+  LUNA_GAME_DEBUG_COLORS,
+  LUNA_GAME_CORE
 } LunaGameRow;
 
 typedef struct {
@@ -28,6 +29,7 @@ typedef struct {
   int fieldFlip; // 0 = off, 1..3 = field flipping modes
   int ps2Logo;
   int debugColors;
+  int oplCore;
   char vmcSlotLabel[2][25];
 } LunaGameOptions;
 

@@ -7,6 +7,7 @@
 #include "ui/pad.h"
 #include "ui/view_state.h"
 #include "options.h"
+#include "devices/devices.h"
 #include "vmc_create.h"
 #include "storage.h"
 #include <ctype.h>
@@ -101,7 +102,7 @@ static const char *const gameRowLabels[LUNA_GAME_ROW_COUNT] = {
     "IOP: Fix game buffer overrun", "Launch arguments",
     "VMC slot 1", "VMC slot 2",
     "Video mode", "Field flipping",
-    "Show PS2 logo", "Debug colors"};
+    "Show PS2 logo", "Debug colors", "Game core"};
 
 static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Use faster IOP disc reads for this game.",
@@ -115,7 +116,8 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Choose a forced output mode for this game.",
     "Choose field flipping for a forced video mode.",
     "Choose Inherit to use the Global PS2 logo setting.",
-    "Display debug colors while loading."};
+    "Display debug colors while loading.",
+    "Choose the loader for this ATA game. Neutrino is the default."};
 
 static const char *const gameSectionLabels[GAME_SECTION_COUNT] = {
     "Virtual memory cards", "Compatibility", "Video", "Launch & debug"};
@@ -130,8 +132,15 @@ static const LunaGameRow gameSectionRows[GAME_SECTION_COUNT][5] = {
      LUNA_GAME_UNHOOK_SYSCALLS, LUNA_GAME_DVD_DL,
      LUNA_GAME_BUFFER_OVERRUN},
     {LUNA_GAME_VIDEO_MODE, LUNA_GAME_FIELD_FLIP},
-    {LUNA_GAME_PS2_LOGO, LUNA_GAME_LAUNCH_ARGUMENTS, LUNA_GAME_DEBUG_COLORS}};
-static const int gameSectionRowCounts[GAME_SECTION_COUNT] = {4, 5, 2, 3};
+    {LUNA_GAME_PS2_LOGO, LUNA_GAME_LAUNCH_ARGUMENTS,
+     LUNA_GAME_DEBUG_COLORS, LUNA_GAME_CORE}};
+static const int gameSectionRowCounts[GAME_SECTION_COUNT] = {4, 5, 2, 4};
+
+static int gameSectionRowCount(const OptionsMenuState *state, GameSection section) {
+  if (section == GAME_LAUNCH && state->target->device->mode != MODE_ATA)
+    return 3;
+  return gameSectionRowCounts[section];
+}
 
 #define OPTIONS_VIEW_ART_LAYOUT_ROW (UI_VIEW_SAVE_ICONS + 1)
 #define OPTIONS_VIEW_ROW_COUNT (UI_VIEW_SAVE_ICONS + 2)
@@ -559,7 +568,7 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
           gameVMCEnabled(state->titleArguments) ? "Enabled" : "Disabled",
           compatSummary,
           lunaGameOptionsValue(&state->gameOptions, LUNA_GAME_VIDEO_MODE),
-          "3 options"};
+          state->target->device->mode == MODE_ATA ? "4 options" : "3 options"};
       drawOptionsSection(contentTop, "Game settings", 0);
       int selectorY = optionsSelectorY(&state->selector, state->page,
           state->selectedGameHubRow, firstY + state->selectedGameHubRow * gameStep);
@@ -582,7 +591,7 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
         int selectorY = optionsSelectorY(&state->selector, state->page,
             GAME_SECTION_COUNT + section * 5 + state->selectedGameRow,
             firstY + state->selectedGameRow * gameStep);
-        for (int row = 0; row < gameSectionRowCounts[section]; row++) {
+        for (int row = 0; row < gameSectionRowCount(state, section); row++) {
           LunaGameRow option = gameSectionRows[section][row];
           drawOptionsTextRow(baseX, firstY + row * gameStep,
                              gsGlobal->Width - baseX,
@@ -1069,7 +1078,7 @@ static int handleGameInput(OptionsMenuState *state, int input) {
   }
   int count = state->gameSection == GAME_MEMORY_CARDS &&
               !gameVMCEnabled(state->titleArguments) ? 3 :
-              gameSectionRowCounts[state->gameSection];
+              gameSectionRowCount(state, state->gameSection);
   if (input & PAD_UP) {
     state->selectedGameRow = (state->selectedGameRow + count - 1) % count;
     return 0;

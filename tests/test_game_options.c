@@ -54,6 +54,14 @@ int main(void) {
   assert(options.compat == ((1 << 0) | (1 << 1) | (1 << 4)));
   assert(options.videoMode == 2 && options.fieldFlip == 2);
   assert(options.ps2Logo && !options.debugColors);
+  assert(!options.oplCore);
+  assert(!strcmp(lunaGameOptionsValue(&options, LUNA_GAME_CORE), "Neutrino"));
+  assert(lunaGameOptionsChange(&options, &arguments, LUNA_GAME_CORE, 1));
+  Argument *core = getArgument(&arguments, "luna_core");
+  assert(core != NULL && !core->isDisabled && !strcmp(core->value, "opl"));
+  assert(!strcmp(lunaGameOptionsValue(&options, LUNA_GAME_CORE), "OPL"));
+  assert(lunaGameOptionsChange(&options, &arguments, LUNA_GAME_CORE, 1));
+  assert(core->isDisabled && !options.oplCore);
 
   assert(lunaGameOptionsChange(&options, &arguments, LUNA_GAME_FAST_READS, 1));
   assert(!strcmp(compat->value, "27") && !compat->isGlobal);

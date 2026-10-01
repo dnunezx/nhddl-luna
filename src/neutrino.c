@@ -4,6 +4,7 @@
 #include "devices/init.h"
 #include "dprintf.h"
 #include "neutrino.h"
+#include "opl_ata.h"
 #include "ui/ambient.h"
 #include "options.h"
 #include <debug.h>
@@ -56,7 +57,7 @@ int assembleArgv(ArgumentList *arguments, char **argv[]) {
 
   *argv[0] = NEUTRINO_ELF_PATH;
   while (curArg != NULL) {
-    if (!curArg->isDisabled) {
+    if (!curArg->isDisabled && strcmp(curArg->arg, "luna_core") != 0) {
       argSize = strlen(curArg->arg) + (curArg->value ? strlen(curArg->value) : 0) + 3; // + \0, = and -
       char *value = calloc(sizeof(char), argSize);
 
@@ -82,6 +83,16 @@ int assembleArgv(ArgumentList *arguments, char **argv[]) {
 // Expects arguments to be initialized
 void launchTitleWithProgress(Target *target, ArgumentList *arguments,
                              LaunchProgressCallback progress, void *userdata) {
+  // LUNA metadata is not a Neutrino command-line option. A missing or disabled
+  // setting keeps the existing Neutrino default.
+  Argument *core = getArgument(arguments, "luna_core");
+  if (core != NULL) {
+    if (!core->isDisabled && core->value != NULL &&
+        strcmp(core->value, "opl") == 0) {
+      int result = launchOplAta(target, progress, userdata);
+      DPRINTF("OPL launch unavailable (%d); using Neutrino\n", result);
+    }
+  }
   // Append arguments
   char *bsdValue;
   // Map target device index to Neutrino bsd argument
@@ -185,6 +196,15 @@ int findNeutrinoELF(char *cwdPath) {
     if (!tryFile(NEUTRINO_ELF_PATH))
       return 0;
   }
+
+#ifdef LUNA_EMULATOR_BUILD
+  // Direct-ELF gameargs replace argv[0], so the forwarder has no CWD path.
+  // Keep its runtime payload discovery beside the emulator's launched ELF.
+  if (!tryFile("host:/neutrino.elf")) {
+    strcpy(NEUTRINO_ELF_PATH, "host:/neutrino.elf");
+    return 0;
+  }
+#endif
 
   // If neutrino.elf doesn't exist in CWD and all modules are loaded, try fallback paths on storage devices
   struct DeviceMapEntry *device;
