@@ -5,8 +5,9 @@
 #include <stdint.h>
 
 #define LUNA_GAME_COMPAT_COUNT 5
+#define LUNA_NEUTRINO_COMPAT_ROW_COUNT 6
 #define LUNA_OPL_COMPAT_COUNT 6
-#define LUNA_GAME_ROW_COUNT 19
+#define LUNA_GAME_ROW_COUNT 20
 
 typedef enum {
   LUNA_GAME_FAST_READS,
@@ -27,7 +28,8 @@ typedef enum {
   LUNA_GAME_OPL_UNHOOK_SYSCALLS,
   LUNA_GAME_OPL_SKIP_VIDEOS,
   LUNA_GAME_OPL_DVD_DL,
-  LUNA_GAME_OPL_DISABLE_IGR
+  LUNA_GAME_OPL_DISABLE_IGR,
+  LUNA_GAME_NEUTRINO_DISABLE_IGR
 } LunaGameRow;
 
 typedef struct {
@@ -37,6 +39,7 @@ typedef struct {
   int fieldFlip; // 0 = off, 1..3 = field flipping modes
   int ps2Logo;
   int debugColors;
+  int neutrinoIgrDisabled;
   int oplCore;
   int coreInherited;
   char vmcSlotLabel[2][25];

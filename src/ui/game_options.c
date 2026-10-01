@@ -54,6 +54,8 @@ void lunaGameOptionsRead(LunaGameOptions *options, ArgumentList *arguments) {
   }
   options->ps2Logo = argumentEnabled(arguments, "logo");
   options->debugColors = argumentEnabled(arguments, "dbc");
+  options->neutrinoIgrDisabled =
+      argumentEnabled(arguments, "luna_neutrino_disable_igr");
   Argument *core = getArgument(arguments, "luna_core");
   options->oplCore = core != NULL && !core->isDisabled &&
                      core->value != NULL && !strcmp(core->value, "opl");
@@ -110,6 +112,13 @@ int lunaGameOptionsSetVMC(LunaGameOptions *options, ArgumentList *arguments,
 
 int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
                           LunaGameRow row, int direction) {
+  if (row == LUNA_GAME_NEUTRINO_DISABLE_IGR) {
+    int disabled = !options->neutrinoIgrDisabled;
+    if (!setArgument(arguments, "luna_neutrino_disable_igr", "", disabled))
+      return 0;
+    options->neutrinoIgrDisabled = disabled;
+    return 1;
+  }
   if (row >= LUNA_GAME_OPL_ACCURATE_READS && row <= LUNA_GAME_OPL_DISABLE_IGR) {
     uint8_t next = options->oplCompat ^
                    (1U << (row - LUNA_GAME_OPL_ACCURATE_READS));
@@ -230,6 +239,8 @@ int lunaGameOptionsCyclePS2Logo(LunaGameOptions *options,
 }
 
 const char *lunaGameOptionsValue(const LunaGameOptions *options, LunaGameRow row) {
+  if (row == LUNA_GAME_NEUTRINO_DISABLE_IGR)
+    return options->neutrinoIgrDisabled ? "On" : "Off";
   if (row >= LUNA_GAME_OPL_ACCURATE_READS && row <= LUNA_GAME_OPL_DISABLE_IGR)
     return options->oplCompat & (1U << (row - LUNA_GAME_OPL_ACCURATE_READS)) ?
         "On" : "Off";

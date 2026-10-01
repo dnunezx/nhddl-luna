@@ -58,7 +58,8 @@ int assembleArgv(ArgumentList *arguments, char **argv[]) {
   *argv[0] = NEUTRINO_ELF_PATH;
   while (curArg != NULL) {
     if (!curArg->isDisabled && strcmp(curArg->arg, "luna_core") != 0 &&
-        strcmp(curArg->arg, "luna_opl_compat") != 0) {
+        strcmp(curArg->arg, "luna_opl_compat") != 0 &&
+        strcmp(curArg->arg, "luna_neutrino_disable_igr") != 0) {
       argSize = strlen(curArg->arg) + (curArg->value ? strlen(curArg->value) : 0) + 3; // + \0, = and -
       char *value = calloc(sizeof(char), argSize);
 
@@ -162,7 +163,9 @@ void launchTitleWithProgress(Target *target, ArgumentList *arguments,
   appendArgument(arguments, newArgument(isoArgument, target->fullPath));
   if (target->device->mode == MODE_UDPFS && LAUNCHER_OPTIONS.udpfsIp[0])
     appendArgument(arguments, newArgument("udpfs_ip", LAUNCHER_OPTIONS.udpfsIp));
-  if (LAUNCHER_OPTIONS.returnPath[0] != '\0')
+  Argument *disableIgr = getArgument(arguments, "luna_neutrino_disable_igr");
+  if (LAUNCHER_OPTIONS.returnPath[0] != '\0' &&
+      (disableIgr == NULL || disableIgr->isDisabled))
     appendArgument(arguments, newArgument(igrArgument, LAUNCHER_OPTIONS.returnPath));
   // Use quickboot to reduce load times (except for HDL mode because it requires hdlfs module)
   if (target->device->mode != MODE_HDL)

@@ -106,7 +106,7 @@ static const char *const gameRowLabels[LUNA_GAME_ROW_COUNT] = {
     "Video mode", "Field flipping",
     "Show PS2 logo", "Debug colors", "Game core",
     "Accurate reads", "Synchronous reads", "Unhook syscalls",
-    "Skip videos", "Emulate DVD-DL", "Disable IGR"};
+    "Skip videos", "Emulate DVD-DL", "Disable IGR", "Disable IGR"};
 
 static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Use faster IOP disc reads for this game.",
@@ -127,7 +127,8 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Leave EE system calls unhooked in OPL.",
     "Skip PSS and Bink videos in OPL.",
     "Emulate a dual-layer DVD in OPL.",
-    "Disable OPL's in-game reset for this title."};
+    "Disable OPL's in-game reset for this title.",
+    "Disable Neutrino's in-game return for this title."};
 
 static const char *const gameSectionLabels[GAME_SECTION_COUNT] = {
     "Virtual memory cards", "Compatibility", "Video", "Launch & debug"};
@@ -148,6 +149,10 @@ static const LunaGameRow oplCompatRows[LUNA_OPL_COMPAT_COUNT] = {
     LUNA_GAME_OPL_ACCURATE_READS, LUNA_GAME_OPL_SYNC_READS,
     LUNA_GAME_OPL_UNHOOK_SYSCALLS, LUNA_GAME_OPL_SKIP_VIDEOS,
     LUNA_GAME_OPL_DVD_DL, LUNA_GAME_OPL_DISABLE_IGR};
+static const LunaGameRow neutrinoCompatRows[LUNA_NEUTRINO_COMPAT_ROW_COUNT] = {
+    LUNA_GAME_FAST_READS, LUNA_GAME_SYNC_READS,
+    LUNA_GAME_UNHOOK_SYSCALLS, LUNA_GAME_DVD_DL,
+    LUNA_GAME_BUFFER_OVERRUN, LUNA_GAME_NEUTRINO_DISABLE_IGR};
 static const int gameSectionRowCounts[GAME_SECTION_COUNT] = {4, 5, 2, 4};
 
 static int gameUsesOpl(const OptionsMenuState *state) {
@@ -155,8 +160,9 @@ static int gameUsesOpl(const OptionsMenuState *state) {
 }
 
 static int gameSectionRowCount(const OptionsMenuState *state, GameSection section) {
-  if (section == GAME_COMPATIBILITY && gameUsesOpl(state))
-    return LUNA_OPL_COMPAT_COUNT;
+  if (section == GAME_COMPATIBILITY)
+    return gameUsesOpl(state) ? LUNA_OPL_COMPAT_COUNT :
+                               LUNA_NEUTRINO_COMPAT_ROW_COUNT;
   if (section == GAME_LAUNCH && state->target->device->mode != MODE_ATA)
     return 3;
   return gameSectionRowCounts[section];
@@ -164,8 +170,9 @@ static int gameSectionRowCount(const OptionsMenuState *state, GameSection sectio
 
 static LunaGameRow gameSectionRow(const OptionsMenuState *state,
                                   GameSection section, int row) {
-  return section == GAME_COMPATIBILITY && gameUsesOpl(state) ?
-      oplCompatRows[row] : gameSectionRows[section][row];
+  if (section == GAME_COMPATIBILITY)
+    return gameUsesOpl(state) ? oplCompatRows[row] : neutrinoCompatRows[row];
+  return gameSectionRows[section][row];
 }
 
 #define OPTIONS_VIEW_ART_LAYOUT_ROW (UI_VIEW_SAVE_ICONS + 1)
@@ -610,6 +617,8 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
           state->gameOptions.oplCompat : state->gameOptions.compat;
       for (int bit = 0; bit < compatCount; bit++)
         compatEnabled += (compatMask & (1U << bit)) != 0;
+      if (!gameUsesOpl(state))
+        compatEnabled += state->gameOptions.neutrinoIgrDisabled;
       snprintf(compatSummary, sizeof(compatSummary), "%d enabled", compatEnabled);
       const char *const summaries[GAME_SECTION_COUNT] = {
           gameVMCEnabled(state->titleArguments) ? "Enabled" : "Disabled",

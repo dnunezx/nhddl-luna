@@ -365,7 +365,20 @@ int launchOplAta(Target *target, ArgumentList *arguments,
   config->magic[0] = OPL_ATA_CORE_MAGIC_0;
   config->magic[1] = OPL_ATA_CORE_MAGIC_1;
   strcpy(config->GameModeDesc, "BDM_ATA_MODE");
-  strcpy(config->ExitPath, "Browser");
+  // The HDD return target uses the console's browser boot chain, which
+  // routes the held START button back into LUNA. Other configured targets
+  // are launcher ELFs that OPL can load directly after IGR.
+  const char *returnPath = LAUNCHER_OPTIONS.returnPath;
+  if (returnPath[0] == '\0' || strcmp(returnPath, "hdd") == 0)
+    strcpy(config->ExitPath, "Browser");
+  else if (strlen(returnPath) < sizeof(config->ExitPath))
+    strcpy(config->ExitPath, returnPath);
+  else {
+    DPRINTF("OPL: return path exceeds core limit\n");
+    freePayloads();
+    return -ENAMETOOLONG;
+  }
+  DPRINTF("OPL: IGR return target %s\n", config->ExitPath);
   strlcpy(config->GameID, target->id, sizeof(config->GameID));
   config->_CompatMask = compat;
   config->ModStorageStart = table;

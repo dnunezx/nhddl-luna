@@ -54,6 +54,18 @@ int main(void) {
   assert(options.compat == ((1 << 0) | (1 << 1) | (1 << 4)));
   assert(options.videoMode == 2 && options.fieldFlip == 2);
   assert(options.ps2Logo && !options.debugColors);
+  assert(!options.neutrinoIgrDisabled);
+  assert(lunaGameOptionsChange(&options, &arguments,
+                               LUNA_GAME_NEUTRINO_DISABLE_IGR, 1));
+  Argument *neutrinoIgr = getArgument(&arguments, "luna_neutrino_disable_igr");
+  assert(neutrinoIgr && !neutrinoIgr->isDisabled && options.neutrinoIgrDisabled);
+  assert(!strcmp(lunaGameOptionsValue(&options,
+                                      LUNA_GAME_NEUTRINO_DISABLE_IGR), "On"));
+  lunaGameOptionsRead(&options, &arguments);
+  assert(options.neutrinoIgrDisabled);
+  assert(lunaGameOptionsChange(&options, &arguments,
+                               LUNA_GAME_NEUTRINO_DISABLE_IGR, 1));
+  assert(neutrinoIgr->isDisabled && !options.neutrinoIgrDisabled);
   assert(options.oplCompat == 0);
   assert(lunaGameOptionsChange(&options, &arguments,
                                LUNA_GAME_OPL_ACCURATE_READS, 1));
