@@ -303,14 +303,9 @@ static void drawCompatibilityTabs(const OptionsMenuState *state, int baseX, int 
   const int neutrinoX = middle - 100;
   const int oplX = middle + 48;
   const int opl = gameUsesOpl(state);
-  const uint64_t disabled = GS_SETREG_RGBA(0x4E, 0x60, 0x78, 0x80);
+  const uint64_t disabled = GS_SETREG_RGBA(0x48, 0x4B, 0x50, 0x80);
   drawText(neutrinoX, y, 0, 0, 0, opl ? disabled : ColorSelected, "Neutrino");
   drawText(oplX, y, 0, 0, 0, opl ? ColorSelected : disabled, "OPL");
-  int activeX = opl ? oplX : neutrinoX;
-  const char *activeLabel = opl ? "OPL" : "Neutrino";
-  gsKit_prim_line(gsGlobal, activeX, y + getFontLineHeight(),
-                  activeX + (int)getLineWidth(activeLabel),
-                  y + getFontLineHeight(), 0, ColorSelected);
 }
 
 static int optionsGlobalRowY(int index, int firstY, int rowStep, int lineHeight) {
