@@ -205,42 +205,33 @@ static void testMarkedNavigation(void) {
 
 static void testQuickMenu(void) {
   LunaQuickMenu menu = {0};
-  // Cross already held when opening cannot confirm or launch a game.
-  assert(lunaQuickMenuUpdate(&menu, 1, 0, 1, 1, 4, -1, 0) == -1);
+  // Holding R1 opens the overlay without choosing an action.
+  assert(lunaQuickMenuUpdate(&menu, 1, 1, 4, -1) == -1);
   assert(menu.open && menu.captured);
-  assert(lunaQuickMenuUpdate(&menu, 1, 0, 1, 1, 4, -1, 10) == -1);
-  assert(lunaQuickMenuUpdate(&menu, 1, 0, 0, 1, 4, -1, 20) == -1);
-  assert(lunaQuickMenuUpdate(&menu, 1, -1, 0, 1, 4, -1, 30) == -1);
-  assert(menu.selected == 3);
-  assert(lunaQuickMenuUpdate(&menu, 1, -1, 0, 1, 4, -1, 40) == -1);
-  assert(menu.selected == 3);
-  assert(lunaQuickMenuUpdate(&menu, 1, -1, 0, 1, 4, -1, 310) == -1);
-  assert(menu.selected == 2);
-  assert(lunaQuickMenuUpdate(&menu, 1, 0, 1, 1, 4, -1, 320) == 2);
-  assert(!menu.open && menu.captured);
-  assert(lunaQuickMenuUpdate(&menu, 1, 0, 1, 1, 4, -1, 330) == -1);
-  // Releasing R1 with Cross held still captures input.
-  assert(lunaQuickMenuUpdate(&menu, 0, 0, 1, 1, 4, -1, 340) == -1);
+  assert(lunaQuickMenuUpdate(&menu, 1, 1, 4, 0) == 0);
+  assert(!menu.open && menu.captured && menu.consumed);
+  assert(lunaQuickMenuUpdate(&menu, 1, 1, 4, 1) == -1);
+  // Releasing R1 while an action button remains held cannot leak that press.
+  assert(lunaQuickMenuUpdate(&menu, 0, 1, 4, -1) == -1);
   assert(menu.captured);
-  assert(lunaQuickMenuUpdate(&menu, 0, 0, 0, 0, 4, -1, 350) == -1);
-  assert(!menu.captured);
-  assert(lunaQuickMenuUpdate(&menu, 1, 0, 0, 1, 3, -1, 360) == -1);
-  assert(menu.open && menu.selected == 0);
-  // Releasing alone cancels; there is no implicit selection.
-  assert(lunaQuickMenuUpdate(&menu, 0, 0, 0, 0, 3, -1, 370) == -1);
-  assert(!menu.open && !menu.captured);
-  // Ignore a shortcut held on opening, then accept a fresh edge.
-  assert(lunaQuickMenuUpdate(&menu, 1, 0, 0, 1, 4, 1, 400) == -1);
+  assert(lunaQuickMenuUpdate(&menu, 0, 0, 4, -1) == -1);
+  assert(!menu.captured && !menu.consumed);
+  // Pressing R1 and Circle together is a valid direct chord.
+  assert(lunaQuickMenuUpdate(&menu, 1, 1, 4, 1) == 1);
+  assert(!menu.open && menu.captured && menu.consumed);
+  assert(lunaQuickMenuUpdate(&menu, 0, 0, 4, -1) == -1);
+  // An action button already held before R1 has no fresh shortcut edge.
+  assert(lunaQuickMenuUpdate(&menu, 1, 1, 3, -1) == -1);
   assert(menu.open);
-  assert(lunaQuickMenuUpdate(&menu, 1, 0, 0, 1, 4, -1, 410) == -1);
-  assert(lunaQuickMenuUpdate(&menu, 1, 0, 0, 1, 4, 1, 420) == 1);
-  assert(!menu.open && menu.captured && menu.selected == 1);
-  assert(lunaQuickMenuUpdate(&menu, 1, 0, 0, 1, 4, 1, 430) == -1);
-  assert(lunaQuickMenuUpdate(&menu, 0, 0, 0, 0, 3, -1, 440) == -1);
-  assert(lunaQuickMenuUpdate(&menu, 1, 0, 0, 1, 3, -1, 450) == -1);
   // Random is unavailable in a three-row menu.
-  assert(lunaQuickMenuUpdate(&menu, 1, 0, 0, 1, 3, 3, 460) == -1);
+  assert(lunaQuickMenuUpdate(&menu, 1, 1, 3, 3) == -1);
   assert(menu.open);
+  assert(lunaQuickMenuUpdate(&menu, 1, 1, 3, 2) == 2);
+  assert(lunaQuickMenuUpdate(&menu, 0, 0, 3, -1) == -1);
+  assert(lunaQuickMenuUpdate(&menu, 1, 1, 3, -1) == -1);
+  assert(menu.open);
+  assert(lunaQuickMenuUpdate(&menu, 0, 0, 3, -1) == -1);
+  assert(!menu.open && !menu.captured);
 }
 
 int main(void) {

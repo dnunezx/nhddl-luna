@@ -84,7 +84,7 @@ static void drawLibraryFooter(int canLaunch) {
                 (PromptBar){NULL, prompts, 4});
 }
 
-static void drawLibraryQuickMenu(int progress, int closing, int selected, UILibraryView view,
+static void drawLibraryQuickMenu(int progress, int closing, UILibraryView view,
                                  int favoritesOnly, int isFavorite,
                                  int total, const char *title) {
   if (progress <= 0)
@@ -93,10 +93,10 @@ static void drawLibraryQuickMenu(int progress, int closing, int selected, UILibr
       favoritesOnly ? "Show All" : "Show Favorites",
       isFavorite ? "Remove from Favorites" : "Add to Favorites",
       "Options", "Random"};
-  const IconType icons[] = {ICON_SELECT, ICON_SQUARE, ICON_TRIANGLE, ICON_R3};
+  const IconType icons[] = {ICON_CROSS, ICON_CIRCLE, ICON_TRIANGLE, ICON_R3};
   int count = view == UI_VIEW_ORBIT ? 4 : 3;
   int rowHeight = getFontLineHeight() + 10;
-  int height = (count + 2) * rowHeight + 12;
+  int height = (count + 1) * rowHeight + 16;
   int slide = 354 * (1000 - lunaNavEase(progress)) / 1000;
   int left = gsGlobal->Width - 354 + slide;
   int right = gsGlobal->Width - 20 + slide;
@@ -125,24 +125,12 @@ static void drawLibraryQuickMenu(int progress, int closing, int selected, UILibr
   for (int i = 0; i < count; i++) {
     int y = top + (i + 1) * rowHeight + 8;
     int enabled = i == 0 || (total > 0 && (i != 3 || total > 1));
-    if (i == selected) {
-      gsKit_prim_sprite(gsGlobal, left + 8, y, right - 8, y + rowHeight, 0,
-                        glassPresetColor(0x16, 0x54, 0x82, 0x60));
-      gsKit_prim_sprite(gsGlobal, left + 8, y + 2, left + 11,
-                        y + rowHeight - 2, 1,
-                        glassPresetColor(0x70, 0xD8, 0xF8, 0x68));
-    }
-    if (i >= 2)
-      drawIconWindow(left + 16, y, 0, y + rowHeight, 0,
-                     enabled ? FontMainColor : HeaderTextColor, ALIGN_VCENTER, icons[i]);
+    drawIconWindow(left + 16, y, 0, y + rowHeight, 0,
+                   enabled ? FontMainColor : HeaderTextColor, ALIGN_VCENTER, icons[i]);
     drawTextWindow(left + 16 + getIconWidth(icons[i]) + 10, y,
                    right - 16, y + rowHeight, 0,
                    enabled ? FontMainColor : HeaderTextColor, ALIGN_VCENTER, labels[i]);
   }
-  const ButtonPrompt help[] = {{ICON_DPAD, "Choose"}, {ICON_CROSS, "Confirm"}};
-  drawPromptBar(left + 8, top + (count + 1) * rowHeight + 8,
-                right - 8, top + height, 0, HeaderTextColor,
-                (PromptBar){NULL, help, 2});
   gsKit_set_test(gsGlobal, GS_ZTEST_ON);
 }
 
@@ -984,7 +972,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     int favoriteIndex = favoritesOnly && titles->total > 0
         ? lunaNavMarkedByRank(allFavoriteFlags, allTitles->total, selectedTitleIdx)
         : selectedTitleIdx;
-    drawLibraryQuickMenu(quickMenuProgress, !quickMenu.open, quickMenu.selected, view,
+    drawLibraryQuickMenu(quickMenuProgress, !quickMenu.open, view,
                          favoritesOnly, titles->total > 0 && allFavoriteFlags[favoriteIndex],
                          titles->total, curTarget->name);
     if (quickMenuMessage != NULL && (int32_t)(quickMenuMessageUntil - quickNow) > 0) {
@@ -1043,16 +1031,14 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     int quickWasOpen = quickMenu.open;
     int quickPressed = input & ~quickPreviousInput;
     quickPreviousInput = input;
-    int quickShortcut = (quickPressed & PAD_SELECT) ? 0 :
-                        (quickPressed & PAD_SQUARE) ? 1 :
+    int quickShortcut = (quickPressed & PAD_CROSS) ? 0 :
+                        (quickPressed & PAD_CIRCLE) ? 1 :
                         (quickPressed & PAD_TRIANGLE) ? 2 :
                         (view == UI_VIEW_ORBIT && (quickPressed & PAD_R3)) ? 3 : -1;
-    int menuDirection = (input & PAD_UP) ? -1 : ((input & PAD_DOWN) ? 1 : 0);
     quickAction = lunaQuickMenuUpdate(&quickMenu, (input & PAD_R1) != 0,
-                                     menuDirection, (input & PAD_CROSS) != 0,
                                      input != 0, view == UI_VIEW_ORBIT ? 4 : 3,
-                                     quickShortcut, uiNowMs());
-    if (!quickWasOpen && quickMenu.open) {
+                                     quickShortcut);
+    if (!quickWasOpen && (quickMenu.open || quickAction >= 0)) {
       // Freeze the visible title, including during a scan or cover glide.
       if (titles->total > 0 && view == UI_VIEW_PSBBN && collectionVisualTitleIdx >= 0)
         selectedTitleIdx = collectionVisualTitleIdx;
@@ -1100,8 +1086,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       prevInput = 0;
       frameCount = 0;
       circleButtonHeld = 0;
-      // Options also uses R1 and Cross. Wait for neutral input before
-      // handing control to that screen so the confirmation cannot edit it.
+      // Wait for all chord buttons to be released before handing control
+      // to Options, so the same press cannot edit that screen.
       if (quickAction == 2) {
         quickDeferredAction = quickAction;
         continue;

@@ -64,13 +64,12 @@ the Physical card choice remains available.
  - Press **L2** to switch to the **previous page** or go to the **start of the list**
  - Press **R2** to switch to the **next page** or go to the **end of the list**
 
-In every library view, hold **R1** to open the quick menu. Use **Up/Down**
-while holding R1 and **Cross** to confirm. Releasing R1 closes without choosing.
-The menu offers Show Favorites/Show All, Add/Remove from Favorites, Options,
-and Random in Orbit, sliding in from the right. While holding R1, **Select**
-switches the filter, **Square** adds/removes a favorite, **Triangle** opens
-Options, and **R3** starts Random in Orbit. **Select** alone remains a shortcut
-to switch the favorites filter.
+In every library view, hold **R1** to open the quick menu. While holding R1,
+**Cross** switches between Show Favorites and Show All, **Circle** adds or
+removes the selected game from Favorites, and **Triangle** opens Options.
+**R3** starts Random in Orbit. Releasing R1 without choosing an action closes the menu.
+Without R1, **Cross** launches, **Circle** changes views, **Triangle** opens
+Options, and **Select** switches the favorites filter.
 The footer uses one row: View, Launch, Menu, More.
 
 Press **Triangle** to open the options menu. **Per-game settings** opens the

@@ -2,42 +2,25 @@
 #include "ui/navigation.h"
 #include <stddef.h>
 
-int lunaQuickMenuUpdate(LunaQuickMenu *menu, int held, int direction,
-                        int confirm, int controlsHeld, int count,
-                        int shortcut, uint32_t now) {
+int lunaQuickMenuUpdate(LunaQuickMenu *menu, int held, int controlsHeld,
+                        int count, int shortcut) {
   if (!held) {
     menu->open = 0;
     if (!controlsHeld) {
       menu->captured = 0;
       menu->consumed = 0;
-      menu->confirmHeld = 0;
-      menu->repeat.direction = 0;
     }
     return -1;
   }
   menu->captured = 1;
   if (menu->consumed)
     return -1;
-  if (!menu->open) {
-    menu->open = 1;
-    menu->selected = 0;
-    menu->confirmHeld = confirm;
-    menu->repeat.direction = 0;
+  menu->open = 1;
+  if (shortcut < 0 || shortcut >= count)
     return -1;
-  }
-  if (lunaNavRepeatStep(&menu->repeat, direction, now, 280, 120) && count > 0)
-    menu->selected = lunaNavWrap(count, menu->selected + direction);
-  int direct = shortcut >= 0 && shortcut < count;
-  int confirmed = direct || (confirm && !menu->confirmHeld);
-  menu->confirmHeld = confirm;
-  if (confirmed && count > 0) {
-    if (direct)
-      menu->selected = shortcut;
-    menu->open = 0;
-    menu->consumed = 1;
-    return menu->selected;
-  }
-  return -1;
+  menu->open = 0;
+  menu->consumed = 1;
+  return shortcut;
 }
 
 int lunaCollectionScanUpdate(LunaCollectionScan *scan, int direction, uint32_t now,

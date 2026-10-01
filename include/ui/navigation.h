@@ -61,15 +61,11 @@ typedef struct {
   int open;
   int captured;
   int consumed;
-  int selected;
-  int confirmHeld;
-  LunaNavRepeatState repeat;
 } LunaQuickMenu;
 
-// Returns a confirmed row, or -1. Capture lasts until all controls are released.
-int lunaQuickMenuUpdate(LunaQuickMenu *menu, int held, int direction,
-                        int confirm, int controlsHeld, int count,
-                        int shortcut, uint32_t now);
+// Returns a direct action, or -1. Capture lasts until all controls are released.
+int lunaQuickMenuUpdate(LunaQuickMenu *menu, int held, int controlsHeld,
+                        int count, int shortcut);
 
 typedef enum {
   UI_VIEW_CLASSIC = 0,
