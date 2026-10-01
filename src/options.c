@@ -31,8 +31,6 @@ const char lastTitlePath[] = "/lastTitle.bin";
 static const char lastTitleTempPath[] = "/lastTitle.bin.tmp";
 static const char ps2LogoPath[] = "/ps2Logo.txt";
 static const char ps2LogoTempPath[] = "/ps2Logo.txt.tmp";
-static const char gameCorePath[] = "/gameCore.txt";
-static const char gameCoreTempPath[] = "/gameCore.txt.tmp";
 
 static int buildConfigFilePathAtBase(char *targetPath, size_t targetSize,
                                      const char *targetMountpoint, const char *basePath,
@@ -343,85 +341,6 @@ int savePS2LogoEnabled(Target *target, int enabled) {
   return commitConfigFile(tempPath, path);
 }
 
-// -1 means no valid saved choice, so existing global.yaml settings can apply.
-static int readGameCorePreference(Target *target) {
-  if (target == NULL || target->device == NULL)
-    return -1;
-  struct DeviceMapEntry *device = target->device->metadev ?
-                                  target->device->metadev : target->device;
-  if (device->mountpoint == NULL)
-    return -1;
-  const char *const paths[] = {gameCoreTempPath, gameCorePath};
-  char path[PATH_MAX];
-  char value[16];
-  for (int i = 0; i < 2; i++) {
-    if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
-      continue;
-    FILE *file = fopen(path, "r");
-    if (file == NULL)
-      continue;
-    int readable = fgets(value, sizeof(value), file) != NULL;
-    fclose(file);
-    if (!readable)
-      continue;
-    value[strcspn(value, "\r\n")] = '\0';
-    if (!strcmp(value, "opl"))
-      return 1;
-    if (!strcmp(value, "neutrino"))
-      return 0;
-  }
-  return -1;
-}
-
-int loadGameCoreOpl(Target *target) {
-  int saved = readGameCorePreference(target);
-  if (saved >= 0)
-    return saved;
-  if (target == NULL || target->device == NULL)
-    return 0;
-  ArgumentList *global = calloc(1, sizeof(*global));
-  if (global == NULL)
-    return 0;
-  int result = getGlobalLaunchArguments(global, target->device);
-  if (result) {
-    freeArgumentList(global);
-    return 0;
-  }
-  Argument *core = getArgument(global, "luna_core");
-  int opl = core != NULL && !core->isDisabled && core->value != NULL &&
-            !strcmp(core->value, "opl");
-  freeArgumentList(global);
-  return opl;
-}
-
-int saveGameCoreOpl(Target *target, int opl) {
-  if (target == NULL || target->device == NULL)
-    return -EINVAL;
-  struct DeviceMapEntry *device = target->device->metadev ?
-                                  target->device->metadev : target->device;
-  if (device->mountpoint == NULL)
-    return -EINVAL;
-  char directory[PATH_MAX], path[PATH_MAX], tempPath[PATH_MAX];
-  struct stat st;
-  if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
-      buildConfigFilePath(path, sizeof(path), device->mountpoint, gameCorePath) ||
-      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint,
-                          gameCoreTempPath))
-    return -ENAMETOOLONG;
-  if (stat(directory, &st) == -1 && mkdir(directory, 0777))
-    return -EIO;
-  FILE *file = fopen(tempPath, "w");
-  if (file == NULL)
-    return -EIO;
-  int writeResult = fprintf(file, "%s\n", opl ? "opl" : "neutrino");
-  int closeResult = fclose(file);
-  if (writeResult < 0 || closeResult) {
-    remove(tempPath);
-    return -EIO;
-  }
-  return commitConfigFile(tempPath, path);
-}
-
 // Generates ArgumentList from global and title-specific config file
 int getTitleLaunchArguments(ArgumentList *result, Target *target) {
   struct DeviceMapEntry *device = target->device;
@@ -629,6 +548,11 @@ int parseOptionsFile(ArgumentList *result, FILE *file, struct DeviceMapEntry *de
       tempPtr--;
     }
 
+    // Ignore retired core metadata from existing global and per-game files.
+    const char *name = argPtr[0] == '$' ? argPtr + 1 : argPtr;
+    if (!strcmp(name, "luna_core") || !strncmp(name, "luna_opl_", 9))
+      continue;
+
     char *newValue = NULL;
     if (device && (valuePtr[0] == '/' || valuePtr[0] == '\\')) {
       // Add device mountpoint to argument value if path starts with \ or /
@@ -816,19 +740,12 @@ ArgumentList *loadLaunchArgumentLists(Target *target) {
   if ((res = getGlobalLaunchArguments(globalArguments, target->device))) {
     DPRINTF("WARN: Failed to load global launch arguments: %d\n", res);
   }
-  int globalOpl = readGameCorePreference(target);
-  if (globalOpl < 0) {
-    Argument *core = getArgument(globalArguments, "luna_core");
-    globalOpl = core != NULL && !core->isDisabled && core->value != NULL &&
-                !strcmp(core->value, "opl");
-  }
   // Initialize title list and merge global into it
   ArgumentList *titleArguments = calloc(sizeof(ArgumentList), 1);
   if ((res = getTitleLaunchArguments(titleArguments, target))) {
     DPRINTF("WARN: Failed to load title arguments: %d\n", res);
   }
   int titleLogoOverride = getArgument(titleArguments, "logo") != NULL;
-  int titleCoreOverride = getArgument(titleArguments, "luna_core") != NULL;
   ArgumentList *result;
   if (titleArguments->total != 0) {
     // Merge lists
@@ -843,11 +760,6 @@ ArgumentList *loadLaunchArgumentLists(Target *target) {
   Argument *logo = getArgument(result, "logo");
   if (titleLogoOverride && logo != NULL)
     logo->isGlobal = 0;
-  Argument *core = getArgument(result, "luna_core");
-  if (titleCoreOverride && core != NULL)
-    core->isGlobal = 0;
-  if (!lunaApplyGlobalGameCore(result, globalOpl))
-    DPRINTF("WARN: Failed to add default game core launch argument\n");
   if (!lunaApplyGlobalPS2Logo(result, loadPS2LogoEnabled(target)))
     DPRINTF("WARN: Failed to add default PS2 logo launch argument\n");
   return result;

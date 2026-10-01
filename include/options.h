@@ -66,9 +66,6 @@ int updateTitleLaunchArguments(Target *target, ArgumentList *options);
 int loadPS2LogoEnabled(Target *target);
 int savePS2LogoEnabled(Target *target, int enabled);
 
-// Drive-wide game core preference. Neutrino is the default.
-int loadGameCoreOpl(Target *target);
-int saveGameCoreOpl(Target *target, int enabled);
 
 // Completely frees ArgumentList. Passed pointer will not be valid after this function executes
 void freeArgumentList(ArgumentList *result);

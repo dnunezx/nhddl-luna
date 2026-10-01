@@ -6,10 +6,8 @@
 
 #define LUNA_GAME_COMPAT_COUNT 5
 #define LUNA_NEUTRINO_COMPAT_ROW_COUNT 6
-#define LUNA_OPL_COMPAT_COUNT 6
-#define LUNA_GAME_ROW_COUNT 22
+#define LUNA_GAME_ROW_COUNT 13
 #define LUNA_NEUTRINO_VIDEO_MODE_COUNT 6
-#define LUNA_OPL_VIDEO_MODE_COUNT 30
 
 typedef enum {
   LUNA_GAME_FAST_READS,
@@ -24,39 +22,24 @@ typedef enum {
   LUNA_GAME_FIELD_FLIP,
   LUNA_GAME_PS2_LOGO,
   LUNA_GAME_DEBUG_COLORS,
-  LUNA_GAME_CORE,
-  LUNA_GAME_OPL_ACCURATE_READS,
-  LUNA_GAME_OPL_SYNC_READS,
-  LUNA_GAME_OPL_UNHOOK_SYSCALLS,
-  LUNA_GAME_OPL_SKIP_VIDEOS,
-  LUNA_GAME_OPL_DVD_DL,
-  LUNA_GAME_OPL_DISABLE_IGR,
-  LUNA_GAME_NEUTRINO_DISABLE_IGR,
-  LUNA_GAME_OPL_VIDEO_MODE,
-  LUNA_GAME_OPL_FIELD_FLIP
+  LUNA_GAME_NEUTRINO_DISABLE_IGR
 } LunaGameRow;
 
 typedef struct {
   uint8_t compat;
-  uint8_t oplCompat;
   int videoMode; // 0 = default, 1..5 = forced modes, -1 = unrecognized value
   int fieldFlip; // 0 = off, 1..3 = field flipping modes
-  int oplVideoMode; // 0 = off, 1..29 = pinned OPL GSM preset + 1
-  int oplFieldFlip;
   int ps2Logo;
   int debugColors;
   int neutrinoIgrDisabled;
-  int oplCore;
-  int coreInherited;
   char vmcSlotLabel[2][25];
 } LunaGameOptions;
 
 void lunaGameOptionsRead(LunaGameOptions *options, ArgumentList *arguments);
-uint8_t lunaGetOplCompatMask(ArgumentList *arguments);
-int lunaGameVideoModeCount(int opl);
-const char *lunaGameVideoModeLabel(int opl, int mode);
+int lunaGameVideoModeCount(void);
+const char *lunaGameVideoModeLabel(int mode);
 int lunaGameOptionsSetVideoMode(LunaGameOptions *options,
-                               ArgumentList *arguments, int opl, int mode);
+                               ArgumentList *arguments, int mode);
 // Returns 1 when an option changed, 0 otherwise. Launch arguments use a separate page.
 int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
                           LunaGameRow row, int direction);
@@ -64,14 +47,10 @@ int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
 int lunaGameOptionsCyclePS2Logo(LunaGameOptions *options,
                                 ArgumentList *arguments,
                                 int globalEnabled, int direction);
-int lunaGameOptionsCycleCore(LunaGameOptions *options,
-                             ArgumentList *arguments,
-                             int globalOpl, int direction);
 int lunaGameOptionsSetVMC(LunaGameOptions *options, ArgumentList *arguments,
                           int slot, const char *path);
 const char *lunaGameOptionsValue(const LunaGameOptions *options, LunaGameRow row);
 // Applies the library default without replacing a title-specific logo choice.
 int lunaApplyGlobalPS2Logo(ArgumentList *arguments, int enabled);
-int lunaApplyGlobalGameCore(ArgumentList *arguments, int opl);
 
 #endif

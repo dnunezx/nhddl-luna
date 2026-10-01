@@ -66,36 +66,6 @@ int main(void) {
   assert(lunaGameOptionsChange(&options, &arguments,
                                LUNA_GAME_NEUTRINO_DISABLE_IGR, 1));
   assert(neutrinoIgr->isDisabled && !options.neutrinoIgrDisabled);
-  assert(options.oplCompat == 0);
-  assert(lunaGameOptionsChange(&options, &arguments,
-                               LUNA_GAME_OPL_ACCURATE_READS, 1));
-  assert(lunaGameOptionsChange(&options, &arguments,
-                               LUNA_GAME_OPL_SKIP_VIDEOS, 1));
-  Argument *oplCompat = getArgument(&arguments, "luna_opl_compat");
-  assert(oplCompat && !strcmp(oplCompat->value, "9"));
-  assert(options.oplCompat == 9);
-  assert(lunaGameOptionsChange(&options, &arguments,
-                               LUNA_GAME_OPL_ACCURATE_READS, 1));
-  assert(lunaGameOptionsChange(&options, &arguments,
-                               LUNA_GAME_OPL_SKIP_VIDEOS, 1));
-  assert(oplCompat->isDisabled && options.oplCompat == 0);
-  assert(!options.oplCore && options.coreInherited);
-  assert(!strcmp(lunaGameOptionsValue(&options, LUNA_GAME_CORE), "Inherit (Neutrino)"));
-  assert(lunaGameOptionsCycleCore(&options, &arguments, 0, 1));
-  Argument *core = getArgument(&arguments, "luna_core");
-  assert(core != NULL && !core->isGlobal && !strcmp(core->value, "opl"));
-  assert(!strcmp(lunaGameOptionsValue(&options, LUNA_GAME_CORE), "OPL"));
-  assert(lunaGameOptionsCycleCore(&options, &arguments, 0, 1));
-  assert(!core->isGlobal && !strcmp(core->value, "neutrino"));
-  assert(lunaGameOptionsCycleCore(&options, &arguments, 0, 1));
-  assert(core->isGlobal && !options.oplCore && options.coreInherited);
-  assert(lunaApplyGlobalGameCore(&arguments, 1));
-  lunaGameOptionsRead(&options, &arguments);
-  assert(options.oplCore && options.coreInherited);
-  assert(lunaGameOptionsCycleCore(&options, &arguments, 1, 1));
-  assert(!core->isGlobal && !strcmp(core->value, "neutrino"));
-  assert(!options.oplCore && !options.coreInherited);
-
   assert(lunaGameOptionsChange(&options, &arguments, LUNA_GAME_FAST_READS, 1));
   assert(!strcmp(compat->value, "27") && !compat->isGlobal);
   assert(lunaGameOptionsChange(&options, &arguments, LUNA_GAME_FIELD_FLIP, 1));
@@ -169,47 +139,25 @@ int main(void) {
 
   ArgumentList outputs = {0};
   lunaGameOptionsRead(&options, &outputs);
-  assert(options.videoMode == 0 && options.oplVideoMode == 0);
-  assert(!options.fieldFlip && !options.oplFieldFlip);
-  assert(!strcmp(lunaGameOptionsValue(&options, LUNA_GAME_VIDEO_MODE), "Default"));
-  assert(!strcmp(lunaGameOptionsValue(&options, LUNA_GAME_OPL_VIDEO_MODE), "Default"));
-  assert(!lunaGameOptionsSetVideoMode(&options, &outputs, 0, -1));
-  assert(!lunaGameOptionsSetVideoMode(&options, &outputs, 1, LUNA_OPL_VIDEO_MODE_COUNT));
-  for (int opl = 0; opl <= 1; opl++) {
-    for (int mode = 1; mode < lunaGameVideoModeCount(opl); mode++) {
-      assert(lunaGameOptionsSetVideoMode(&options, &outputs, opl, mode));
-      lunaGameOptionsRead(&options, &outputs);
-      assert((opl ? options.oplVideoMode : options.videoMode) == mode);
-      assert(strcmp(lunaGameVideoModeLabel(opl, mode), "Custom"));
-    }
+  assert(options.videoMode == 0 && !options.fieldFlip);
+  assert(!lunaGameOptionsSetVideoMode(&options, &outputs, -1));
+  assert(!lunaGameOptionsSetVideoMode(&options, &outputs, LUNA_NEUTRINO_VIDEO_MODE_COUNT));
+  for (int mode = 1; mode < lunaGameVideoModeCount(); mode++) {
+    assert(lunaGameOptionsSetVideoMode(&options, &outputs, mode));
+    lunaGameOptionsRead(&options, &outputs);
+    assert(options.videoMode == mode);
+    assert(strcmp(lunaGameVideoModeLabel(mode), "Custom"));
   }
-  assert(options.videoMode == 5 && options.oplVideoMode == 29);
-  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 0, 2));
+  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 2));
   assert(lunaGameOptionsChange(&options, &outputs, LUNA_GAME_FIELD_FLIP, 1));
-  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 0, 3));
+  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 3));
   assert(!strcmp(getArgument(&outputs, "gsm")->value, "1080ix1:1"));
-  assert(lunaGameOptionsChange(&options, &outputs, LUNA_GAME_OPL_FIELD_FLIP, 1));
-  assert(options.oplFieldFlip && options.fieldFlip == 1);
-  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 1, 11));
-  assert(options.videoMode == 3 && options.oplVideoMode == 11);
   getArgument(&outputs, "gsm")->isGlobal = 1;
-  getArgument(&outputs, "luna_opl_gsm")->isGlobal = 1;
-  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 0, 0));
-  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 1, 0));
+  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 0));
   assert(getArgument(&outputs, "gsm")->isDisabled);
   assert(!getArgument(&outputs, "gsm")->isGlobal);
-  assert(getArgument(&outputs, "luna_opl_gsm")->isDisabled);
-  assert(!getArgument(&outputs, "luna_opl_gsm")->isGlobal);
-  assert(options.videoMode == 0 && options.oplVideoMode == 0 && !options.fieldFlip);
-  // A malformed advanced value stays visible as Custom; unrelated edits preserve it.
-  Argument *oplVideo = getArgument(&outputs, "luna_opl_gsm");
-  free(oplVideo->value);
-  oplVideo->value = strdup("999");
-  oplVideo->isDisabled = 0;
   lunaGameOptionsRead(&options, &outputs);
-  assert(options.oplVideoMode == -1);
-  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 0, 2));
-  assert(!strcmp(oplVideo->value, "999"));
+  assert(options.videoMode == 0 && !options.fieldFlip);
   freeArguments(&outputs);
   puts("game options: ok");
   return 0;

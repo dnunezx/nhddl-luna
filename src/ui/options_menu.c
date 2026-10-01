@@ -63,7 +63,6 @@ typedef struct {
   int *fontSetting;
   int *ambientEnabled;
   int logoSetting;
-  int coreSetting;
   int *orbsThemeSetting;
   int *orbsAppearanceSetting;
   int *orbsColorSetting;
@@ -75,7 +74,6 @@ typedef struct {
   int pendingFont;
   int pendingAmbient;
   int pendingLogo;
-  int pendingCore;
   int pendingOrbsTheme;
   int pendingOrbsAppearance;
   int pendingOrbsColor;
@@ -90,7 +88,6 @@ typedef struct {
   GameSection gameSection;
   int selectedGameHubRow;
   int selectedGameRow;
-  int videoOutOpl;
   int videoOutFirstRow;
   int selectedGlobal;
   int selectedView;
@@ -107,10 +104,7 @@ static const char *const gameRowLabels[LUNA_GAME_ROW_COUNT] = {
     "IOP: Fix game buffer overrun", "Launch arguments",
     "VMC slot 1", "VMC slot 2",
     "Video out", "Field flipping",
-    "Show PS2 logo", "Debug colors", "Game core",
-    "Accurate reads", "Synchronous reads", "Unhook syscalls",
-    "Skip videos", "Emulate DVD-DL", "Disable IGR", "Disable IGR",
-    "Video out", "Field flipping"};
+    "Show PS2 logo", "Debug colors", "Disable IGR"};
 
 static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Use faster IOP disc reads for this game.",
@@ -119,69 +113,38 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Emulate a dual-layer DVD for this game.",
     "Work around a game buffer overrun.",
     "Review every launch argument, including global overrides.",
-    "Assign an existing OPL card image from this drive's VMC folder.",
-    "Assign an existing OPL card image to the second slot.",
-    "Open the Neutrino and OPL video output modes.",
+    "Assign an existing card image from this drive's VMC folder.",
+    "Assign an existing card image to the second slot.",
+    "Choose Neutrino's video output mode.",
     "Choose field flipping for a forced video mode.",
     "Choose Inherit to use the Global PS2 logo setting.",
     "Display debug colors while loading.",
-    "Inherit or override the default core for this ATA game.",
-    "Use OPL's accurate disc-read behavior.",
-    "Use OPL's synchronous disc-read method.",
-    "Leave EE system calls unhooked in OPL.",
-    "Skip PSS and Bink videos in OPL.",
-    "Emulate a dual-layer DVD in OPL.",
-    "Disable OPL's in-game reset for this title.",
-    "Disable Neutrino's in-game return for this title.",
-    "Open the Neutrino and OPL video output modes.",
-    "Emulate field flipping when OPL forces a video output mode."};
+    "Disable Neutrino's in-game return for this title."};
 
 static const char *const gameSectionLabels[GAME_SECTION_COUNT] = {
     "Virtual memory cards", "Compatibility", "Video", "Launch & debug"};
 static const char *const gameSectionDescriptions[GAME_SECTION_COUNT] = {
     "Enable virtual cards by assigning one to a slot.",
-    "Change the active core's compatibility switches.",
+    "Change this game's compatibility switches.",
     "Adjust this game's video output.",
     "Set the startup logo and review launch options."};
-static const LunaGameRow gameSectionRows[GAME_SECTION_COUNT][5] = {
+static const LunaGameRow gameSectionRows[GAME_SECTION_COUNT][6] = {
     {LUNA_GAME_VMC_SLOT1, LUNA_GAME_VMC_SLOT2},
     {LUNA_GAME_FAST_READS, LUNA_GAME_SYNC_READS,
      LUNA_GAME_UNHOOK_SYSCALLS, LUNA_GAME_DVD_DL,
-     LUNA_GAME_BUFFER_OVERRUN},
+     LUNA_GAME_BUFFER_OVERRUN, LUNA_GAME_NEUTRINO_DISABLE_IGR},
     {LUNA_GAME_VIDEO_MODE, LUNA_GAME_FIELD_FLIP},
     {LUNA_GAME_PS2_LOGO, LUNA_GAME_LAUNCH_ARGUMENTS,
-     LUNA_GAME_DEBUG_COLORS, LUNA_GAME_CORE}};
-static const LunaGameRow oplCompatRows[LUNA_OPL_COMPAT_COUNT] = {
-    LUNA_GAME_OPL_ACCURATE_READS, LUNA_GAME_OPL_SYNC_READS,
-    LUNA_GAME_OPL_UNHOOK_SYSCALLS, LUNA_GAME_OPL_SKIP_VIDEOS,
-    LUNA_GAME_OPL_DVD_DL, LUNA_GAME_OPL_DISABLE_IGR};
-static const LunaGameRow neutrinoCompatRows[LUNA_NEUTRINO_COMPAT_ROW_COUNT] = {
-    LUNA_GAME_FAST_READS, LUNA_GAME_SYNC_READS,
-    LUNA_GAME_UNHOOK_SYSCALLS, LUNA_GAME_DVD_DL,
-    LUNA_GAME_BUFFER_OVERRUN, LUNA_GAME_NEUTRINO_DISABLE_IGR};
-static const int gameSectionRowCounts[GAME_SECTION_COUNT] = {4, 5, 2, 4};
+     LUNA_GAME_DEBUG_COLORS}};
+static const int gameSectionRowCounts[GAME_SECTION_COUNT] = {4, 6, 2, 3};
 
-static int gameUsesOpl(const OptionsMenuState *state) {
-  return state->target->device->mode == MODE_ATA && state->gameOptions.oplCore;
-}
-
-static int gameSectionRowCount(const OptionsMenuState *state, GameSection section) {
+static int gameSectionRowCount(GameSection section) {
   if (section == GAME_VIDEO_OUT)
-    return lunaGameVideoModeCount(state->videoOutOpl);
-  if (section == GAME_COMPATIBILITY)
-    return gameUsesOpl(state) ? LUNA_OPL_COMPAT_COUNT :
-                               LUNA_NEUTRINO_COMPAT_ROW_COUNT;
-  if (section == GAME_LAUNCH && state->target->device->mode != MODE_ATA)
-    return 3;
+    return lunaGameVideoModeCount();
   return gameSectionRowCounts[section];
 }
 
-static LunaGameRow gameSectionRow(const OptionsMenuState *state,
-                                  GameSection section, int row) {
-  if (section == GAME_VIDEO && gameUsesOpl(state))
-    return row == 0 ? LUNA_GAME_OPL_VIDEO_MODE : LUNA_GAME_OPL_FIELD_FLIP;
-  if (section == GAME_COMPATIBILITY)
-    return gameUsesOpl(state) ? oplCompatRows[row] : neutrinoCompatRows[row];
+static LunaGameRow gameSectionRow(GameSection section, int row) {
   return gameSectionRows[section][row];
 }
 
@@ -315,28 +278,11 @@ static void drawOptionsTextRow(int x, int y, int right, int selected,
              selected ? ColorSelected : FontMainColor, value);
 }
 
-static void drawCompatibilityTabs(const OptionsMenuState *state, int baseX, int y) {
-  const int middle = (baseX + gsGlobal->Width) / 2;
-  const int neutrinoX = middle - 100;
-  const int oplX = middle + 48;
-  const int videoOut = state->gameSection == GAME_VIDEO_OUT;
-  const int opl = videoOut ? state->videoOutOpl : gameUsesOpl(state);
-  const uint64_t disabled = GS_SETREG_RGBA(0x48, 0x4B, 0x50, 0x80);
-  drawText(neutrinoX, y, 0, 0, 0, opl ? disabled : ColorSelected, "Neutrino");
-  drawText(oplX, y, 0, 0, 0, opl ? ColorSelected : disabled, "OPL");
-  if (videoOut && state->target->device->mode == MODE_ATA) {
-    drawText(neutrinoX - 22, y, 0, 0, 0, HeaderTextColor, "<");
-    drawText(oplX + 48, y, 0, 0, 0, HeaderTextColor, ">");
-  }
-}
-
 static void drawVideoOutRows(OptionsMenuState *state, int baseX, int firstY,
                              int rowStep, int menuBottom) {
-  drawCompatibilityTabs(state, baseX, firstY);
-  const int rowStart = firstY + rowStep;
-  const int count = lunaGameVideoModeCount(state->videoOutOpl);
-  const int mode = state->videoOutOpl ? state->gameOptions.oplVideoMode :
-                                       state->gameOptions.videoMode;
+  const int rowStart = firstY;
+  const int count = lunaGameVideoModeCount();
+  const int mode = state->gameOptions.videoMode;
   int visible = (menuBottom - getFontLineHeight() - rowStart) / rowStep + 1;
   if (visible < 1)
     visible = 1;
@@ -353,7 +299,7 @@ static void drawVideoOutRows(OptionsMenuState *state, int baseX, int firstY,
   for (int row = first; row < count && row < first + visible; row++)
     drawOptionsTextRow(baseX, rowStart + (row - first) * rowStep,
                        gsGlobal->Width - baseX, row == state->selectedGameRow,
-                       selectorY, lunaGameVideoModeLabel(state->videoOutOpl, row),
+                       selectorY, lunaGameVideoModeLabel(row),
                        mode == row ? "On" : "Off");
   char position[20];
   snprintf(position, sizeof(position), "%d/%d", state->selectedGameRow + 1, count);
@@ -362,8 +308,8 @@ static void drawVideoOutRows(OptionsMenuState *state, int baseX, int firstY,
   drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
                  gsGlobal->Height - footerHeight, 0, HeaderTextColor, ALIGN_LEFT,
                  state->selectedGameRow == 0 ?
-                     "Keep the game's original output. Left/right changes tabs." :
-                     "Select one output per core. Left/right changes tabs.");
+                     "Keep the game's original output." :
+                     "Select a video output mode for this game.");
 }
 
 static int optionsGlobalRowY(int index, int firstY, int rowStep, int lineHeight) {
@@ -415,9 +361,8 @@ static void drawOptionsSection(int y, const char *title, int musicNotes) {
 
 static int optionsGlobalDirty(int pendingBackground, int pendingGlassColor,
                               int pendingFont, int pendingAmbient, int pendingLogo,
-                              int pendingCore,
                               int background, int glassColor, int fontSetting,
-                              int ambient, int logo, int core);
+                              int ambient, int logo);
 
 static const char *gamePS2LogoValue(const OptionsMenuState *state) {
   Argument *logo = getArgument(state->titleArguments, "logo");
@@ -492,10 +437,8 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
   const int systemDirty = showDirty && optionsGlobalDirty(
       state->pendingBackground, state->pendingGlassColor,
       state->pendingFont, state->pendingAmbient, state->pendingLogo,
-      state->pendingCore,
       *state->ambientOrbsBackgroundSetting, *state->glassColorSetting,
-      *state->fontSetting, *state->ambientEnabled, state->logoSetting,
-      state->coreSetting);
+      *state->fontSetting, *state->ambientEnabled, state->logoSetting);
   const int viewsDirty = showDirty &&
                          (state->pendingViews != *state->enabledViews ||
                           state->pendingOverlap != *state->classicArtOverlap);
@@ -560,16 +503,12 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                        "Game defaults", 0);
     drawOptionsTextRow(baseX, optionsGlobalRowY(4, firstY, rowStep, lineHeight),
                        gsGlobal->Width - baseX, state->selectedGlobal == 4, selectorY,
-                       "Game core", state->pendingCore ? "OPL" : "Neutrino");
-    drawOptionsTextRow(baseX, optionsGlobalRowY(5, firstY, rowStep, lineHeight),
-                       gsGlobal->Width - baseX, state->selectedGlobal == 5, selectorY,
                        "PlayStation 2 logo", state->pendingLogo ? "On" : "Off");
     static const char *const descriptions[] = {
         "Choose a library background; customize Ambient Orbs in Orbs.",
         "Change the tint of the glass interface.",
         "Use LUNA's font or the PSBBN keyboard lettering.",
         "Play ambient music while browsing.",
-        "Default core for ATA games; other devices use Neutrino.",
         "Default PS2 startup logo setting for every game."};
     drawTextWindow(baseX + 18, menuBottom - lineHeight,
                    gsGlobal->Width - baseX, menuBottom, 0,
@@ -662,21 +601,16 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
     if (state->gameSection == GAME_HUB) {
       char compatSummary[24];
       int compatEnabled = 0;
-      int compatCount = gameUsesOpl(state) ?
-          LUNA_OPL_COMPAT_COUNT : LUNA_GAME_COMPAT_COUNT;
-      uint8_t compatMask = gameUsesOpl(state) ?
-          state->gameOptions.oplCompat : state->gameOptions.compat;
-      for (int bit = 0; bit < compatCount; bit++)
-        compatEnabled += (compatMask & (1U << bit)) != 0;
-      if (!gameUsesOpl(state))
-        compatEnabled += state->gameOptions.neutrinoIgrDisabled;
+      for (int bit = 0; bit < LUNA_GAME_COMPAT_COUNT; bit++)
+        compatEnabled += (state->gameOptions.compat & (1U << bit)) != 0;
+      compatEnabled += state->gameOptions.neutrinoIgrDisabled;
       snprintf(compatSummary, sizeof(compatSummary), "%d enabled", compatEnabled);
       const char *const summaries[GAME_SECTION_COUNT] = {
           gameVMCEnabled(state->titleArguments) ? "Enabled" : "Disabled",
           compatSummary,
           lunaGameOptionsValue(&state->gameOptions,
-              gameUsesOpl(state) ? LUNA_GAME_OPL_VIDEO_MODE : LUNA_GAME_VIDEO_MODE),
-          state->target->device->mode == MODE_ATA ? "4 options" : "3 options"};
+              LUNA_GAME_VIDEO_MODE),
+          "3 options"};
       drawOptionsSection(contentTop, "Game settings", 0);
       int selectorY = optionsSelectorY(&state->selector, state->page,
           state->selectedGameHubRow, firstY + state->selectedGameHubRow * gameStep);
@@ -690,7 +624,7 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                      ALIGN_LEFT, gameSectionDescriptions[state->selectedGameHubRow]);
     } else {
       const GameSection section = state->gameSection;
-      if (state->selectedGameRow >= gameSectionRowCount(state, section))
+      if (state->selectedGameRow >= gameSectionRowCount(section))
         state->selectedGameRow = 0;
       drawOptionsSection(contentTop, section == GAME_VIDEO_OUT ? "Video out" :
                                                           gameSectionLabels[section], 0);
@@ -700,17 +634,13 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
         drawGameVMCRows(state, baseX, firstY, gameStep, menuBottom);
       } else {
         int rowStart = firstY;
-        if (section == GAME_COMPATIBILITY) {
-          drawCompatibilityTabs(state, baseX, firstY);
-          rowStart += gameStep;
-        }
         const LunaGameRow selectedRow =
-            gameSectionRow(state, section, state->selectedGameRow);
+            gameSectionRow(section, state->selectedGameRow);
         int selectorY = optionsSelectorY(&state->selector, state->page,
             GAME_SECTION_COUNT + section * 6 + state->selectedGameRow,
             rowStart + state->selectedGameRow * gameStep);
-        for (int row = 0; row < gameSectionRowCount(state, section); row++) {
-          LunaGameRow option = gameSectionRow(state, section, row);
+        for (int row = 0; row < gameSectionRowCount(section); row++) {
+          LunaGameRow option = gameSectionRow(section, row);
           drawOptionsTextRow(baseX, rowStart + row * gameStep,
                              gsGlobal->Width - baseX,
                              row == state->selectedGameRow, selectorY,
@@ -785,12 +715,11 @@ static void changeOptionsGlassColor(OptionsMenuState *state, int color) {
 
 static int optionsGlobalDirty(int pendingBackground, int pendingGlassColor,
                               int pendingFont, int pendingAmbient, int pendingLogo,
-                              int pendingCore,
                               int background, int glassColor, int fontSetting,
-                              int ambient, int logo, int core) {
+                              int ambient, int logo) {
   return pendingBackground != background || pendingGlassColor != glassColor ||
          pendingFont != fontSetting || pendingAmbient != ambient ||
-         pendingLogo != logo || pendingCore != core;
+         pendingLogo != logo;
 }
 
 #define VMC_PICKER_MAX_FILES 128
@@ -1073,9 +1002,9 @@ static int handleViewsInput(OptionsMenuState *state, int input) {
 
 static int handleSystemInput(OptionsMenuState *state, int input) {
   if (input & PAD_UP) {
-    state->selectedGlobal = (state->selectedGlobal + 5) % 6;
+    state->selectedGlobal = (state->selectedGlobal + 4) % 5;
   } else if (input & PAD_DOWN) {
-    state->selectedGlobal = (state->selectedGlobal + 1) % 6;
+    state->selectedGlobal = (state->selectedGlobal + 1) % 5;
   } else if (input & (PAD_CROSS | PAD_CIRCLE | PAD_LEFT | PAD_RIGHT)) {
     const int direction = (input & PAD_LEFT) ? -1 : 1;
     if (state->selectedGlobal == 0)
@@ -1089,8 +1018,6 @@ static int handleSystemInput(OptionsMenuState *state, int input) {
       state->pendingFont = (state->pendingFont + direction + UI_FONT_COUNT) % UI_FONT_COUNT;
     else if (state->selectedGlobal == 3)
       state->pendingAmbient = !state->pendingAmbient;
-    else if (state->selectedGlobal == 4)
-      state->pendingCore = !state->pendingCore;
     else
       state->pendingLogo = !state->pendingLogo;
   } else if (input & PAD_START) {
@@ -1150,17 +1077,6 @@ static int handleSystemInput(OptionsMenuState *state, int input) {
         state->saveErrorLabel = "Could not save ambient sound";
       }
     }
-    if (state->pendingCore != state->coreSetting) {
-      int result = saveGameCoreOpl(state->target, state->pendingCore);
-      if (!result) {
-        state->coreSetting = state->pendingCore;
-        lunaApplyGlobalGameCore(state->titleArguments, state->coreSetting);
-        lunaGameOptionsRead(&state->gameOptions, state->titleArguments);
-      } else if (!state->saveError) {
-        state->saveError = result;
-        state->saveErrorLabel = "Could not save game core setting";
-      }
-    }
     if (state->pendingLogo != state->logoSetting) {
       int result = savePS2LogoEnabled(state->target, state->pendingLogo);
       if (!result) {
@@ -1216,7 +1132,7 @@ static int handleGameInput(OptionsMenuState *state, int input) {
   }
   int count = state->gameSection == GAME_MEMORY_CARDS &&
               !gameVMCEnabled(state->titleArguments) ? 3 :
-              gameSectionRowCount(state, state->gameSection);
+              gameSectionRowCount(state->gameSection);
   if (input & PAD_UP) {
     state->selectedGameRow = (state->selectedGameRow + count - 1) % count;
     return 0;
@@ -1226,20 +1142,11 @@ static int handleGameInput(OptionsMenuState *state, int input) {
     return 0;
   }
   if (state->gameSection == GAME_VIDEO_OUT) {
-    if ((input & (PAD_LEFT | PAD_RIGHT)) &&
-        state->target->device->mode == MODE_ATA) {
-      state->videoOutOpl = !state->videoOutOpl;
-      int mode = state->videoOutOpl ? state->gameOptions.oplVideoMode :
-                                     state->gameOptions.videoMode;
-      state->selectedGameRow = mode > 0 ? mode : 0;
-      state->videoOutFirstRow = 0;
-      state->selector.initialized = 0;
-    } else if (input & (PAD_CROSS | PAD_CIRCLE)) {
-      int current = state->videoOutOpl ? state->gameOptions.oplVideoMode :
-                                        state->gameOptions.videoMode;
+    if (input & (PAD_CROSS | PAD_CIRCLE)) {
+      int current = state->gameOptions.videoMode;
       int mode = current == state->selectedGameRow ? 0 : state->selectedGameRow;
       if (lunaGameOptionsSetVideoMode(&state->gameOptions, state->titleArguments,
-                                     state->videoOutOpl, mode))
+                                     mode))
         state->titleArgumentsChanged = 1;
     }
     return 0;
@@ -1286,14 +1193,12 @@ static int handleGameInput(OptionsMenuState *state, int input) {
   if (state->gameSection == GAME_MEMORY_CARDS &&
       (input & (PAD_LEFT | PAD_RIGHT)))
     return 0;
-  LunaGameRow selectedRow = gameSectionRow(state, state->gameSection,
+  LunaGameRow selectedRow = gameSectionRow(state->gameSection,
                                             state->selectedGameRow);
-  if ((selectedRow == LUNA_GAME_VIDEO_MODE || selectedRow == LUNA_GAME_OPL_VIDEO_MODE) &&
+  if (selectedRow == LUNA_GAME_VIDEO_MODE &&
       (input & (PAD_CROSS | PAD_CIRCLE))) {
     state->gameSection = GAME_VIDEO_OUT;
-    state->videoOutOpl = gameUsesOpl(state);
-    int mode = state->videoOutOpl ? state->gameOptions.oplVideoMode :
-                                   state->gameOptions.videoMode;
+    int mode = state->gameOptions.videoMode;
     state->selectedGameRow = mode > 0 ? mode : 0;
     state->videoOutFirstRow = 0;
     state->selector.initialized = 0;
@@ -1321,10 +1226,6 @@ static int handleGameInput(OptionsMenuState *state, int input) {
         lunaGameOptionsCyclePS2Logo(&state->gameOptions,
                                     state->titleArguments,
                                     state->logoSetting, direction) :
-        selectedRow == LUNA_GAME_CORE ?
-        lunaGameOptionsCycleCore(&state->gameOptions,
-                                 state->titleArguments,
-                                 state->coreSetting, direction) :
         lunaGameOptionsChange(&state->gameOptions, state->titleArguments,
                               selectedRow, direction);
     if (changed)
@@ -1343,7 +1244,6 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
                         uint32_t *enabledViews) {
   int res = 0;
   int logoSetting = loadPS2LogoEnabled(target);
-  int coreSetting = loadGameCoreOpl(target);
   OptionsMenuState state = {
       .target = target,
       .classicArtOverlap = classicArtOverlap,
@@ -1352,7 +1252,6 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
       .fontSetting = fontSetting,
       .ambientEnabled = ambientEnabled,
       .logoSetting = logoSetting,
-      .coreSetting = coreSetting,
       .orbsThemeSetting = orbsThemeSetting,
       .orbsAppearanceSetting = orbsAppearanceSetting,
       .orbsColorSetting = orbsColorSetting,
@@ -1364,7 +1263,6 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
       .pendingFont = *fontSetting,
       .pendingAmbient = *ambientEnabled,
       .pendingLogo = logoSetting,
-      .pendingCore = coreSetting,
       .pendingOrbsTheme = *orbsThemeSetting,
       .pendingOrbsAppearance = *orbsAppearanceSetting,
       .pendingOrbsColor = *orbsColorSetting,

@@ -19,7 +19,6 @@ set(SOURCES
     src/options.c
     src/favorites.c
     src/neutrino.c
-    src/opl_ata.c
     src/target.c
     src/storage.c
     src/forwarder.c
