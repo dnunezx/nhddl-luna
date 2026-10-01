@@ -54,14 +54,22 @@ int main(void) {
   assert(options.compat == ((1 << 0) | (1 << 1) | (1 << 4)));
   assert(options.videoMode == 2 && options.fieldFlip == 2);
   assert(options.ps2Logo && !options.debugColors);
-  assert(!options.oplCore);
-  assert(!strcmp(lunaGameOptionsValue(&options, LUNA_GAME_CORE), "Neutrino"));
-  assert(lunaGameOptionsChange(&options, &arguments, LUNA_GAME_CORE, 1));
+  assert(!options.oplCore && options.coreInherited);
+  assert(!strcmp(lunaGameOptionsValue(&options, LUNA_GAME_CORE), "Inherit (Neutrino)"));
+  assert(lunaGameOptionsCycleCore(&options, &arguments, 0, 1));
   Argument *core = getArgument(&arguments, "luna_core");
-  assert(core != NULL && !core->isDisabled && !strcmp(core->value, "opl"));
+  assert(core != NULL && !core->isGlobal && !strcmp(core->value, "opl"));
   assert(!strcmp(lunaGameOptionsValue(&options, LUNA_GAME_CORE), "OPL"));
-  assert(lunaGameOptionsChange(&options, &arguments, LUNA_GAME_CORE, 1));
-  assert(core->isDisabled && !options.oplCore);
+  assert(lunaGameOptionsCycleCore(&options, &arguments, 0, 1));
+  assert(!core->isGlobal && !strcmp(core->value, "neutrino"));
+  assert(lunaGameOptionsCycleCore(&options, &arguments, 0, 1));
+  assert(core->isGlobal && !options.oplCore && options.coreInherited);
+  assert(lunaApplyGlobalGameCore(&arguments, 1));
+  lunaGameOptionsRead(&options, &arguments);
+  assert(options.oplCore && options.coreInherited);
+  assert(lunaGameOptionsCycleCore(&options, &arguments, 1, 1));
+  assert(!core->isGlobal && !strcmp(core->value, "neutrino"));
+  assert(!options.oplCore && !options.coreInherited);
 
   assert(lunaGameOptionsChange(&options, &arguments, LUNA_GAME_FAST_READS, 1));
   assert(!strcmp(compat->value, "27") && !compat->isGlobal);

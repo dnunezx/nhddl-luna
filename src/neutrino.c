@@ -87,7 +87,8 @@ void launchTitleWithProgress(Target *target, ArgumentList *arguments,
   // setting keeps the existing Neutrino default.
   Argument *core = getArgument(arguments, "luna_core");
   if (core != NULL) {
-    if (!core->isDisabled && core->value != NULL &&
+    if (target->device->mode == MODE_ATA &&
+        !core->isDisabled && core->value != NULL &&
         strcmp(core->value, "opl") == 0) {
       int result = launchOplAta(target, progress, userdata);
       DPRINTF("OPL launch unavailable (%d); using Neutrino\n", result);

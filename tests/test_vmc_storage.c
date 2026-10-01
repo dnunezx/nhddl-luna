@@ -73,6 +73,27 @@ int main(void) {
   assert(lunaCreateVMC8("pfs0:/OPL/VMC/card.bin", NULL, NULL) == 0);
   roundTrip(&target, "pfs0:/OPL", 0);
   roundTrip(&target, "pfs0:/OPL", 1);
+  assert(!loadGameCoreOpl(&target));
+  assert(saveGameCoreOpl(&target, 1) == 0);
+  assert(loadGameCoreOpl(&target));
+  ArgumentList *coreArgs = loadLaunchArgumentLists(&target);
+  Argument *core = getArgument(coreArgs, "luna_core");
+  assert(core && core->isGlobal && !strcmp(core->value, "opl"));
+  LunaGameOptions coreOptions;
+  lunaGameOptionsRead(&coreOptions, coreArgs);
+  assert(lunaGameOptionsCycleCore(&coreOptions, coreArgs, 1, 1));
+  assert(!core->isGlobal && !strcmp(core->value, "neutrino"));
+  assert(updateTitleLaunchArguments(&target, coreArgs) == 0);
+  freeArgumentList(coreArgs);
+  coreArgs = loadLaunchArgumentLists(&target);
+  core = getArgument(coreArgs, "luna_core");
+  assert(core && !core->isGlobal && !strcmp(core->value, "neutrino"));
+  freeArgumentList(coreArgs);
+  assert(saveGameCoreOpl(&target, 0) == 0);
+  assert(!loadGameCoreOpl(&target));
+  assert(remove("pfs0:/OPL/LUNA/Game.yaml") == 0);
+  assert(remove("pfs0:/OPL/LUNA/gameCore.txt") == 0);
+  assert(rmdir("pfs0:/OPL/LUNA") == 0);
   // Prefix siblings and other drives must not be silently rebased.
   assert(!strcmp(storageVMCRelativePath(&device, "pfs0:/OPL2/VMC/card.bin"),
                  "pfs0:/OPL2/VMC/card.bin"));

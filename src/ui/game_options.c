@@ -46,6 +46,7 @@ void lunaGameOptionsRead(LunaGameOptions *options, ArgumentList *arguments) {
   Argument *core = getArgument(arguments, "luna_core");
   options->oplCore = core != NULL && !core->isDisabled &&
                      core->value != NULL && !strcmp(core->value, "opl");
+  options->coreInherited = core == NULL || core->isGlobal;
   for (int slot = 0; slot < 2; slot++) {
     const char *name = slot == 0 ? "mc0" : "mc1";
     Argument *card = getArgument(arguments, name);
@@ -147,14 +148,32 @@ int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
     options->debugColors = enabled;
     return 1;
   }
-  if (row == LUNA_GAME_CORE) {
-    int enabled = !options->oplCore;
-    if (!setArgument(arguments, "luna_core", "opl", enabled))
-      return 0;
-    options->oplCore = enabled;
-    return 1;
-  }
   return 0;
+}
+
+int lunaGameOptionsCycleCore(LunaGameOptions *options,
+                             ArgumentList *arguments,
+                             int globalOpl, int direction) {
+  Argument *core = getArgument(arguments, "luna_core");
+  int current = core == NULL || core->isGlobal ? 0 :
+      (options->oplCore != !!globalOpl ? 1 : 2);
+  int next = (current + (direction < 0 ? 2 : 1)) % 3;
+  if (next == 0) {
+    if (core != NULL)
+      core->isGlobal = 1;
+    if (!lunaApplyGlobalGameCore(arguments, globalOpl)) {
+      if (core != NULL)
+        core->isGlobal = 0;
+      return 0;
+    }
+  } else {
+    int opl = next == 1 ? !globalOpl : !!globalOpl;
+    if (!setArgument(arguments, "luna_core", opl ? "opl" : "neutrino", 1))
+      return 0;
+    getArgument(arguments, "luna_core")->isGlobal = 0;
+  }
+  lunaGameOptionsRead(options, arguments);
+  return 1;
 }
 
 int lunaGameOptionsCyclePS2Logo(LunaGameOptions *options,
@@ -200,7 +219,9 @@ const char *lunaGameOptionsValue(const LunaGameOptions *options, LunaGameRow row
   if (row == LUNA_GAME_DEBUG_COLORS)
     return options->debugColors ? "On" : "Off";
   if (row == LUNA_GAME_CORE)
-    return options->oplCore ? "OPL" : "Neutrino";
+    return options->coreInherited ?
+        (options->oplCore ? "Inherit (OPL)" : "Inherit (Neutrino)") :
+        (options->oplCore ? "OPL" : "Neutrino");
   return ">";
 }
 
@@ -217,5 +238,26 @@ int lunaApplyGlobalPS2Logo(ArgumentList *arguments, int enabled) {
   }
   logo->isGlobal = 1;
   logo->isDisabled = !enabled;
+  return 1;
+}
+
+int lunaApplyGlobalGameCore(ArgumentList *arguments, int opl) {
+  Argument *core = getArgument(arguments, "luna_core");
+  if (core != NULL && !core->isGlobal)
+    return 1;
+  const char *value = opl ? "opl" : "neutrino";
+  if (core == NULL) {
+    core = insertArgument(arguments, "luna_core", (char *)value);
+    if (core == NULL)
+      return 0;
+  } else if (core->value == NULL || strcmp(core->value, value)) {
+    char *replacement = strdup(value);
+    if (replacement == NULL)
+      return 0;
+    free(core->value);
+    core->value = replacement;
+  }
+  core->isGlobal = 1;
+  core->isDisabled = 0;
   return 1;
 }

@@ -50,11 +50,11 @@ int getLastLaunchedTitle(char *titlePath, size_t titlePathSize);
 int updateLastLaunchedTitle(struct DeviceMapEntry *device, char *titlePath);
 
 // Generates ArgumentList from global config file located on device
-// Will reinitialize result without clearing existing contents. On error, result will contain invalid pointer.
+// Will reinitialize result without clearing existing contents. On error, result is empty.
 int getGlobalLaunchArguments(ArgumentList *result, struct DeviceMapEntry *device);
 
 // Generates ArgumentList from title-specific config file.
-// Will reinitialize result without clearing existing contents. On error, result will contain invalid pointer.
+// Will reinitialize result without clearing existing contents. On error, result is empty.
 int getTitleLaunchArguments(ArgumentList *result, Target *target);
 
 // Saves title launch arguments to title-specific config file.
@@ -65,6 +65,10 @@ int updateTitleLaunchArguments(Target *target, ArgumentList *options);
 // Library-wide PS2 startup logo preference. Defaults to enabled.
 int loadPS2LogoEnabled(Target *target);
 int savePS2LogoEnabled(Target *target, int enabled);
+
+// Drive-wide game core preference. Neutrino is the default.
+int loadGameCoreOpl(Target *target);
+int saveGameCoreOpl(Target *target, int enabled);
 
 // Completely frees ArgumentList. Passed pointer will not be valid after this function executes
 void freeArgumentList(ArgumentList *result);

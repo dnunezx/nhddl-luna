@@ -62,6 +62,7 @@ typedef struct {
   int *fontSetting;
   int *ambientEnabled;
   int logoSetting;
+  int coreSetting;
   int *orbsThemeSetting;
   int *orbsAppearanceSetting;
   int *orbsColorSetting;
@@ -73,6 +74,7 @@ typedef struct {
   int pendingFont;
   int pendingAmbient;
   int pendingLogo;
+  int pendingCore;
   int pendingOrbsTheme;
   int pendingOrbsAppearance;
   int pendingOrbsColor;
@@ -117,13 +119,13 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Choose field flipping for a forced video mode.",
     "Choose Inherit to use the Global PS2 logo setting.",
     "Display debug colors while loading.",
-    "Choose the loader for this ATA game. Neutrino is the default."};
+    "Inherit or override the default core for this ATA game."};
 
 static const char *const gameSectionLabels[GAME_SECTION_COUNT] = {
-    "Virtual memory cards", "Compatibility", "Video", "Launch & debug"};
+    "Virtual memory cards", "Neutrino compatibility", "Video", "Launch & debug"};
 static const char *const gameSectionDescriptions[GAME_SECTION_COUNT] = {
     "Enable virtual cards by assigning one to a slot.",
-    "Change disc and system compatibility switches.",
+    "Change Neutrino disc and system compatibility switches.",
     "Adjust this game's video output.",
     "Set the startup logo and review launch options."};
 static const LunaGameRow gameSectionRows[GAME_SECTION_COUNT][5] = {
@@ -321,8 +323,9 @@ static void drawOptionsSection(int y, const char *title, int musicNotes) {
 
 static int optionsGlobalDirty(int pendingBackground, int pendingGlassColor,
                               int pendingFont, int pendingAmbient, int pendingLogo,
+                              int pendingCore,
                               int background, int glassColor, int fontSetting,
-                              int ambient, int logo);
+                              int ambient, int logo, int core);
 
 static const char *gamePS2LogoValue(const OptionsMenuState *state) {
   Argument *logo = getArgument(state->titleArguments, "logo");
@@ -397,8 +400,10 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
   const int systemDirty = showDirty && optionsGlobalDirty(
       state->pendingBackground, state->pendingGlassColor,
       state->pendingFont, state->pendingAmbient, state->pendingLogo,
+      state->pendingCore,
       *state->ambientOrbsBackgroundSetting, *state->glassColorSetting,
-      *state->fontSetting, *state->ambientEnabled, state->logoSetting);
+      *state->fontSetting, *state->ambientEnabled, state->logoSetting,
+      state->coreSetting);
   const int viewsDirty = showDirty &&
                          (state->pendingViews != *state->enabledViews ||
                           state->pendingOverlap != *state->classicArtOverlap);
@@ -460,15 +465,19 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                        gsGlobal->Width - baseX, state->selectedGlobal == 3, selectorY,
                        "Ambient sound", state->pendingAmbient ? "On" : "Off");
     drawOptionsSection(firstY + 4 * rowStep + lineHeight,
-                       "Applies to all games", 0);
+                       "Game defaults", 0);
     drawOptionsTextRow(baseX, optionsGlobalRowY(4, firstY, rowStep, lineHeight),
                        gsGlobal->Width - baseX, state->selectedGlobal == 4, selectorY,
+                       "Game core", state->pendingCore ? "OPL" : "Neutrino");
+    drawOptionsTextRow(baseX, optionsGlobalRowY(5, firstY, rowStep, lineHeight),
+                       gsGlobal->Width - baseX, state->selectedGlobal == 5, selectorY,
                        "PlayStation 2 logo", state->pendingLogo ? "On" : "Off");
     static const char *const descriptions[] = {
         "Choose a library background; customize Ambient Orbs in Orbs.",
         "Change the tint of the glass interface.",
         "Use LUNA's font or the PSBBN keyboard lettering.",
         "Play ambient music while browsing.",
+        "Default core for ATA games; other devices use Neutrino.",
         "Default PS2 startup logo setting for every game."};
     drawTextWindow(baseX + 18, menuBottom - lineHeight,
                    gsGlobal->Width - baseX, menuBottom, 0,
@@ -604,7 +613,9 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
         drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
                        gsGlobal->Height - footerHeight, 0,
                        HeaderTextColor, ALIGN_LEFT,
-                       gameRowDescriptions[selectedRow]);
+                       section == GAME_COMPATIBILITY && state->gameOptions.oplCore ?
+                           "These switches apply only to Neutrino." :
+                           gameRowDescriptions[selectedRow]);
       }
     }
   }
@@ -662,11 +673,12 @@ static void changeOptionsGlassColor(OptionsMenuState *state, int color) {
 
 static int optionsGlobalDirty(int pendingBackground, int pendingGlassColor,
                               int pendingFont, int pendingAmbient, int pendingLogo,
+                              int pendingCore,
                               int background, int glassColor, int fontSetting,
-                              int ambient, int logo) {
+                              int ambient, int logo, int core) {
   return pendingBackground != background || pendingGlassColor != glassColor ||
          pendingFont != fontSetting || pendingAmbient != ambient ||
-         pendingLogo != logo;
+         pendingLogo != logo || pendingCore != core;
 }
 
 #define VMC_PICKER_MAX_FILES 128
@@ -949,9 +961,9 @@ static int handleViewsInput(OptionsMenuState *state, int input) {
 
 static int handleSystemInput(OptionsMenuState *state, int input) {
   if (input & PAD_UP) {
-    state->selectedGlobal = (state->selectedGlobal + 4) % 5;
+    state->selectedGlobal = (state->selectedGlobal + 5) % 6;
   } else if (input & PAD_DOWN) {
-    state->selectedGlobal = (state->selectedGlobal + 1) % 5;
+    state->selectedGlobal = (state->selectedGlobal + 1) % 6;
   } else if (input & (PAD_CROSS | PAD_CIRCLE | PAD_LEFT | PAD_RIGHT)) {
     const int direction = (input & PAD_LEFT) ? -1 : 1;
     if (state->selectedGlobal == 0)
@@ -965,6 +977,8 @@ static int handleSystemInput(OptionsMenuState *state, int input) {
       state->pendingFont = (state->pendingFont + direction + UI_FONT_COUNT) % UI_FONT_COUNT;
     else if (state->selectedGlobal == 3)
       state->pendingAmbient = !state->pendingAmbient;
+    else if (state->selectedGlobal == 4)
+      state->pendingCore = !state->pendingCore;
     else
       state->pendingLogo = !state->pendingLogo;
   } else if (input & PAD_START) {
@@ -1022,6 +1036,17 @@ static int handleSystemInput(OptionsMenuState *state, int input) {
       } else if (!state->saveError) {
         state->saveError = result;
         state->saveErrorLabel = "Could not save ambient sound";
+      }
+    }
+    if (state->pendingCore != state->coreSetting) {
+      int result = saveGameCoreOpl(state->target, state->pendingCore);
+      if (!result) {
+        state->coreSetting = state->pendingCore;
+        lunaApplyGlobalGameCore(state->titleArguments, state->coreSetting);
+        lunaGameOptionsRead(&state->gameOptions, state->titleArguments);
+      } else if (!state->saveError) {
+        state->saveError = result;
+        state->saveErrorLabel = "Could not save game core setting";
       }
     }
     if (state->pendingLogo != state->logoSetting) {
@@ -1154,6 +1179,10 @@ static int handleGameInput(OptionsMenuState *state, int input) {
         lunaGameOptionsCyclePS2Logo(&state->gameOptions,
                                     state->titleArguments,
                                     state->logoSetting, direction) :
+        selectedRow == LUNA_GAME_CORE ?
+        lunaGameOptionsCycleCore(&state->gameOptions,
+                                 state->titleArguments,
+                                 state->coreSetting, direction) :
         lunaGameOptionsChange(&state->gameOptions, state->titleArguments,
                               selectedRow, direction);
     if (changed)
@@ -1172,6 +1201,7 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
                         uint32_t *enabledViews) {
   int res = 0;
   int logoSetting = loadPS2LogoEnabled(target);
+  int coreSetting = loadGameCoreOpl(target);
   OptionsMenuState state = {
       .target = target,
       .classicArtOverlap = classicArtOverlap,
@@ -1180,6 +1210,7 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
       .fontSetting = fontSetting,
       .ambientEnabled = ambientEnabled,
       .logoSetting = logoSetting,
+      .coreSetting = coreSetting,
       .orbsThemeSetting = orbsThemeSetting,
       .orbsAppearanceSetting = orbsAppearanceSetting,
       .orbsColorSetting = orbsColorSetting,
@@ -1191,6 +1222,7 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
       .pendingFont = *fontSetting,
       .pendingAmbient = *ambientEnabled,
       .pendingLogo = logoSetting,
+      .pendingCore = coreSetting,
       .pendingOrbsTheme = *orbsThemeSetting,
       .pendingOrbsAppearance = *orbsAppearanceSetting,
       .pendingOrbsColor = *orbsColorSetting,

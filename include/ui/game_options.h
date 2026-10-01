@@ -30,6 +30,7 @@ typedef struct {
   int ps2Logo;
   int debugColors;
   int oplCore;
+  int coreInherited;
   char vmcSlotLabel[2][25];
 } LunaGameOptions;
 
@@ -41,10 +42,14 @@ int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
 int lunaGameOptionsCyclePS2Logo(LunaGameOptions *options,
                                 ArgumentList *arguments,
                                 int globalEnabled, int direction);
+int lunaGameOptionsCycleCore(LunaGameOptions *options,
+                             ArgumentList *arguments,
+                             int globalOpl, int direction);
 int lunaGameOptionsSetVMC(LunaGameOptions *options, ArgumentList *arguments,
                           int slot, const char *path);
 const char *lunaGameOptionsValue(const LunaGameOptions *options, LunaGameRow row);
 // Applies the library default without replacing a title-specific logo choice.
 int lunaApplyGlobalPS2Logo(ArgumentList *arguments, int enabled);
+int lunaApplyGlobalGameCore(ArgumentList *arguments, int opl);
 
 #endif
