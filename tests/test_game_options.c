@@ -54,6 +54,19 @@ int main(void) {
   assert(options.compat == ((1 << 0) | (1 << 1) | (1 << 4)));
   assert(options.videoMode == 2 && options.fieldFlip == 2);
   assert(options.ps2Logo && !options.debugColors);
+  assert(options.oplCompat == 0);
+  assert(lunaGameOptionsChange(&options, &arguments,
+                               LUNA_GAME_OPL_ACCURATE_READS, 1));
+  assert(lunaGameOptionsChange(&options, &arguments,
+                               LUNA_GAME_OPL_SKIP_VIDEOS, 1));
+  Argument *oplCompat = getArgument(&arguments, "luna_opl_compat");
+  assert(oplCompat && !strcmp(oplCompat->value, "9"));
+  assert(options.oplCompat == 9);
+  assert(lunaGameOptionsChange(&options, &arguments,
+                               LUNA_GAME_OPL_ACCURATE_READS, 1));
+  assert(lunaGameOptionsChange(&options, &arguments,
+                               LUNA_GAME_OPL_SKIP_VIDEOS, 1));
+  assert(oplCompat->isDisabled && options.oplCompat == 0);
   assert(!options.oplCore && options.coreInherited);
   assert(!strcmp(lunaGameOptionsValue(&options, LUNA_GAME_CORE), "Inherit (Neutrino)"));
   assert(lunaGameOptionsCycleCore(&options, &arguments, 0, 1));

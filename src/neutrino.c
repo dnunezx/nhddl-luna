@@ -57,7 +57,8 @@ int assembleArgv(ArgumentList *arguments, char **argv[]) {
 
   *argv[0] = NEUTRINO_ELF_PATH;
   while (curArg != NULL) {
-    if (!curArg->isDisabled && strcmp(curArg->arg, "luna_core") != 0) {
+    if (!curArg->isDisabled && strcmp(curArg->arg, "luna_core") != 0 &&
+        strcmp(curArg->arg, "luna_opl_compat") != 0) {
       argSize = strlen(curArg->arg) + (curArg->value ? strlen(curArg->value) : 0) + 3; // + \0, = and -
       char *value = calloc(sizeof(char), argSize);
 
@@ -90,7 +91,7 @@ void launchTitleWithProgress(Target *target, ArgumentList *arguments,
     if (target->device->mode == MODE_ATA &&
         !core->isDisabled && core->value != NULL &&
         strcmp(core->value, "opl") == 0) {
-      int result = launchOplAta(target, progress, userdata);
+      int result = launchOplAta(target, arguments, progress, userdata);
       DPRINTF("OPL launch unavailable (%d); using Neutrino\n", result);
     }
   }

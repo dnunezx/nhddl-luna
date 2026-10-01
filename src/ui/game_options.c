@@ -15,6 +15,16 @@ static int argumentEnabled(ArgumentList *arguments, const char *name) {
   return argument != NULL && !argument->isDisabled;
 }
 
+uint8_t lunaGetOplCompatMask(ArgumentList *arguments) {
+  Argument *compat = getArgument(arguments, "luna_opl_compat");
+  if (compat == NULL || compat->isDisabled || compat->value == NULL ||
+      compat->value[0] == '\0')
+    return 0;
+  char *end;
+  unsigned long mask = strtoul(compat->value, &end, 10);
+  return *end == '\0' && mask < (1UL << LUNA_OPL_COMPAT_COUNT) ? mask : 0;
+}
+
 void lunaGameOptionsRead(LunaGameOptions *options, ArgumentList *arguments) {
   memset(options, 0, sizeof(*options));
   Argument *compat = getArgument(arguments, "gc");
@@ -23,6 +33,7 @@ void lunaGameOptionsRead(LunaGameOptions *options, ArgumentList *arguments) {
       if (strchr(compat->value, compatDigits[i]) != NULL)
         options->compat |= 1U << i;
   }
+  options->oplCompat = lunaGetOplCompatMask(arguments);
 
   Argument *video = getArgument(arguments, "gsm");
   if (video != NULL && !video->isDisabled && video->value != NULL) {
@@ -99,6 +110,19 @@ int lunaGameOptionsSetVMC(LunaGameOptions *options, ArgumentList *arguments,
 
 int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
                           LunaGameRow row, int direction) {
+  if (row >= LUNA_GAME_OPL_ACCURATE_READS && row <= LUNA_GAME_OPL_DISABLE_IGR) {
+    uint8_t next = options->oplCompat ^
+                   (1U << (row - LUNA_GAME_OPL_ACCURATE_READS));
+    char value[4];
+    snprintf(value, sizeof(value), "%u", next);
+    if (!setArgument(arguments, "luna_opl_compat", value, next != 0))
+      return 0;
+    Argument *compat = getArgument(arguments, "luna_opl_compat");
+    if (compat != NULL)
+      compat->isGlobal = 0;
+    options->oplCompat = next;
+    return 1;
+  }
   if (row >= LUNA_GAME_FAST_READS && row <= LUNA_GAME_BUFFER_OVERRUN) {
     int bit = 1 << (row - LUNA_GAME_FAST_READS);
     uint8_t next = options->compat ^ bit;
@@ -206,6 +230,9 @@ int lunaGameOptionsCyclePS2Logo(LunaGameOptions *options,
 }
 
 const char *lunaGameOptionsValue(const LunaGameOptions *options, LunaGameRow row) {
+  if (row >= LUNA_GAME_OPL_ACCURATE_READS && row <= LUNA_GAME_OPL_DISABLE_IGR)
+    return options->oplCompat & (1U << (row - LUNA_GAME_OPL_ACCURATE_READS)) ?
+        "On" : "Off";
   if (row >= LUNA_GAME_FAST_READS && row <= LUNA_GAME_BUFFER_OVERRUN)
     return (options->compat & (1 << (row - LUNA_GAME_FAST_READS))) ? "On" : "Off";
   if (row == LUNA_GAME_VIDEO_MODE)

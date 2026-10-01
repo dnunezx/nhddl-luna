@@ -104,7 +104,9 @@ static const char *const gameRowLabels[LUNA_GAME_ROW_COUNT] = {
     "IOP: Fix game buffer overrun", "Launch arguments",
     "VMC slot 1", "VMC slot 2",
     "Video mode", "Field flipping",
-    "Show PS2 logo", "Debug colors", "Game core"};
+    "Show PS2 logo", "Debug colors", "Game core",
+    "Accurate reads", "Synchronous reads", "Unhook syscalls",
+    "Skip videos", "Emulate DVD-DL", "Disable IGR"};
 
 static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Use faster IOP disc reads for this game.",
@@ -119,13 +121,19 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Choose field flipping for a forced video mode.",
     "Choose Inherit to use the Global PS2 logo setting.",
     "Display debug colors while loading.",
-    "Inherit or override the default core for this ATA game."};
+    "Inherit or override the default core for this ATA game.",
+    "Use OPL's accurate disc-read behavior.",
+    "Use OPL's synchronous disc-read method.",
+    "Leave EE system calls unhooked in OPL.",
+    "Skip PSS and Bink videos in OPL.",
+    "Emulate a dual-layer DVD in OPL.",
+    "Disable OPL's in-game reset for this title."};
 
 static const char *const gameSectionLabels[GAME_SECTION_COUNT] = {
-    "Virtual memory cards", "Neutrino compatibility", "Video", "Launch & debug"};
+    "Virtual memory cards", "Compatibility", "Video", "Launch & debug"};
 static const char *const gameSectionDescriptions[GAME_SECTION_COUNT] = {
     "Enable virtual cards by assigning one to a slot.",
-    "Change Neutrino disc and system compatibility switches.",
+    "Change the active core's compatibility switches.",
     "Adjust this game's video output.",
     "Set the startup logo and review launch options."};
 static const LunaGameRow gameSectionRows[GAME_SECTION_COUNT][5] = {
@@ -136,12 +144,28 @@ static const LunaGameRow gameSectionRows[GAME_SECTION_COUNT][5] = {
     {LUNA_GAME_VIDEO_MODE, LUNA_GAME_FIELD_FLIP},
     {LUNA_GAME_PS2_LOGO, LUNA_GAME_LAUNCH_ARGUMENTS,
      LUNA_GAME_DEBUG_COLORS, LUNA_GAME_CORE}};
+static const LunaGameRow oplCompatRows[LUNA_OPL_COMPAT_COUNT] = {
+    LUNA_GAME_OPL_ACCURATE_READS, LUNA_GAME_OPL_SYNC_READS,
+    LUNA_GAME_OPL_UNHOOK_SYSCALLS, LUNA_GAME_OPL_SKIP_VIDEOS,
+    LUNA_GAME_OPL_DVD_DL, LUNA_GAME_OPL_DISABLE_IGR};
 static const int gameSectionRowCounts[GAME_SECTION_COUNT] = {4, 5, 2, 4};
 
+static int gameUsesOpl(const OptionsMenuState *state) {
+  return state->target->device->mode == MODE_ATA && state->gameOptions.oplCore;
+}
+
 static int gameSectionRowCount(const OptionsMenuState *state, GameSection section) {
+  if (section == GAME_COMPATIBILITY && gameUsesOpl(state))
+    return LUNA_OPL_COMPAT_COUNT;
   if (section == GAME_LAUNCH && state->target->device->mode != MODE_ATA)
     return 3;
   return gameSectionRowCounts[section];
+}
+
+static LunaGameRow gameSectionRow(const OptionsMenuState *state,
+                                  GameSection section, int row) {
+  return section == GAME_COMPATIBILITY && gameUsesOpl(state) ?
+      oplCompatRows[row] : gameSectionRows[section][row];
 }
 
 #define OPTIONS_VIEW_ART_LAYOUT_ROW (UI_VIEW_SAVE_ICONS + 1)
@@ -272,6 +296,21 @@ static void drawOptionsTextRow(int x, int y, int right, int selected,
   if (value)
     drawText(right - valueWidth - 12, y, 0, 0, 0,
              selected ? ColorSelected : FontMainColor, value);
+}
+
+static void drawCompatibilityTabs(const OptionsMenuState *state, int baseX, int y) {
+  const int middle = (baseX + gsGlobal->Width) / 2;
+  const int neutrinoX = middle - 100;
+  const int oplX = middle + 48;
+  const int opl = gameUsesOpl(state);
+  const uint64_t disabled = GS_SETREG_RGBA(0x4E, 0x60, 0x78, 0x80);
+  drawText(neutrinoX, y, 0, 0, 0, opl ? disabled : ColorSelected, "Neutrino");
+  drawText(oplX, y, 0, 0, 0, opl ? ColorSelected : disabled, "OPL");
+  int activeX = opl ? oplX : neutrinoX;
+  const char *activeLabel = opl ? "OPL" : "Neutrino";
+  gsKit_prim_line(gsGlobal, activeX, y + getFontLineHeight(),
+                  activeX + (int)getLineWidth(activeLabel),
+                  y + getFontLineHeight(), 0, ColorSelected);
 }
 
 static int optionsGlobalRowY(int index, int firstY, int rowStep, int lineHeight) {
@@ -570,8 +609,12 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
     if (state->gameSection == GAME_HUB) {
       char compatSummary[24];
       int compatEnabled = 0;
-      for (int bit = 0; bit < LUNA_GAME_COMPAT_COUNT; bit++)
-        compatEnabled += (state->gameOptions.compat & (1U << bit)) != 0;
+      int compatCount = gameUsesOpl(state) ?
+          LUNA_OPL_COMPAT_COUNT : LUNA_GAME_COMPAT_COUNT;
+      uint8_t compatMask = gameUsesOpl(state) ?
+          state->gameOptions.oplCompat : state->gameOptions.compat;
+      for (int bit = 0; bit < compatCount; bit++)
+        compatEnabled += (compatMask & (1U << bit)) != 0;
       snprintf(compatSummary, sizeof(compatSummary), "%d enabled", compatEnabled);
       const char *const summaries[GAME_SECTION_COUNT] = {
           gameVMCEnabled(state->titleArguments) ? "Enabled" : "Disabled",
@@ -591,18 +634,25 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                      ALIGN_LEFT, gameSectionDescriptions[state->selectedGameHubRow]);
     } else {
       const GameSection section = state->gameSection;
+      if (state->selectedGameRow >= gameSectionRowCount(state, section))
+        state->selectedGameRow = 0;
       drawOptionsSection(contentTop, gameSectionLabels[section], 0);
       if (section == GAME_MEMORY_CARDS) {
         drawGameVMCRows(state, baseX, firstY, gameStep, menuBottom);
       } else {
+        int rowStart = firstY;
+        if (section == GAME_COMPATIBILITY) {
+          drawCompatibilityTabs(state, baseX, firstY);
+          rowStart += gameStep;
+        }
         const LunaGameRow selectedRow =
-            gameSectionRows[section][state->selectedGameRow];
+            gameSectionRow(state, section, state->selectedGameRow);
         int selectorY = optionsSelectorY(&state->selector, state->page,
-            GAME_SECTION_COUNT + section * 5 + state->selectedGameRow,
-            firstY + state->selectedGameRow * gameStep);
+            GAME_SECTION_COUNT + section * 6 + state->selectedGameRow,
+            rowStart + state->selectedGameRow * gameStep);
         for (int row = 0; row < gameSectionRowCount(state, section); row++) {
-          LunaGameRow option = gameSectionRows[section][row];
-          drawOptionsTextRow(baseX, firstY + row * gameStep,
+          LunaGameRow option = gameSectionRow(state, section, row);
+          drawOptionsTextRow(baseX, rowStart + row * gameStep,
                              gsGlobal->Width - baseX,
                              row == state->selectedGameRow, selectorY,
                              gameRowLabels[option],
@@ -613,9 +663,7 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
         drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
                        gsGlobal->Height - footerHeight, 0,
                        HeaderTextColor, ALIGN_LEFT,
-                       section == GAME_COMPATIBILITY && state->gameOptions.oplCore ?
-                           "These switches apply only to Neutrino." :
-                           gameRowDescriptions[selectedRow]);
+                       gameRowDescriptions[selectedRow]);
       }
     }
   }
@@ -1154,7 +1202,8 @@ static int handleGameInput(OptionsMenuState *state, int input) {
   if (state->gameSection == GAME_MEMORY_CARDS &&
       (input & (PAD_LEFT | PAD_RIGHT)))
     return 0;
-  LunaGameRow selectedRow = gameSectionRows[state->gameSection][state->selectedGameRow];
+  LunaGameRow selectedRow = gameSectionRow(state, state->gameSection,
+                                            state->selectedGameRow);
   if ((selectedRow == LUNA_GAME_VMC_SLOT1 || selectedRow == LUNA_GAME_VMC_SLOT2) &&
       (input & (PAD_CROSS | PAD_CIRCLE))) {
     int slot = selectedRow - LUNA_GAME_VMC_SLOT1;

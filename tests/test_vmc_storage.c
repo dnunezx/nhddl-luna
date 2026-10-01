@@ -81,6 +81,9 @@ int main(void) {
   assert(core && core->isGlobal && !strcmp(core->value, "opl"));
   LunaGameOptions coreOptions;
   lunaGameOptionsRead(&coreOptions, coreArgs);
+  assert(lunaGameOptionsChange(&coreOptions, coreArgs,
+                               LUNA_GAME_OPL_DVD_DL, 1));
+  assert(lunaGetOplCompatMask(coreArgs) == 16);
   assert(lunaGameOptionsCycleCore(&coreOptions, coreArgs, 1, 1));
   assert(!core->isGlobal && !strcmp(core->value, "neutrino"));
   assert(updateTitleLaunchArguments(&target, coreArgs) == 0);
@@ -88,6 +91,7 @@ int main(void) {
   coreArgs = loadLaunchArgumentLists(&target);
   core = getArgument(coreArgs, "luna_core");
   assert(core && !core->isGlobal && !strcmp(core->value, "neutrino"));
+  assert(lunaGetOplCompatMask(coreArgs) == 16);
   freeArgumentList(coreArgs);
   assert(saveGameCoreOpl(&target, 0) == 0);
   assert(!loadGameCoreOpl(&target));

@@ -4,6 +4,7 @@
 #include "neutrino.h"
 
 // Returns on a preflight failure; a successful launch does not return.
-int launchOplAta(Target *target, LaunchProgressCallback progress, void *userdata);
+int launchOplAta(Target *target, ArgumentList *arguments,
+                 LaunchProgressCallback progress, void *userdata);
 
 #endif

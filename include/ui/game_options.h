@@ -5,7 +5,8 @@
 #include <stdint.h>
 
 #define LUNA_GAME_COMPAT_COUNT 5
-#define LUNA_GAME_ROW_COUNT 13
+#define LUNA_OPL_COMPAT_COUNT 6
+#define LUNA_GAME_ROW_COUNT 19
 
 typedef enum {
   LUNA_GAME_FAST_READS,
@@ -20,11 +21,18 @@ typedef enum {
   LUNA_GAME_FIELD_FLIP,
   LUNA_GAME_PS2_LOGO,
   LUNA_GAME_DEBUG_COLORS,
-  LUNA_GAME_CORE
+  LUNA_GAME_CORE,
+  LUNA_GAME_OPL_ACCURATE_READS,
+  LUNA_GAME_OPL_SYNC_READS,
+  LUNA_GAME_OPL_UNHOOK_SYSCALLS,
+  LUNA_GAME_OPL_SKIP_VIDEOS,
+  LUNA_GAME_OPL_DVD_DL,
+  LUNA_GAME_OPL_DISABLE_IGR
 } LunaGameRow;
 
 typedef struct {
   uint8_t compat;
+  uint8_t oplCompat;
   int videoMode; // 0 = default, 1..5 = forced modes, -1 = unrecognized value
   int fieldFlip; // 0 = off, 1..3 = field flipping modes
   int ps2Logo;
@@ -35,6 +43,7 @@ typedef struct {
 } LunaGameOptions;
 
 void lunaGameOptionsRead(LunaGameOptions *options, ArgumentList *arguments);
+uint8_t lunaGetOplCompatMask(ArgumentList *arguments);
 // Returns 1 when an option changed, 0 otherwise. Launch arguments use a separate page.
 int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
                           LunaGameRow row, int direction);

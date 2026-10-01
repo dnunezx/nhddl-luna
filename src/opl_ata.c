@@ -6,6 +6,7 @@
 #include "devices/devices.h"
 #include "dprintf.h"
 #include "ui/ambient.h"
+#include "ui/game_options.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <kernel.h>
@@ -29,6 +30,11 @@
 #define OPL_PAYLOAD_LIMIT (128 * 1024)
 #define OPL_MODULE_INFO(id, size) (((id) << 24) | (size))
 #define ATA_DEVCTL_IS_48BIT 0x6840
+#define OPL_COMPAT_ALT_READ 0x0001
+#define OPL_COMPAT_SKIP_VIDEOS 0x0002
+#define OPL_COMPAT_DVD_DL 0x0004
+#define OPL_COMPAT_ACCURATE_READS 0x0008
+#define OPL_COMPAT_ENABLE_POFF 0x0100
 
 typedef struct {
   unsigned char ident[16];
@@ -116,7 +122,7 @@ static OplCdvdSettingsBdm *findCdvdSettings(void) {
   return NULL;
 }
 
-static int prepareDisc(Target *target) {
+static int prepareDisc(Target *target, uint8_t compat) {
   if (target->device->mode != MODE_ATA || target->id == NULL ||
       strlen(target->id) > 15)
     return -EINVAL;
@@ -154,7 +160,12 @@ static int prepareDisc(Target *target) {
   settings->common.NumParts = 1;
   settings->common.media = strstr(target->fullPath, "/CD/") != NULL
                                ? SCECdPS2CD : SCECdPS2DVD;
-  settings->common.flags = 0;
+  settings->common.flags =
+      ((compat & (1U << 0)) ? OPL_COMPAT_ACCURATE_READS : 0) |
+      ((compat & (1U << 1)) ? OPL_COMPAT_ALT_READ : 0) |
+      ((compat & (1U << 3)) ? OPL_COMPAT_SKIP_VIDEOS : 0) |
+      ((compat & (1U << 4)) ? OPL_COMPAT_DVD_DL : 0) |
+      ((compat & (1U << 5)) ? OPL_COMPAT_ENABLE_POFF : 0);
   memset(settings->common.DiscID, 0, sizeof(settings->common.DiscID));
   settings->common.zso_cache = 0;
   settings->common.fakemodule_flags = (1 << 0) | (1 << 3) | (1 << 4) | (1 << 5);
@@ -294,10 +305,12 @@ static int patchKernel(void *entry, void *storageEnd, void **eeloadCopy,
   return eeload && memory ? 0 : -ENOTSUP;
 }
 
-int launchOplAta(Target *target, LaunchProgressCallback progress, void *userdata) {
+int launchOplAta(Target *target, ArgumentList *arguments,
+                 LaunchProgressCallback progress, void *userdata) {
+  uint8_t compat = lunaGetOplCompatMask(arguments);
   int result = loadPayloads();
   if (!result)
-    result = prepareDisc(target);
+    result = prepareDisc(target, compat);
   if (!result)
     result = validateCore();
   if (result) {
@@ -354,6 +367,7 @@ int launchOplAta(Target *target, LaunchProgressCallback progress, void *userdata
   strcpy(config->GameModeDesc, "BDM_ATA_MODE");
   strcpy(config->ExitPath, "Browser");
   strlcpy(config->GameID, target->id, sizeof(config->GameID));
+  config->_CompatMask = compat;
   config->ModStorageStart = table;
   config->ModStorageEnd = storageEnd;
   GetOsdConfigParam(&config->CustomOSDConfigParam);
