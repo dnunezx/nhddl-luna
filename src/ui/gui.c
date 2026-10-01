@@ -474,8 +474,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     }
 
     // A random destination may be far from the current title. Move toward it
-    // one adjacent cache position at a time so refreshPSBBNCovers() recycles
-    // nine entries and loads only one new PNG per step instead of ten at once.
+    // one adjacent cache position at a time so Orbit recycles nine entries
+    // and queues only one new PNG per step instead of ten at once.
     if (view == UI_VIEW_ORBIT && orbitRandomActive && !quickMenu.captured && uiNowMs() >= orbitRandomNextStep) {
       selectedTitleIdx = lunaNavWrap(titles->total, selectedTitleIdx + orbitRandomDirection);
       if (selectedTitleIdx == orbitRandomTargetIdx) {
@@ -560,21 +560,20 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       int flowOffset;
       int collectionFps = (gsGlobal->Mode == GS_MODE_PAL) ? 50 : 60;
 
-      // Keep Orbit's synchronous loads outside the glide clock. Collection
-      // accepts finished thumbnails without waiting for file I/O or decoding.
+      // Both cover workers return finished thumbnails without making the
+      // glide clock wait for file I/O or decoding.
       if (view != UI_VIEW_ORBS) {
         if (psbbnCoverBaseIdx != flowSelectedTitleIdx) {
           if (view == UI_VIEW_PSBBN)
             refreshCollectionCovers(flowTitles, flowSelectedTitleIdx, psbbnCoverBaseIdx);
           else
-            refreshPSBBNCovers(flowTitles, flowSelectedTitleIdx, psbbnCoverBaseIdx, 1);
+            refreshOrbitCovers(flowTitles, flowSelectedTitleIdx, psbbnCoverBaseIdx);
         }
         psbbnCoverBaseIdx = flowSelectedTitleIdx;
         if (view == UI_VIEW_PSBBN)
           serviceCollectionCovers(flowTitles, flowSelectedTitleIdx);
-      } else {
-        if (!scrollFast.active)
-          refreshOrbsLogos(flowTitles, flowSelectedTitleIdx);
+        else
+          serviceOrbitCovers(flowTitles, flowSelectedTitleIdx);
       }
       now = uiNowMs();
       if (psbbnAnimationTargetIdx < 0) {
@@ -657,8 +656,11 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         int visualFocus = orbsVisualCacheIndex(flowOffset);
         orbsVisualTitleIdx = lunaNavWrap(titles->total,
             selectedTitleIdx + visualFocus - ORBS_LOGO_CACHE_FOCUS);
-        if (!scrollFast.active)
+        if (!scrollFast.active) {
           refreshOrbsBackground(getTargetByIdx(titles, orbsVisualTitleIdx));
+          refreshOrbsLogos(flowTitles, flowSelectedTitleIdx);
+          serviceScrollArt();
+        }
         now = uiNowMs();
         if (entryPending) {
           entryStartMs = now;
@@ -677,6 +679,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       int loadPageBuffer = -1;
       int loadPrioritySlot = -1;
       uint32_t now = uiNowMs();
+      if (!gridFastTrackActive && gridShoulderDirection == 0)
+        didLoadArtwork = serviceGridArt();
 
       if (gridActivePageBase < 0) {
         gridActivePageBase = (selectedTitleIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
@@ -686,9 +690,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       const int activeSelectedSlot = selectedTitleIdx - gridActivePageBase;
       const int selectorMoving = gridSelectorIsMoving(selectedTitleIdx, gridActivePageBase, now);
 
-      // A held shoulder deliberately performs no artwork work, including the
-      // half-second decision window. Fast-track moves lightweight page shells,
-      // then the normal loader prepares only the page where the user stops.
+      // A held shoulder pauses new artwork jobs and texture adoption. An
+      // already running decode may finish while fast-track moves page shells.
       if (!gridFastTrackActive && gridShoulderDirection == 0) {
         if (!gridCascadeActive && gridPendingSelectedIdx >= 0) {
           pendingPageBase = (gridPendingSelectedIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
@@ -701,7 +704,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                                     gridPageComplete, gridPageNextSlot);
           }
           int pendingSlot = gridPendingSelectedIdx - pendingPageBase;
-          if (pendingPageBuffer >= 0 && !gridPageSlotAttempted(pendingPageBuffer, pendingSlot)) {
+          if (pendingPageBuffer >= 0 && !gridPageSlotReady(pendingPageBuffer, pendingSlot)) {
             loadPageBuffer = pendingPageBuffer;
             loadPrioritySlot = pendingSlot;
           }
@@ -711,13 +714,17 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         // newly selected tile still gets priority over the rest of its page.
         if (loadPageBuffer < 0 && gridPendingSelectedIdx < 0 && !gridCascadeActive &&
             !gridPageComplete[gridActivePageBuffer] &&
-            (!selectorMoving || !gridPageSlotAttempted(gridActivePageBuffer, activeSelectedSlot))) {
+            (!selectorMoving || !gridPageSlotReady(gridActivePageBuffer, activeSelectedSlot))) {
           loadPageBuffer = gridActivePageBuffer;
-          if (!gridPageSlotAttempted(gridActivePageBuffer, activeSelectedSlot))
+          if (!gridPageSlotReady(gridActivePageBuffer, activeSelectedSlot))
             loadPrioritySlot = activeSelectedSlot;
         }
 
-        if (loadPageBuffer >= 0) {
+        if (loadPageBuffer >= 0 && !didLoadArtwork &&
+            !(gridPendingSelectedIdx < 0 && gridSelectedActiveIdx != selectedTitleIdx) &&
+            !(pendingPageBuffer >= 0 &&
+              gridPageSlotReady(pendingPageBuffer,
+                                    gridPendingSelectedIdx - pendingPageBase))) {
           gridPageComplete[loadPageBuffer] =
               loadGridPageStep(titles, gridPageBases[loadPageBuffer], loadPageBuffer,
                                &gridPageNextSlot[loadPageBuffer], loadPrioritySlot,
@@ -725,11 +732,11 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         }
 
         if (!gridCascadeActive && pendingPageBuffer >= 0 &&
-            gridPageSlotAttempted(pendingPageBuffer, gridPendingSelectedIdx - pendingPageBase)) {
+            gridPageSlotReady(pendingPageBuffer, gridPendingSelectedIdx - pendingPageBase)) {
           if (!didLoadArtwork && gridPendingSelectedCoverIdx != gridPendingSelectedIdx) {
             Target *pendingTarget = getTargetByIdx(titles, gridPendingSelectedIdx);
-            refreshGridSelectedCover(pendingTarget, gridSelectedIncomingBuffer);
-            gridPendingSelectedCoverIdx = gridPendingSelectedIdx;
+            if (refreshGridSelectedCover(pendingTarget, gridSelectedIncomingBuffer) >= 0)
+              gridPendingSelectedCoverIdx = gridPendingSelectedIdx;
             didLoadArtwork = 1;
           }
 
@@ -803,18 +810,21 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         gridSelectedAttemptedIdx = -1;
       }
 
-      if (!didLoadArtwork && gridSelectedActiveIdx != gridSelectedRequestedIdx &&
+      if (!gridFastTrackActive && gridShoulderDirection == 0 && !didLoadArtwork &&
+          gridSelectedActiveIdx != gridSelectedRequestedIdx &&
           gridSelectedAttemptedIdx != gridSelectedRequestedIdx) {
         Target *selectedTarget = getTargetByIdx(titles, gridSelectedRequestedIdx);
-        gridSelectedAttemptedIdx = gridSelectedRequestedIdx;
-        if (refreshGridSelectedCover(selectedTarget, gridSelectedIncomingBuffer)) {
+        int coverResult = refreshGridSelectedCover(selectedTarget, gridSelectedIncomingBuffer);
+        if (coverResult >= 0)
+          gridSelectedAttemptedIdx = gridSelectedRequestedIdx;
+        if (coverResult > 0) {
           int previousActiveBuffer = gridSelectedActiveBuffer;
           gridSelectedActiveBuffer = gridSelectedIncomingBuffer;
           gridSelectedActiveIdx = gridSelectedRequestedIdx;
           gridSelectedIncomingBuffer = previousActiveBuffer;
           releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
           gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
-        } else {
+        } else if (coverResult == 0) {
           releaseGridTexture(gridSelectedTextures[gridSelectedActiveBuffer]);
           gridSelectedLoaded[gridSelectedActiveBuffer] = 0;
           gridSelectedActiveIdx = gridSelectedRequestedIdx;

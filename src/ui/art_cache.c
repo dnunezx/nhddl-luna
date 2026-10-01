@@ -34,6 +34,8 @@ static uint8_t collectionCoverResidentLevel[PSBBN_COVER_CACHE_COUNT];
 GSTEXTURE *gridCoverTextures[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
 uint8_t gridCoverLoaded[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
 static uint8_t gridCoverAttempted[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
+static uint8_t gridCoverResolved[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
+static uint32_t gridPageGeneration[GRID_PAGE_BUFFERS];
 typedef struct {
   char path[255];
   PSBBNPixel *pixels;
@@ -44,6 +46,9 @@ static GridThumbnailCacheEntry gridThumbnailCache[GRID_THUMBNAIL_CACHE_COUNT];
 static uint32_t gridThumbnailCacheClock;
 GSTEXTURE *gridSelectedTextures[GRID_SELECTED_BUFFERS];
 uint8_t gridSelectedLoaded[GRID_SELECTED_BUFFERS];
+static uint32_t gridSelectedGeneration[GRID_SELECTED_BUFFERS];
+static uint8_t gridSelectedStatus[GRID_SELECTED_BUFFERS]; // 0: idle, 1: loading, 2: ready, 3: missing
+static char gridSelectedPath[GRID_SELECTED_BUFFERS][255];
 GSTEXTURE *saveIconSpinTexture;
 uint8_t saveIconSpinLoaded;
 GSTEXTURE *orbsLogoTextures[ORBS_LOGO_CACHE_COUNT];
@@ -51,7 +56,9 @@ uint8_t orbsLogoLoaded[ORBS_LOGO_CACHE_COUNT];
 GSTEXTURE *orbsBackgroundTexture;
 uint8_t orbsBackgroundLoaded;
 static int orbsLogoTargets[ORBS_LOGO_CACHE_COUNT];
+static uint8_t orbsLogoResolved[ORBS_LOGO_CACHE_COUNT];
 static int orbsBackgroundTarget = -1;
+static uint8_t orbsBackgroundResolved;
 
 static const char artPath[] = "/ART";
 static const char psbbnArtPath[] = "/ART/PSBBN";
@@ -85,7 +92,7 @@ static uint8_t collectionArtStack[16384] __attribute__((aligned(16)));
 static uint32_t collectionArtGeneration;
 static uint8_t collectionCoverAttempted[PSBBN_COVER_CACHE_COUNT];
 static uint8_t collectionCoverResolved[PSBBN_COVER_CACHE_COUNT];
-static struct {
+typedef struct {
   volatile int state; // 0: idle, 1: decoding, 2: ready
   uint32_t generation;
   char path[255];
@@ -95,12 +102,57 @@ static struct {
   int sourceWidth;
   int sourceHeight;
   int result;
-} collectionArtJob;
+} PSBBNArtJob;
+static PSBBNArtJob collectionArtJob;
+static int orbitArtThreadId = -1;
+static int orbitArtWakeSema = -1;
+static int orbitArtDoneSema = -1;
+static volatile int orbitArtStopping;
+static uint8_t orbitArtStack[16384] __attribute__((aligned(16)));
+static uint32_t orbitArtGeneration;
+static PSBBNArtJob orbitArtJob;
+static int gridArtThreadId = -1;
+static int gridArtWakeSema = -1;
+static int gridArtDoneSema = -1;
+static volatile int gridArtStopping;
+static uint8_t gridArtStack[16384] __attribute__((aligned(16)));
+static struct {
+  volatile int state; // 0: idle, 1: decoding, 2: ready
+  int thumbnail;
+  int buffer;
+  int slot;
+  uint32_t generation;
+  char path[255];
+  GSTEXTURE texture;
+  int result;
+  int missingFile;
+} gridArtJob;
+static int scrollArtThreadId = -1;
+static int scrollArtWakeSema = -1;
+static int scrollArtDoneSema = -1;
+static volatile int scrollArtStopping;
+static uint8_t scrollArtStack[16384] __attribute__((aligned(16)));
+static volatile uint32_t scrollArtGeneration;
+static struct {
+  volatile int state; // 0: idle, 1: decoding, 2: ready
+  int background;
+  int targetIdx;
+  uint32_t generation;
+  char path[255];
+  GSTEXTURE texture;
+  int result;
+} scrollArtJob;
 
 static void classicArtWorker(void);
 static void stopClassicArtWorker(void);
 static void collectionArtWorker(void);
 static void stopCollectionArtWorker(void);
+static void orbitArtWorker(void);
+static void stopOrbitArtWorker(void);
+static void gridArtWorker(void);
+static void stopGridArtWorker(void);
+static void scrollArtWorker(void);
+static void stopScrollArtWorker(void);
 
 void setGridSaveIconArtwork(int enabled) {
   gridSaveIconArtwork = enabled != 0;
@@ -197,6 +249,81 @@ int artCacheInit(void) {
     }
   } else {
     stopClassicArtWorker();
+  }
+  ee_sema_t orbitSemaphore;
+  ee_thread_t orbitThread;
+  memset(&orbitSemaphore, 0, sizeof(orbitSemaphore));
+  orbitSemaphore.init_count = 0;
+  orbitSemaphore.max_count = 1;
+  orbitArtWakeSema = CreateSema(&orbitSemaphore);
+  orbitArtDoneSema = CreateSema(&orbitSemaphore);
+  if (orbitArtWakeSema >= 0 && orbitArtDoneSema >= 0) {
+    memset(&orbitThread, 0, sizeof(orbitThread));
+    orbitThread.func = orbitArtWorker;
+    orbitThread.stack = orbitArtStack;
+    orbitThread.stack_size = sizeof(orbitArtStack);
+    orbitThread.gp_reg = &_gp;
+    orbitThread.initial_priority = 0x1f;
+    orbitArtStopping = 0;
+    orbitArtThreadId = CreateThread(&orbitThread);
+    if (orbitArtThreadId < 0 || StartThread(orbitArtThreadId, NULL) < 0) {
+      if (orbitArtThreadId >= 0)
+        DeleteThread(orbitArtThreadId);
+      orbitArtThreadId = -1;
+      stopOrbitArtWorker();
+    }
+  } else {
+    stopOrbitArtWorker();
+  }
+  ee_sema_t gridSemaphore;
+  ee_thread_t gridThread;
+  memset(&gridSemaphore, 0, sizeof(gridSemaphore));
+  gridSemaphore.init_count = 0;
+  gridSemaphore.max_count = 1;
+  gridArtWakeSema = CreateSema(&gridSemaphore);
+  gridArtDoneSema = CreateSema(&gridSemaphore);
+  if (gridArtWakeSema >= 0 && gridArtDoneSema >= 0) {
+    memset(&gridThread, 0, sizeof(gridThread));
+    gridThread.func = gridArtWorker;
+    gridThread.stack = gridArtStack;
+    gridThread.stack_size = sizeof(gridArtStack);
+    gridThread.gp_reg = &_gp;
+    gridThread.initial_priority = 0x1f;
+    gridArtStopping = 0;
+    gridArtThreadId = CreateThread(&gridThread);
+    if (gridArtThreadId < 0 || StartThread(gridArtThreadId, NULL) < 0) {
+      if (gridArtThreadId >= 0)
+        DeleteThread(gridArtThreadId);
+      gridArtThreadId = -1;
+      stopGridArtWorker();
+    }
+  } else {
+    stopGridArtWorker();
+  }
+  ee_sema_t scrollSemaphore;
+  ee_thread_t scrollThread;
+  memset(&scrollSemaphore, 0, sizeof(scrollSemaphore));
+  scrollSemaphore.init_count = 0;
+  scrollSemaphore.max_count = 1;
+  scrollArtWakeSema = CreateSema(&scrollSemaphore);
+  scrollArtDoneSema = CreateSema(&scrollSemaphore);
+  if (scrollArtWakeSema >= 0 && scrollArtDoneSema >= 0) {
+    memset(&scrollThread, 0, sizeof(scrollThread));
+    scrollThread.func = scrollArtWorker;
+    scrollThread.stack = scrollArtStack;
+    scrollThread.stack_size = sizeof(scrollArtStack);
+    scrollThread.gp_reg = &_gp;
+    scrollThread.initial_priority = 0x1f;
+    scrollArtStopping = 0;
+    scrollArtThreadId = CreateThread(&scrollThread);
+    if (scrollArtThreadId < 0 || StartThread(scrollArtThreadId, NULL) < 0) {
+      if (scrollArtThreadId >= 0)
+        DeleteThread(scrollArtThreadId);
+      scrollArtThreadId = -1;
+      stopScrollArtWorker();
+    }
+  } else {
+    stopScrollArtWorker();
   }
   ee_sema_t semaphore;
   ee_thread_t thread;
@@ -604,53 +731,76 @@ static int collectionCoverPath(TargetList *titles, int selectedTitleIdx, int cac
   return length >= 0 && length < (int)capacity ? 0 : -1;
 }
 
+static void decodePSBBNArtJob(PSBBNArtJob *job) {
+  GSTEXTURE decoded = {0};
+  job->result = decodePNGTextureRGBA(gsGlobal, &decoded, job->path);
+  if (job->result == 0 && decoded.Mem != NULL &&
+      decoded.Width > 0 && decoded.Height > 0) {
+    featherPSBBNCoverEdges(&decoded);
+    PSBBNPixel *preview = createPSBBNThumbnail((const PSBBNPixel *)decoded.Mem,
+                                                decoded.Width, decoded.Height,
+                                                PSBBN_PREVIEW_SIZE);
+    PSBBNPixel *thumbnail = preview != NULL ?
+        createPSBBNThumbnail(preview, PSBBN_PREVIEW_SIZE, PSBBN_PREVIEW_SIZE,
+                             PSBBN_THUMBNAIL_SIZE) : NULL;
+    if (thumbnail != NULL && preview != NULL) {
+      job->sourcePixels = decoded.Mem;
+      job->previewPixels = preview;
+      job->sourceWidth = decoded.Width;
+      job->sourceHeight = decoded.Height;
+      decoded.Mem = (u32 *)thumbnail;
+      decoded.Width = PSBBN_THUMBNAIL_SIZE;
+      decoded.Height = PSBBN_THUMBNAIL_SIZE;
+      decoded.PSM = GS_PSM_CT32;
+      decoded.Filter = GS_FILTER_LINEAR;
+      decoded.Delayed = 1;
+      decoded.Vram = 0;
+      decoded.VramClut = 0;
+      job->texture = decoded;
+    } else {
+      free(thumbnail);
+      free(preview);
+      job->result = -1;
+    }
+  } else {
+    job->result = -1;
+  }
+  if (job->result != 0) {
+    free(decoded.Mem);
+    free(decoded.Clut);
+  }
+  __asm__ __volatile__("" ::: "memory");
+  job->state = 2;
+}
+
 static void collectionArtWorker(void) {
   while (1) {
     WaitSema(collectionArtWakeSema);
     if (collectionArtStopping)
       break;
-    GSTEXTURE decoded = {0};
-    collectionArtJob.result = decodePNGTextureRGBA(gsGlobal, &decoded, collectionArtJob.path);
-    if (collectionArtJob.result == 0 && decoded.Mem != NULL &&
-        decoded.Width > 0 && decoded.Height > 0) {
-      featherPSBBNCoverEdges(&decoded);
-      PSBBNPixel *preview = createPSBBNThumbnail((const PSBBNPixel *)decoded.Mem,
-                                                  decoded.Width, decoded.Height,
-                                                  PSBBN_PREVIEW_SIZE);
-      PSBBNPixel *thumbnail = preview != NULL ?
-          createPSBBNThumbnail(preview, PSBBN_PREVIEW_SIZE, PSBBN_PREVIEW_SIZE,
-                               PSBBN_THUMBNAIL_SIZE) : NULL;
-      if (thumbnail != NULL && preview != NULL) {
-        collectionArtJob.sourcePixels = decoded.Mem;
-        collectionArtJob.previewPixels = preview;
-        collectionArtJob.sourceWidth = decoded.Width;
-        collectionArtJob.sourceHeight = decoded.Height;
-        decoded.Mem = (u32 *)thumbnail;
-        decoded.Width = PSBBN_THUMBNAIL_SIZE;
-        decoded.Height = PSBBN_THUMBNAIL_SIZE;
-        decoded.PSM = GS_PSM_CT32;
-        decoded.Filter = GS_FILTER_LINEAR;
-        decoded.Delayed = 1;
-        decoded.Vram = 0;
-        decoded.VramClut = 0;
-        collectionArtJob.texture = decoded;
-      } else {
-        free(thumbnail);
-        free(preview);
-        collectionArtJob.result = -1;
-      }
-    } else {
-      collectionArtJob.result = -1;
-    }
-    if (collectionArtJob.result != 0) {
-      free(decoded.Mem);
-      free(decoded.Clut);
-    }
-    __asm__ __volatile__("" ::: "memory");
-    collectionArtJob.state = 2;
+    decodePSBBNArtJob(&collectionArtJob);
   }
   SignalSema(collectionArtDoneSema);
   ExitThread();
+}
+
+static void orbitArtWorker(void) {
+  while (1) {
+    WaitSema(orbitArtWakeSema);
+    if (orbitArtStopping)
+      break;
+    decodePSBBNArtJob(&orbitArtJob);
+  }
+  SignalSema(orbitArtDoneSema);
+  ExitThread();
+}
+
+static void clearPSBBNArtJob(PSBBNArtJob *job) {
+  free(job->texture.Mem);
+  free(job->texture.Clut);
+  free(job->sourcePixels);
+  free(job->previewPixels);
+  memset(job, 0, sizeof(*job));
 }
 
 static void stopCollectionArtWorker(void) {
@@ -666,15 +816,28 @@ static void stopCollectionArtWorker(void) {
   if (collectionArtDoneSema >= 0)
     DeleteSema(collectionArtDoneSema);
   collectionArtWakeSema = collectionArtDoneSema = -1;
-  free(collectionArtJob.texture.Mem);
-  free(collectionArtJob.texture.Clut);
-  free(collectionArtJob.sourcePixels);
-  free(collectionArtJob.previewPixels);
-  memset(&collectionArtJob, 0, sizeof(collectionArtJob));
+  clearPSBBNArtJob(&collectionArtJob);
+}
+
+static void stopOrbitArtWorker(void) {
+  if (orbitArtThreadId >= 0) {
+    orbitArtStopping = 1;
+    SignalSema(orbitArtWakeSema);
+    WaitSema(orbitArtDoneSema);
+    DeleteThread(orbitArtThreadId);
+    orbitArtThreadId = -1;
+  }
+  if (orbitArtWakeSema >= 0)
+    DeleteSema(orbitArtWakeSema);
+  if (orbitArtDoneSema >= 0)
+    DeleteSema(orbitArtDoneSema);
+  orbitArtWakeSema = orbitArtDoneSema = -1;
+  clearPSBBNArtJob(&orbitArtJob);
 }
 
 void releasePSBBNCovers(void) {
   collectionArtGeneration++;
+  orbitArtGeneration++;
   for (int cacheIdx = 0; cacheIdx < PSBBN_COVER_CACHE_COUNT; cacheIdx++)
     releasePSBBNCoverCacheEntry(cacheIdx);
 }
@@ -688,15 +851,26 @@ void suspendCollectionCovers(void) {
 }
 
 void adoptOrbitCoversForCollection(void) {
-  // Orbit has already tried every slot using the same PSBBN artwork paths.
-  // Loaded jackets and known missing files are both ready for the reveal.
+  // A pending Orbit decode cannot be adopted. Collection will request that
+  // slot itself while keeping finished jackets and known missing files.
+  orbitArtGeneration++;
   for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
-    collectionCoverAttempted[i] = 1;
-    collectionCoverResolved[i] = 1;
+    if (orbitArtThreadId < 0)
+      collectionCoverResolved[i] = 1;
+    collectionCoverAttempted[i] = collectionCoverResolved[i];
   }
 }
 
 void releaseGridTexture(GSTEXTURE *texture) {
+  for (int buffer = 0; buffer < GRID_SELECTED_BUFFERS; buffer++) {
+    if (texture == gridSelectedTextures[buffer]) {
+      gridSelectedGeneration[buffer]++;
+      gridSelectedStatus[buffer] = 0;
+      gridSelectedPath[buffer][0] = '\0';
+      gridSelectedLoaded[buffer] = 0;
+      break;
+    }
+  }
   if (texture->Vram != 0)
     gsKit_TexManager_free(gsGlobal, texture);
   texture->Vram = 0;
@@ -707,16 +881,47 @@ void releaseGridTexture(GSTEXTURE *texture) {
 }
 
 void releaseOrbsArt(void) {
+  scrollArtGeneration++;
+  serviceScrollArt(); // Drop a completed result before its slots are released.
   if (orbsBackgroundTexture != NULL)
     releaseGridTexture(orbsBackgroundTexture);
   orbsBackgroundLoaded = 0;
   orbsBackgroundTarget = -1;
+  orbsBackgroundResolved = 0;
   for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++) {
     if (orbsLogoTextures[i] != NULL)
       releaseGridTexture(orbsLogoTextures[i]);
     orbsLogoLoaded[i] = 0;
     orbsLogoTargets[i] = -1;
+    orbsLogoResolved[i] = 0;
   }
+}
+
+static int orbsArtworkPath(Target *target, const char *suffix,
+                           char *path, size_t capacity) {
+  struct DeviceMapEntry *device;
+  if (target == NULL || target->device == NULL || target->id == NULL)
+    return -1;
+  device = target->device->metadev ? target->device->metadev : target->device;
+  if (device->mountpoint == NULL)
+    return -1;
+  int length = snprintf(path, capacity, "%s%s/%s_%s.png",
+                        device->mountpoint, orbsArtPath, target->id, suffix);
+  return length >= 0 && length < (int)capacity ? 0 : -1;
+}
+
+static int queueScrollArt(Target *target, int background) {
+  if (scrollArtJob.state != 0)
+    return 0;
+  if (orbsArtworkPath(target, background ? "BG" : "LGO",
+                      scrollArtJob.path, sizeof(scrollArtJob.path)) < 0)
+    return -1;
+  scrollArtJob.background = background;
+  scrollArtJob.targetIdx = target->idx;
+  scrollArtJob.generation = scrollArtGeneration;
+  scrollArtJob.state = 1;
+  SignalSema(scrollArtWakeSema);
+  return 1;
 }
 
 static void loadOrbsLogo(TargetList *titles, int targetIdx, int cacheIdx) {
@@ -734,6 +939,7 @@ static void loadOrbsLogo(TargetList *titles, int targetIdx, int cacheIdx) {
   if (orbsLogoLoaded[cacheIdx])
     texture->Filter = GS_FILTER_LINEAR;
   orbsLogoTargets[cacheIdx] = targetIdx;
+  orbsLogoResolved[cacheIdx] = 1;
 }
 
 void refreshOrbsLogos(TargetList *titles, int selectedTitleIdx) {
@@ -752,23 +958,59 @@ void refreshOrbsLogos(TargetList *titles, int selectedTitleIdx) {
     if (match >= 0) {
       GSTEXTURE *texture = orbsLogoTextures[i];
       uint8_t loaded = orbsLogoLoaded[i];
+      uint8_t resolved = orbsLogoResolved[i];
       int target = orbsLogoTargets[i];
       orbsLogoTextures[i] = orbsLogoTextures[match];
       orbsLogoLoaded[i] = orbsLogoLoaded[match];
+      orbsLogoResolved[i] = orbsLogoResolved[match];
       orbsLogoTargets[i] = orbsLogoTargets[match];
       orbsLogoTextures[match] = texture;
       orbsLogoLoaded[match] = loaded;
+      orbsLogoResolved[match] = resolved;
       orbsLogoTargets[match] = target;
     } else {
-      loadOrbsLogo(titles, wanted, i);
+      if (scrollArtThreadId < 0) {
+        loadOrbsLogo(titles, wanted, i);
+      } else {
+        releaseGridTexture(orbsLogoTextures[i]);
+        orbsLogoLoaded[i] = 0;
+        orbsLogoResolved[i] = 0;
+        orbsLogoTargets[i] = wanted;
+      }
+    }
+  }
+  if (scrollArtThreadId >= 0 && scrollArtJob.state == 0) {
+    static const uint8_t priority[ORBS_LOGO_CACHE_COUNT] = {3, 2, 4, 1, 5, 0, 6};
+    for (int p = 0; p < ORBS_LOGO_CACHE_COUNT; p++) {
+      int i = priority[p];
+      if (orbsLogoResolved[i])
+        continue;
+      int queued = queueScrollArt(getTargetByIdx(titles, orbsLogoTargets[i]), 0);
+      if (queued < 0)
+        orbsLogoResolved[i] = 1;
+      else
+        break;
     }
   }
 }
 
 void refreshOrbsBackground(Target *target) {
   struct DeviceMapEntry *device;
-  if (orbsBackgroundTarget == target->idx)
+  if (orbsBackgroundTarget == target->idx) {
+    if (scrollArtThreadId >= 0 && !orbsBackgroundResolved &&
+        queueScrollArt(target, 1) < 0)
+      orbsBackgroundResolved = 1;
     return;
+  }
+  if (scrollArtThreadId >= 0) {
+    releaseGridTexture(orbsBackgroundTexture);
+    orbsBackgroundLoaded = 0;
+    orbsBackgroundResolved = 0;
+    orbsBackgroundTarget = target->idx;
+    if (queueScrollArt(target, 1) < 0)
+      orbsBackgroundResolved = 1;
+    return;
+  }
   device = target->device;
   if (device->metadev)
     device = device->metadev;
@@ -780,6 +1022,113 @@ void refreshOrbsBackground(Target *target) {
   if (orbsBackgroundLoaded)
     orbsBackgroundTexture->Filter = GS_FILTER_LINEAR;
   orbsBackgroundTarget = target->idx;
+  orbsBackgroundResolved = 1;
+}
+
+static void scrollArtWorker(void) {
+  while (1) {
+    WaitSema(scrollArtWakeSema);
+    if (scrollArtStopping)
+      break;
+    GSTEXTURE decoded = {0};
+    decoded.Delayed = 1;
+    scrollArtJob.result = decodePNGTextureRGBA(gsGlobal, &decoded, scrollArtJob.path);
+    if (scrollArtJob.result == 0 && decoded.Mem != NULL &&
+        decoded.Width > 0 && decoded.Height > 0) {
+      decoded.Filter = GS_FILTER_LINEAR;
+      decoded.Delayed = 1;
+      decoded.Vram = 0;
+      decoded.VramClut = 0;
+      scrollArtJob.texture = decoded;
+    } else {
+      scrollArtJob.result = -1;
+      free(decoded.Mem);
+      free(decoded.Clut);
+    }
+    if (scrollArtJob.generation != scrollArtGeneration) {
+      free(scrollArtJob.texture.Mem);
+      free(scrollArtJob.texture.Clut);
+      memset(&scrollArtJob.texture, 0, sizeof(scrollArtJob.texture));
+      scrollArtJob.result = -1;
+    }
+    __asm__ __volatile__("" ::: "memory");
+    scrollArtJob.state = 2;
+  }
+  SignalSema(scrollArtDoneSema);
+  ExitThread();
+}
+
+static void stopScrollArtWorker(void) {
+  if (scrollArtThreadId >= 0) {
+    scrollArtStopping = 1;
+    SignalSema(scrollArtWakeSema);
+    WaitSema(scrollArtDoneSema);
+    DeleteThread(scrollArtThreadId);
+    scrollArtThreadId = -1;
+  }
+  if (scrollArtWakeSema >= 0)
+    DeleteSema(scrollArtWakeSema);
+  if (scrollArtDoneSema >= 0)
+    DeleteSema(scrollArtDoneSema);
+  scrollArtWakeSema = scrollArtDoneSema = -1;
+  free(scrollArtJob.texture.Mem);
+  free(scrollArtJob.texture.Clut);
+  memset(&scrollArtJob, 0, sizeof(scrollArtJob));
+}
+
+void serviceScrollArt(void) {
+  if (scrollArtThreadId < 0 || scrollArtJob.state != 2)
+    return;
+  __asm__ __volatile__("" ::: "memory");
+  if (scrollArtJob.generation == scrollArtGeneration) {
+    if (scrollArtJob.background) {
+      if (orbsBackgroundTarget == scrollArtJob.targetIdx &&
+          !orbsBackgroundResolved) {
+        releaseGridTexture(orbsBackgroundTexture);
+        if (scrollArtJob.result == 0) {
+          *orbsBackgroundTexture = scrollArtJob.texture;
+          memset(&scrollArtJob.texture, 0, sizeof(scrollArtJob.texture));
+          orbsBackgroundLoaded = 1;
+          gsKit_TexManager_bind(gsGlobal, orbsBackgroundTexture);
+        }
+        orbsBackgroundResolved = 1;
+      }
+    } else {
+      static const uint8_t priority[ORBS_LOGO_CACHE_COUNT] = {3, 2, 4, 1, 5, 0, 6};
+      for (int p = 0; p < ORBS_LOGO_CACHE_COUNT; p++) {
+        int i = priority[p];
+        if (orbsLogoTargets[i] != scrollArtJob.targetIdx || orbsLogoResolved[i])
+          continue;
+        releaseGridTexture(orbsLogoTextures[i]);
+        if (scrollArtJob.result == 0) {
+          *orbsLogoTextures[i] = scrollArtJob.texture;
+          memset(&scrollArtJob.texture, 0, sizeof(scrollArtJob.texture));
+          orbsLogoLoaded[i] = 1;
+          gsKit_TexManager_bind(gsGlobal, orbsLogoTextures[i]);
+        }
+        orbsLogoResolved[i] = 1;
+        break;
+      }
+    }
+  }
+  free(scrollArtJob.texture.Mem);
+  free(scrollArtJob.texture.Clut);
+  memset(&scrollArtJob, 0, sizeof(scrollArtJob));
+}
+
+static int gridArtworkPath(Target *target, char *path, size_t capacity) {
+  struct DeviceMapEntry *device;
+  if (target == NULL || target->device == NULL || target->id == NULL)
+    return -1;
+  device = target->device->metadev ? target->device->metadev : target->device;
+  if (device->mountpoint == NULL)
+    return -1;
+  int length = gridSaveIconArtwork
+      ? snprintf(path, capacity, "%s/ART/SAVEICON/%s/preview.png",
+                 device->mountpoint, target->id)
+      : snprintf(path, capacity, "%s%s/%s.png", device->mountpoint,
+                 psbbnArtPath, target->id);
+  return length >= 0 && length < (int)capacity ? 0 : -1;
 }
 
 static int findGridThumbnail(const char *path) {
@@ -919,12 +1268,129 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
   return 0;
 }
 
+static void gridArtWorker(void) {
+  while (1) {
+    WaitSema(gridArtWakeSema);
+    if (gridArtStopping)
+      break;
+    GSTEXTURE decoded = {0};
+    decoded.Delayed = 1;
+    gridArtJob.result = decodePNGTextureRGBA(gsGlobal, &decoded, gridArtJob.path);
+    if (gridArtJob.result == 0 && decoded.Mem != NULL &&
+        decoded.Width > 0 && decoded.Height > 0) {
+      if (gridArtJob.thumbnail) {
+        PSBBNPixel *pixels = createPSBBNThumbnail((const PSBBNPixel *)decoded.Mem,
+                                                  decoded.Width, decoded.Height,
+                                                  GRID_THUMBNAIL_SIZE);
+        if (pixels == NULL) {
+          gridArtJob.result = -1;
+        } else {
+          free(decoded.Mem);
+          decoded.Mem = (u32 *)pixels;
+          decoded.Width = GRID_THUMBNAIL_SIZE;
+          decoded.Height = GRID_THUMBNAIL_SIZE;
+        }
+      }
+      if (gridArtJob.result == 0) {
+        decoded.PSM = GS_PSM_CT32;
+        decoded.Filter = GS_FILTER_LINEAR;
+        decoded.Delayed = 1;
+        decoded.Vram = 0;
+        decoded.VramClut = 0;
+        gridArtJob.texture = decoded;
+      }
+    } else {
+      gridArtJob.result = -1;
+    }
+    if (gridArtJob.result != 0) {
+      FILE *file = fopen(gridArtJob.path, "rb");
+      gridArtJob.missingFile = file == NULL;
+      if (file != NULL)
+        fclose(file);
+      free(decoded.Mem);
+      free(decoded.Clut);
+    }
+    __asm__ __volatile__("" ::: "memory");
+    gridArtJob.state = 2;
+  }
+  SignalSema(gridArtDoneSema);
+  ExitThread();
+}
+
+static void stopGridArtWorker(void) {
+  if (gridArtThreadId >= 0) {
+    gridArtStopping = 1;
+    SignalSema(gridArtWakeSema);
+    WaitSema(gridArtDoneSema);
+    DeleteThread(gridArtThreadId);
+    gridArtThreadId = -1;
+  }
+  if (gridArtWakeSema >= 0)
+    DeleteSema(gridArtWakeSema);
+  if (gridArtDoneSema >= 0)
+    DeleteSema(gridArtDoneSema);
+  gridArtWakeSema = gridArtDoneSema = -1;
+  free(gridArtJob.texture.Mem);
+  free(gridArtJob.texture.Clut);
+  memset(&gridArtJob, 0, sizeof(gridArtJob));
+}
+
+int serviceGridArt(void) {
+  if (gridArtThreadId < 0 || gridArtJob.state != 2)
+    return 0;
+  __asm__ __volatile__("" ::: "memory");
+  if (gridArtJob.thumbnail) {
+    int buffer = gridArtJob.buffer;
+    int slot = gridArtJob.slot;
+    if (gridArtJob.generation == gridPageGeneration[buffer] &&
+        gridCoverAttempted[buffer][slot] && !gridCoverResolved[buffer][slot]) {
+      if (gridArtJob.result == 0) {
+        GSTEXTURE *texture = gridCoverTextures[buffer][slot];
+        releaseGridTexture(texture);
+        *texture = gridArtJob.texture;
+        memset(&gridArtJob.texture, 0, sizeof(gridArtJob.texture));
+        gridCoverLoaded[buffer][slot] = 1;
+        rememberGridThumbnail(gridArtJob.path, (const PSBBNPixel *)texture->Mem);
+        gsKit_TexManager_bind(gsGlobal, texture);
+      } else if (gridArtJob.missingFile) {
+        rememberGridThumbnail(gridArtJob.path, NULL);
+      }
+      gridCoverResolved[buffer][slot] = 1;
+    }
+  } else {
+    int buffer = gridArtJob.buffer;
+    if (gridArtJob.generation == gridSelectedGeneration[buffer] &&
+        gridSelectedStatus[buffer] == 1 &&
+        strcmp(gridSelectedPath[buffer], gridArtJob.path) == 0) {
+      GSTEXTURE *texture = gridSelectedTextures[buffer];
+      releaseGridTexture(texture);
+      snprintf(gridSelectedPath[buffer], sizeof(gridSelectedPath[buffer]),
+               "%s", gridArtJob.path);
+      if (gridArtJob.result == 0) {
+        *texture = gridArtJob.texture;
+        memset(&gridArtJob.texture, 0, sizeof(gridArtJob.texture));
+        gridSelectedLoaded[buffer] = 1;
+        gridSelectedStatus[buffer] = 2;
+        gsKit_TexManager_bind(gsGlobal, texture);
+      } else {
+        gridSelectedStatus[buffer] = 3;
+      }
+    }
+  }
+  free(gridArtJob.texture.Mem);
+  free(gridArtJob.texture.Clut);
+  memset(&gridArtJob, 0, sizeof(gridArtJob));
+  return 1;
+}
+
 void releaseGridCovers(void) {
   for (int buffer = 0; buffer < GRID_PAGE_BUFFERS; buffer++) {
+    gridPageGeneration[buffer]++;
     for (int slot = 0; slot < GRID_PAGE_SIZE; slot++) {
       releaseGridTexture(gridCoverTextures[buffer][slot]);
       gridCoverLoaded[buffer][slot] = 0;
       gridCoverAttempted[buffer][slot] = 0;
+      gridCoverResolved[buffer][slot] = 0;
     }
   }
   for (int buffer = 0; buffer < GRID_SELECTED_BUFFERS; buffer++) {
@@ -954,27 +1420,81 @@ int refreshSaveIconSpin(Target *target, int frame) {
 }
 
 static void resetGridPageBuffer(int buffer) {
+  gridPageGeneration[buffer]++;
   for (int slot = 0; slot < GRID_PAGE_SIZE; slot++) {
     releaseGridTexture(gridCoverTextures[buffer][slot]);
     gridCoverLoaded[buffer][slot] = 0;
     gridCoverAttempted[buffer][slot] = 0;
+    gridCoverResolved[buffer][slot] = 0;
   }
 }
 
-int gridPageSlotAttempted(int buffer, int slot) {
+int gridPageSlotReady(int buffer, int slot) {
   return buffer >= 0 && buffer < GRID_PAGE_BUFFERS &&
-         slot >= 0 && slot < GRID_PAGE_SIZE && gridCoverAttempted[buffer][slot];
+         slot >= 0 && slot < GRID_PAGE_SIZE && gridCoverResolved[buffer][slot];
 }
 
-// Decode one requested tile first, then resume the remaining slots in order.
-// A missing PNG still counts as attempted so the page can show a placeholder.
+// Queue one requested tile first, then resume the remaining slots in order.
+// A missing PNG still resolves its slot so the page can show a placeholder.
 int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot,
                      int prioritySlot, int *didLoadArtwork) {
   *didLoadArtwork = 0;
+  if (gridArtThreadId >= 0) {
+    while (1) {
+      int slot = prioritySlot >= 0 && prioritySlot < GRID_PAGE_SIZE &&
+                 !gridCoverAttempted[buffer][prioritySlot]
+          ? prioritySlot : -1;
+      if (slot < 0) {
+        while (*nextSlot < GRID_PAGE_SIZE && gridCoverAttempted[buffer][*nextSlot])
+          (*nextSlot)++;
+        if (*nextSlot >= GRID_PAGE_SIZE)
+          break;
+        slot = *nextSlot;
+      }
+      int targetIdx = pageBase + slot;
+      if (targetIdx >= titles->total) {
+        gridCoverAttempted[buffer][slot] = 1;
+        gridCoverResolved[buffer][slot] = 1;
+        continue;
+      }
+      Target *target = getTargetByIdx(titles, targetIdx);
+      char path[255];
+      if (gridArtworkPath(target, path, sizeof(path)) < 0) {
+        gridCoverAttempted[buffer][slot] = 1;
+        gridCoverResolved[buffer][slot] = 1;
+        continue;
+      }
+      if (findGridThumbnail(path) >= 0) {
+        gridCoverLoaded[buffer][slot] =
+            loadGridCoverArt(target->device, target->id,
+                             gridCoverTextures[buffer][slot], 1) == 0;
+        gridCoverAttempted[buffer][slot] = 1;
+        gridCoverResolved[buffer][slot] = 1;
+        *didLoadArtwork = 1;
+      } else if (gridArtJob.state == 0) {
+        gridArtJob.thumbnail = 1;
+        gridArtJob.buffer = buffer;
+        gridArtJob.slot = slot;
+        gridArtJob.generation = gridPageGeneration[buffer];
+        snprintf(gridArtJob.path, sizeof(gridArtJob.path), "%s", path);
+        gridArtJob.state = 1;
+        gridCoverAttempted[buffer][slot] = 1;
+        SignalSema(gridArtWakeSema);
+        *didLoadArtwork = 1;
+      }
+      break;
+    }
+    for (int slot = 0; slot < GRID_PAGE_SIZE; slot++) {
+      if (!gridCoverResolved[buffer][slot])
+        return 0;
+    }
+    return 1;
+  }
   if (prioritySlot >= 0 && prioritySlot < GRID_PAGE_SIZE &&
       !gridCoverAttempted[buffer][prioritySlot]) {
     int targetIdx = pageBase + prioritySlot;
     gridCoverAttempted[buffer][prioritySlot] = 1;
+    gridCoverResolved[buffer][prioritySlot] = 1;
     if (targetIdx < titles->total) {
       Target *target = getTargetByIdx(titles, targetIdx);
       gridCoverLoaded[buffer][prioritySlot] =
@@ -991,6 +1511,7 @@ int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot
     if (gridCoverAttempted[buffer][slot])
       continue;
     gridCoverAttempted[buffer][slot] = 1;
+    gridCoverResolved[buffer][slot] = 1;
 
     if (targetIdx < titles->total) {
       Target *target = getTargetByIdx(titles, targetIdx);
@@ -1004,6 +1525,30 @@ int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot
 }
 
 int refreshGridSelectedCover(Target *target, int buffer) {
+  if (gridArtThreadId >= 0) {
+    char path[255];
+    if (gridArtworkPath(target, path, sizeof(path)) < 0)
+      return 0;
+    if (strcmp(gridSelectedPath[buffer], path) != 0) {
+      releaseGridTexture(gridSelectedTextures[buffer]);
+      snprintf(gridSelectedPath[buffer], sizeof(gridSelectedPath[buffer]), "%s", path);
+    }
+    if (gridSelectedStatus[buffer] == 2)
+      return 1;
+    if (gridSelectedStatus[buffer] == 3)
+      return 0;
+    if (gridSelectedStatus[buffer] == 1 || gridArtJob.state != 0)
+      return -1;
+    gridArtJob.thumbnail = 0;
+    gridArtJob.buffer = buffer;
+    gridArtJob.slot = -1;
+    gridArtJob.generation = gridSelectedGeneration[buffer];
+    snprintf(gridArtJob.path, sizeof(gridArtJob.path), "%s", path);
+    gridArtJob.state = 1;
+    gridSelectedStatus[buffer] = 1;
+    SignalSema(gridArtWakeSema);
+    return -1;
+  }
   gridSelectedLoaded[buffer] = (loadGridCoverArt(target->device, target->id, gridSelectedTextures[buffer], 0) == 0);
   return gridSelectedLoaded[buffer];
 }
@@ -1101,11 +1646,8 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
     loadPSBBNCoverCacheEntry(titles, selectedTitleIdx, cacheIdx, useFullResolution);
 }
 
-void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx) {
-  if (collectionArtThreadId < 0) {
-    refreshPSBBNCovers(titles, selectedTitleIdx, previousTitleIdx, 0);
-    return;
-  }
+static void refreshBackgroundCovers(TargetList *titles, int selectedTitleIdx,
+                                    int previousTitleIdx) {
   int direction = lunaNavDirection(titles->total, previousTitleIdx, selectedTitleIdx);
   if (previousTitleIdx >= 0 && direction > 0 &&
       lunaNavWrap(titles->total, previousTitleIdx + 1) == selectedTitleIdx) {
@@ -1180,38 +1722,53 @@ void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previ
   }
 }
 
+void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx) {
+  if (collectionArtThreadId < 0) {
+    refreshPSBBNCovers(titles, selectedTitleIdx, previousTitleIdx, 0);
+    return;
+  }
+  refreshBackgroundCovers(titles, selectedTitleIdx, previousTitleIdx);
+}
+
+void refreshOrbitCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx) {
+  if (orbitArtThreadId < 0) {
+    refreshPSBBNCovers(titles, selectedTitleIdx, previousTitleIdx, 1);
+    return;
+  }
+  refreshBackgroundCovers(titles, selectedTitleIdx, previousTitleIdx);
+}
+
 int collectionArtBackgroundAvailable(void) {
   return collectionArtThreadId >= 0;
 }
 
-void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx) {
+static void serviceBackgroundCovers(TargetList *titles, int selectedTitleIdx,
+                                    PSBBNArtJob *job, uint32_t generation,
+                                    int wakeSema) {
   static const uint8_t priority[PSBBN_COVER_CACHE_COUNT] = {3, 4, 2, 5, 1, 6, 7, 8, 9, 0};
   char path[255];
-  if (collectionArtThreadId < 0 || titles->total <= 0)
-    return;
-
-  if (collectionArtJob.state == 2) {
+  if (job->state == 2) {
     __asm__ __volatile__("" ::: "memory");
-    if (collectionArtJob.generation == collectionArtGeneration) {
+    if (job->generation == generation) {
       for (int p = 0; p < PSBBN_COVER_CACHE_COUNT; p++) {
         int i = priority[p];
         if (!collectionCoverAttempted[i] || collectionCoverResolved[i] ||
             collectionCoverPath(titles, selectedTitleIdx, i, path, sizeof(path)) < 0 ||
-            strcmp(path, collectionArtJob.path) != 0)
+            strcmp(path, job->path) != 0)
           continue;
-        if (collectionArtJob.result == 0) {
+        if (job->result == 0) {
           GSTEXTURE *texture = psbbnCoverTextures[i];
           // Only the drawing thread touches the texture manager and cache slots.
           releasePSBBNCoverCacheEntry(i);
-          *texture = collectionArtJob.texture;
-          psbbnCoverSourcePixels[i] = collectionArtJob.sourcePixels;
+          *texture = job->texture;
+          psbbnCoverSourcePixels[i] = job->sourcePixels;
           collectionCoverThumbnailPixels[i] = texture->Mem;
-          collectionCoverPreviewPixels[i] = collectionArtJob.previewPixels;
-          psbbnCoverSourceWidth[i] = collectionArtJob.sourceWidth;
-          psbbnCoverSourceHeight[i] = collectionArtJob.sourceHeight;
-          memset(&collectionArtJob.texture, 0, sizeof(collectionArtJob.texture));
-          collectionArtJob.sourcePixels = NULL;
-          collectionArtJob.previewPixels = NULL;
+          collectionCoverPreviewPixels[i] = job->previewPixels;
+          psbbnCoverSourceWidth[i] = job->sourceWidth;
+          psbbnCoverSourceHeight[i] = job->sourceHeight;
+          memset(&job->texture, 0, sizeof(job->texture));
+          job->sourcePixels = NULL;
+          job->previewPixels = NULL;
           psbbnCoverLoaded[i] = 1;
         }
         collectionCoverAttempted[i] = 1;
@@ -1219,16 +1776,9 @@ void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx) {
         break;
       }
     }
-    free(collectionArtJob.texture.Mem);
-    free(collectionArtJob.texture.Clut);
-    free(collectionArtJob.sourcePixels);
-    free(collectionArtJob.previewPixels);
-    memset(&collectionArtJob.texture, 0, sizeof(collectionArtJob.texture));
-    collectionArtJob.sourcePixels = NULL;
-    collectionArtJob.previewPixels = NULL;
-    collectionArtJob.state = 0;
+    clearPSBBNArtJob(job);
   }
-  if (collectionArtJob.state != 0)
+  if (job->state != 0)
     return;
   for (int p = 0; p < PSBBN_COVER_CACHE_COUNT; p++) {
     int i = priority[p];
@@ -1236,14 +1786,26 @@ void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx) {
         collectionCoverPath(titles, selectedTitleIdx, i, path, sizeof(path)) < 0)
       continue;
     collectionCoverAttempted[i] = 1;
-    snprintf(collectionArtJob.path, sizeof(collectionArtJob.path), "%s", path);
-    collectionArtJob.generation = collectionArtGeneration;
-    collectionArtJob.result = -1;
-    collectionArtJob.sourceWidth = collectionArtJob.sourceHeight = 0;
-    collectionArtJob.state = 1;
-    SignalSema(collectionArtWakeSema);
+    snprintf(job->path, sizeof(job->path), "%s", path);
+    job->generation = generation;
+    job->result = -1;
+    job->sourceWidth = job->sourceHeight = 0;
+    job->state = 1;
+    SignalSema(wakeSema);
     break;
   }
+}
+
+void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx) {
+  if (collectionArtThreadId >= 0 && titles->total > 0)
+    serviceBackgroundCovers(titles, selectedTitleIdx, &collectionArtJob,
+                            collectionArtGeneration, collectionArtWakeSema);
+}
+
+void serviceOrbitCovers(TargetList *titles, int selectedTitleIdx) {
+  if (orbitArtThreadId >= 0 && titles->total > 0)
+    serviceBackgroundCovers(titles, selectedTitleIdx, &orbitArtJob,
+                            orbitArtGeneration, orbitArtWakeSema);
 }
 
 int collectionCoversReady(TargetList *titles, int selectedTitleIdx) {
@@ -1397,6 +1959,9 @@ void updatePSBBNCoverResidency(int flowOffset) {
 void artCacheShutdown(void) {
   stopClassicArtWorker();
   stopCollectionArtWorker();
+  stopOrbitArtWorker();
+  stopGridArtWorker();
+  stopScrollArtWorker();
   if (saveIconSpinTexture != NULL) {
     free(saveIconSpinTexture->Mem);
     free(saveIconSpinTexture->Clut);

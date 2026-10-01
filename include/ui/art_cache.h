@@ -42,15 +42,19 @@ int getGridSaveIconArtwork(void);
 void releaseGridTexture(GSTEXTURE *texture);
 int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot,
                      int prioritySlot, int *didLoadArtwork);
-int gridPageSlotAttempted(int buffer, int slot);
+int serviceGridArt(void);
+int gridPageSlotReady(int buffer, int slot);
+// Returns -1 while loading, 0 for missing artwork, 1 when the cover is ready.
 int refreshGridSelectedCover(Target *target, int buffer);
 void prepareGridPageBuffer(int buffer, int pageBase, int *pageBases,
                            int *pageComplete, int *pageNextSlot);
 void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx,
                         int useFullResolution);
 void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx);
+void refreshOrbitCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx);
 int collectionArtBackgroundAvailable(void);
 void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx);
+void serviceOrbitCovers(TargetList *titles, int selectedTitleIdx);
 int collectionCoversReady(TargetList *titles, int selectedTitleIdx);
 int collectionCoverMissing(int cacheIdx);
 void suspendCollectionCovers(void);
@@ -59,6 +63,7 @@ void updateCollectionCoverResidency(int flowOffset);
 void updatePSBBNCoverResidency(int flowOffset);
 void refreshOrbsLogos(TargetList *titles, int selectedTitleIdx);
 void refreshOrbsBackground(Target *target);
+void serviceScrollArt(void);
 void releaseOrbsArt(void);
 
 #endif
