@@ -9,6 +9,7 @@
 #include <dmaKit.h>
 #include <gsKit.h>
 #include <gsToolkit.h>
+#include <kernel.h>
 #include <malloc.h>
 #include <png.h>
 #include <stdlib.h>
@@ -74,6 +75,25 @@ static void prepareGridSelector(GSTEXTURE *texture) {
 // Keep only the selected font's texture decoded and resident.
 static const BMFont *font = &BMFONT_DEJAVU_SANS;
 static UIFont activeUIFont = UI_FONT_DEJAVU;
+static u32 fontVram;
+static u32 fontVramSize;
+
+int reserveUIFontVRAM(void) {
+  const BMFont *const fonts[] = {&BMFONT_DEJAVU_SANS, &BMFONT_PSBBN};
+  u32 largest = 0;
+
+  for (int i = 0; i < UI_FONT_COUNT; i++) {
+    const u32 bytes = gsKit_texture_size(fonts[i]->scaleW, fonts[i]->scaleH,
+                                          GS_PSM_CT32) * fonts[i]->pageCount;
+    if (bytes > largest)
+      largest = bytes;
+  }
+  fontVram = gsKit_vram_alloc(gsGlobal, largest, GSKIT_ALLOC_USERBUFFER);
+  if (fontVram == GSKIT_ALLOC_ERROR)
+    return -1;
+  fontVramSize = largest;
+  return 0;
+}
 
 static void releaseFontPages(void) {
   if (fontPages == NULL)
@@ -81,8 +101,6 @@ static void releaseFontPages(void) {
   for (int i = 0; i < font->pageCount; i++) {
     if (fontPages[i] == NULL)
       continue;
-    if (fontPages[i]->Vram != 0)
-      gsKit_TexManager_free(gsGlobal, fontPages[i]);
     free(fontPages[i]->Mem);
     free(fontPages[i]);
   }
@@ -93,10 +111,16 @@ static void releaseFontPages(void) {
 int setUIFont(UIFont selection) {
   if (selection < UI_FONT_DEJAVU || selection >= UI_FONT_COUNT)
     return -1;
+  if (fontVram == GSKIT_ALLOC_ERROR)
+    return -1;
   if (selection == activeUIFont && fontPages != NULL)
     return 0;
   const BMFont *next = selection == UI_FONT_PSBBN ?
                            &BMFONT_PSBBN : &BMFONT_DEJAVU_SANS;
+  const u32 pageSize = gsKit_texture_size(next->scaleW, next->scaleH,
+                                           GS_PSM_CT32);
+  if (pageSize * next->pageCount > fontVramSize)
+    return -1;
   GSTEXTURE **nextPages = calloc(next->pageCount, sizeof(*nextPages));
   if (nextPages == NULL)
     return -1;
@@ -119,6 +143,14 @@ int setUIFont(UIFont selection) {
   font = next;
   fontPages = nextPages;
   activeUIFont = selection;
+  for (int i = 0; i < next->pageCount; i++) {
+    GSTEXTURE *page = fontPages[i];
+    page->Vram = fontVram + pageSize * i;
+    gsKit_setup_tbw(page);
+    SyncDCache(page->Mem, (u8 *)page->Mem + pageSize);
+    gsKit_texture_send_inline(gsGlobal, page->Mem, page->Width, page->Height,
+                              page->Vram, page->PSM, page->TBW, GS_CLUT_NONE);
+  }
   return 0;
 }
 
@@ -167,6 +199,8 @@ void closeFont() {
     cardArtAttempted[i] = 0;
   }
   releaseFontPages();
+  fontVram = 0;
+  fontVramSize = 0;
 
   free(icons->Mem);
   free(icons);
@@ -356,7 +390,6 @@ const BMFontChar *getGlyph(uint32_t character) {
 
 // Draws glyph at specified coordinates
 static void drawGlyph(const BMFontChar *glyph, float x, float y, int z, uint64_t color) {
-  gsKit_TexManager_bind(gsGlobal, fontPages[glyph->page]);
   gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],   // font page
                             x + glyph->xoffset,                 // x1 (destination)
                             y + glyph->yoffset,                 // y1
@@ -587,7 +620,6 @@ int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *te
       float textureScale = (glyph->width + 1.0f) / glyph->width;
       float u1 = glyph->x + (clippedLeft - glyphLeft) * textureScale;
       float u2 = glyph->x + (clippedRight - glyphLeft) * textureScale;
-      gsKit_TexManager_bind(gsGlobal, fontPages[glyph->page]);
       gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],
                                 clippedLeft, y + glyph->yoffset, u1, glyph->y,
                                 clippedRight, y + glyph->yoffset + glyph->height,

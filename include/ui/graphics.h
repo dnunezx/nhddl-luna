@@ -92,6 +92,9 @@ typedef enum {
 // Initializes and uploads graphics resources to GS VRAM
 int initGraphics();
 
+// Reserve a stable VRAM slot for the active font before managed textures load.
+int reserveUIFontVRAM(void);
+
 // Switches the UI bitmap font; leaves the current font selected on failure.
 int setUIFont(UIFont selection);
 

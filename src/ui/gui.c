@@ -210,6 +210,10 @@ int uiInit() {
   gsKit_init_screen(gsGlobal);
   gsKit_display_buffer(gsGlobal); // Switch display buffer to avoid garbage appearing on screen
   initOpeningCubeCapture();
+  if (reserveUIFontVRAM()) {
+    DPRINTF("ERROR: Failed to reserve font VRAM\n");
+    return -1;
+  }
   gsKit_TexManager_init(gsGlobal);
   initGlassStarAtlas();
   // Set alpha and mode, clear active buffer
@@ -1393,6 +1397,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       if (view == previousView)
         continue;
     restart_library_view:
+      if (previousView == UI_VIEW_PSBBN && view != UI_VIEW_PSBBN)
+        stopCollectionFarArtWorker(titles, selectedTitleIdx);
       if (libraryListChanged)
         releasePSBBNCovers();
       entryView = (int)view;
