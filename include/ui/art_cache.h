@@ -54,6 +54,9 @@ void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previ
 void refreshOrbitCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx);
 int collectionArtBackgroundAvailable(void);
 void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx);
+void serviceCollectionCoversNavigating(TargetList *titles, int selectedTitleIdx,
+                                      int direction, int fastScrolling, int flowOffset);
+void recordCollectionCoverBind(uint32_t elapsedMs);
 void stopCollectionFarArtWorker(TargetList *titles, int selectedTitleIdx);
 void serviceOrbitCovers(TargetList *titles, int selectedTitleIdx);
 int collectionCoversReady(TargetList *titles, int selectedTitleIdx);

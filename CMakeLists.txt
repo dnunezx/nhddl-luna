@@ -36,6 +36,7 @@ set(SOURCES
   src/ui/navigation.c
   src/ui/view_state.c
   src/ui/art_cache.c
+  src/ui/collection_art.c
     src/ui/view_classic.c
     src/ui/view_collection.c
   src/ui/view_grid.c

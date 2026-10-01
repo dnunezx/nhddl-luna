@@ -1,5 +1,6 @@
 // LUNA 2026
 #include "ui/graphics.h"
+#include "ui/ui.h"
 #include "dprintf.h"
 #include "ui/dejavu_sans.h"
 #include "ui/psbbn_font.h"
@@ -778,17 +779,23 @@ static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *b
   return 0;
 }
 
-static int loadPNGTextureRGBAInternal(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path, int upload) {
+static int loadPNGTextureRGBAInternal(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path, int upload,
+                                      uint32_t *readMs, uint32_t *decodeMs) {
+  uint32_t startMs = readMs != NULL ? uiNowMs() : 0;
+  if (readMs != NULL) *readMs = 0;
+  if (decodeMs != NULL) *decodeMs = 0;
   FILE *file = fopen(path, "rb");
   void *buffer;
   long fileSize;
   int result;
 
   if (file == NULL) {
+    if (readMs != NULL) *readMs = uiNowMs() - startMs;
     DPRINTF("Failed to load PNG file: %s\n", path);
     return -1;
   }
   if (fseek(file, 0, SEEK_END) != 0 || (fileSize = ftell(file)) <= 0 || fseek(file, 0, SEEK_SET) != 0) {
+    if (readMs != NULL) *readMs = uiNowMs() - startMs;
     DPRINTF("ERROR: Failed to size PNG file: %s\n", path);
     fclose(file);
     return -1;
@@ -796,6 +803,7 @@ static int loadPNGTextureRGBAInternal(GSGLOBAL *gsGlobal, GSTEXTURE *texture, co
 
   buffer = malloc(fileSize);
   if (buffer == NULL || fread(buffer, 1, fileSize, file) != (size_t)fileSize) {
+    if (readMs != NULL) *readMs = uiNowMs() - startMs;
     DPRINTF("ERROR: Failed to read PNG file: %s\n", path);
     free(buffer);
     fclose(file);
@@ -803,13 +811,16 @@ static int loadPNGTextureRGBAInternal(GSGLOBAL *gsGlobal, GSTEXTURE *texture, co
   }
   fclose(file);
 
+  if (readMs != NULL) *readMs = uiNowMs() - startMs;
+  startMs = decodeMs != NULL ? uiNowMs() : 0;
   result = gsKit_texture_png_mem(gsGlobal, texture, buffer, fileSize, 0, upload);
+  if (decodeMs != NULL) *decodeMs = uiNowMs() - startMs;
   free(buffer);
   return result;
 }
 
 int loadPNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path) {
-  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 1);
+  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 1, NULL, NULL);
 }
 
 int loadPNGTextureRGBAMemory(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
@@ -818,5 +829,10 @@ int loadPNGTextureRGBAMemory(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
 }
 
 int decodePNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path) {
-  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 0);
+  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 0, NULL, NULL);
+}
+
+int decodePNGTextureRGBATimed(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path,
+                              uint32_t *readMs, uint32_t *decodeMs) {
+  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 0, readMs, decodeMs);
 }

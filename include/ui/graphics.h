@@ -34,6 +34,8 @@ int loadPNGTextureRGBAMemory(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
 
 // Decodes a PNG into EE memory without uploading it to GS VRAM.
 int decodePNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path);
+int decodePNGTextureRGBATimed(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path,
+                              uint32_t *readMs, uint32_t *decodeMs);
 
 #define ALIGN_LEFT 0 << 0
 #define ALIGN_RIGHT 1 << 0

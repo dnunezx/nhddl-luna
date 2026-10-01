@@ -574,9 +574,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
             refreshOrbitCovers(flowTitles, flowSelectedTitleIdx, psbbnCoverBaseIdx);
         }
         psbbnCoverBaseIdx = flowSelectedTitleIdx;
-        if (view == UI_VIEW_PSBBN)
-          serviceCollectionCovers(flowTitles, flowSelectedTitleIdx);
-        else
+        if (view != UI_VIEW_PSBBN)
           serviceOrbitCovers(flowTitles, flowSelectedTitleIdx);
       }
       now = uiNowMs();
@@ -623,9 +621,12 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
               lunaNavDurationFrames(psbbnAnimationDuration, collectionFps))
           : lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart,
                                   psbbnAnimationDuration, now);
-      if (view == UI_VIEW_PSBBN)
+      if (view == UI_VIEW_PSBBN) {
+        serviceCollectionCoversNavigating(flowTitles, flowSelectedTitleIdx,
+            collectionScan.active ? collectionScan.heldDirection : 0,
+            collectionScan.active, flowOffset);
         updateCollectionCoverResidency(flowOffset);
-      else if (view == UI_VIEW_ORBIT)
+      } else if (view == UI_VIEW_ORBIT)
         updatePSBBNCoverResidency(flowOffset);
       now = uiNowMs();
       if (entryPending &&
@@ -977,9 +978,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                      ErrorTextColor, ALIGN_HCENTER, quickMenuMessage);
       gsKit_set_test(gsGlobal, GS_ZTEST_ON);
     }
-    // Fill Collection's next cover window while an unrelated view is idle.
+    // Fill the active Collection or Favorites cover window while another view is idle.
     // Orbit owns the shared PSBBN slots, so it cannot prewarm Collection.
-    if (titles->total > 0 && !favoritesOnly &&
+    if (titles->total > 0 &&
         ((view == UI_VIEW_CLASSIC && !classicNavHeld && classicArtRequestedIdx < 0) ||
          (view == UI_VIEW_ORBS && !scrollFast.active) ||
          (IS_GRID_VIEW(view) && !gridCascadeActive && !gridFastTrackActive &&
