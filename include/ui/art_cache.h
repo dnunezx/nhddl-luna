@@ -54,6 +54,7 @@ void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previ
 void refreshOrbitCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx);
 int collectionArtBackgroundAvailable(void);
 void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx);
+void stopCollectionFarArtWorker(TargetList *titles, int selectedTitleIdx);
 void serviceOrbitCovers(TargetList *titles, int selectedTitleIdx);
 int collectionCoversReady(TargetList *titles, int selectedTitleIdx);
 int collectionCoverMissing(int cacheIdx);

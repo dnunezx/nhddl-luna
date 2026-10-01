@@ -104,6 +104,13 @@ typedef struct {
   int result;
 } PSBBNArtJob;
 static PSBBNArtJob collectionArtJob;
+static int collectionFarArtThreadId = -1;
+static int collectionFarArtWakeSema = -1;
+static int collectionFarArtDoneSema = -1;
+static volatile int collectionFarArtStopping;
+static int collectionFarArtStartAttempted;
+static uint8_t collectionFarArtStack[16384] __attribute__((aligned(16)));
+static PSBBNArtJob collectionFarArtJob;
 static int orbitArtThreadId = -1;
 static int orbitArtWakeSema = -1;
 static int orbitArtDoneSema = -1;
@@ -147,6 +154,9 @@ static void classicArtWorker(void);
 static void stopClassicArtWorker(void);
 static void collectionArtWorker(void);
 static void stopCollectionArtWorker(void);
+static void collectionFarArtWorker(void);
+static int collectionCoverPath(TargetList *titles, int selectedTitleIdx, int cacheIdx,
+                               char *path, size_t capacity);
 static void orbitArtWorker(void);
 static void stopOrbitArtWorker(void);
 static void gridArtWorker(void);
@@ -784,6 +794,17 @@ static void collectionArtWorker(void) {
   ExitThread();
 }
 
+static void collectionFarArtWorker(void) {
+  while (1) {
+    WaitSema(collectionFarArtWakeSema);
+    if (collectionFarArtStopping)
+      break;
+    decodePSBBNArtJob(&collectionFarArtJob);
+  }
+  SignalSema(collectionFarArtDoneSema);
+  ExitThread();
+}
+
 static void orbitArtWorker(void) {
   while (1) {
     WaitSema(orbitArtWakeSema);
@@ -817,6 +838,66 @@ static void stopCollectionArtWorker(void) {
     DeleteSema(collectionArtDoneSema);
   collectionArtWakeSema = collectionArtDoneSema = -1;
   clearPSBBNArtJob(&collectionArtJob);
+}
+
+void stopCollectionFarArtWorker(TargetList *titles, int selectedTitleIdx) {
+  if (collectionFarArtThreadId >= 0) {
+    collectionFarArtStopping = 1;
+    SignalSema(collectionFarArtWakeSema);
+    WaitSema(collectionFarArtDoneSema);
+    DeleteThread(collectionFarArtThreadId);
+    collectionFarArtThreadId = -1;
+  }
+  if (collectionFarArtWakeSema >= 0)
+    DeleteSema(collectionFarArtWakeSema);
+  if (collectionFarArtDoneSema >= 0)
+    DeleteSema(collectionFarArtDoneSema);
+  collectionFarArtWakeSema = collectionFarArtDoneSema = -1;
+  collectionFarArtStartAttempted = 0;
+  // Its unfinished request is eligible for the persistent worker on re-entry.
+  if (collectionFarArtJob.state != 0 && titles != NULL && titles->total > 0) {
+    for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
+      char path[255];
+      if (collectionCoverAttempted[i] && !collectionCoverResolved[i] &&
+          collectionCoverPath(titles, selectedTitleIdx, i, path, sizeof(path)) == 0 &&
+          strcmp(path, collectionFarArtJob.path) == 0)
+        collectionCoverAttempted[i] = 0;
+    }
+  }
+  clearPSBBNArtJob(&collectionFarArtJob);
+}
+
+static void startCollectionFarArtWorker(void) {
+  if (collectionFarArtStartAttempted || collectionArtThreadId < 0)
+    return;
+  collectionFarArtStartAttempted = 1;
+  ee_sema_t semaphore;
+  ee_thread_t thread;
+  memset(&semaphore, 0, sizeof(semaphore));
+  semaphore.init_count = 0;
+  semaphore.max_count = 1;
+  collectionFarArtWakeSema = CreateSema(&semaphore);
+  collectionFarArtDoneSema = CreateSema(&semaphore);
+  if (collectionFarArtWakeSema < 0 || collectionFarArtDoneSema < 0) {
+    stopCollectionFarArtWorker(NULL, 0);
+    collectionFarArtStartAttempted = 1;
+    return;
+  }
+  memset(&thread, 0, sizeof(thread));
+  thread.func = collectionFarArtWorker;
+  thread.stack = collectionFarArtStack;
+  thread.stack_size = sizeof(collectionFarArtStack);
+  thread.gp_reg = &_gp;
+  thread.initial_priority = 0x1f;
+  collectionFarArtStopping = 0;
+  collectionFarArtThreadId = CreateThread(&thread);
+  if (collectionFarArtThreadId < 0 || StartThread(collectionFarArtThreadId, NULL) < 0) {
+    if (collectionFarArtThreadId >= 0)
+      DeleteThread(collectionFarArtThreadId);
+    collectionFarArtThreadId = -1;
+    stopCollectionFarArtWorker(NULL, 0);
+    collectionFarArtStartAttempted = 1;
+  }
 }
 
 static void stopOrbitArtWorker(void) {
@@ -1744,15 +1825,15 @@ int collectionArtBackgroundAvailable(void) {
 
 static void serviceBackgroundCovers(TargetList *titles, int selectedTitleIdx,
                                     PSBBNArtJob *job, uint32_t generation,
-                                    int wakeSema) {
-  static const uint8_t priority[PSBBN_COVER_CACHE_COUNT] = {3, 4, 2, 5, 1, 6, 7, 8, 9, 0};
+                                    int wakeSema, const uint8_t *priority,
+                                    const PSBBNArtJob *otherJob) {
   char path[255];
   if (job->state == 2) {
     __asm__ __volatile__("" ::: "memory");
     if (job->generation == generation) {
       for (int p = 0; p < PSBBN_COVER_CACHE_COUNT; p++) {
         int i = priority[p];
-        if (!collectionCoverAttempted[i] || collectionCoverResolved[i] ||
+        if (collectionCoverResolved[i] ||
             collectionCoverPath(titles, selectedTitleIdx, i, path, sizeof(path)) < 0 ||
             strcmp(path, job->path) != 0)
           continue;
@@ -1785,6 +1866,9 @@ static void serviceBackgroundCovers(TargetList *titles, int selectedTitleIdx,
     if (collectionCoverAttempted[i] ||
         collectionCoverPath(titles, selectedTitleIdx, i, path, sizeof(path)) < 0)
       continue;
+    if (otherJob != NULL && otherJob->state != 0 &&
+        strcmp(path, otherJob->path) == 0)
+      continue;
     collectionCoverAttempted[i] = 1;
     snprintf(job->path, sizeof(job->path), "%s", path);
     job->generation = generation;
@@ -1797,15 +1881,25 @@ static void serviceBackgroundCovers(TargetList *titles, int selectedTitleIdx,
 }
 
 void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx) {
-  if (collectionArtThreadId >= 0 && titles->total > 0)
+  static const uint8_t nearPriority[PSBBN_COVER_CACHE_COUNT] = {3, 4, 2, 5, 1, 6, 7, 8, 9, 0};
+  static const uint8_t farPriority[PSBBN_COVER_CACHE_COUNT] = {9, 8, 7, 6, 0, 1, 5, 2, 4, 3};
+  if (collectionArtThreadId >= 0 && titles->total > 0) {
+    startCollectionFarArtWorker();
     serviceBackgroundCovers(titles, selectedTitleIdx, &collectionArtJob,
-                            collectionArtGeneration, collectionArtWakeSema);
+                            collectionArtGeneration, collectionArtWakeSema,
+                            nearPriority, collectionFarArtThreadId >= 0 ? &collectionFarArtJob : NULL);
+    if (collectionFarArtThreadId >= 0)
+      serviceBackgroundCovers(titles, selectedTitleIdx, &collectionFarArtJob,
+                              collectionArtGeneration, collectionFarArtWakeSema,
+                              farPriority, &collectionArtJob);
+  }
 }
 
 void serviceOrbitCovers(TargetList *titles, int selectedTitleIdx) {
+  static const uint8_t priority[PSBBN_COVER_CACHE_COUNT] = {3, 4, 2, 5, 1, 6, 7, 8, 9, 0};
   if (orbitArtThreadId >= 0 && titles->total > 0)
     serviceBackgroundCovers(titles, selectedTitleIdx, &orbitArtJob,
-                            orbitArtGeneration, orbitArtWakeSema);
+                            orbitArtGeneration, orbitArtWakeSema, priority, NULL);
 }
 
 int collectionCoversReady(TargetList *titles, int selectedTitleIdx) {
@@ -1958,6 +2052,7 @@ void updatePSBBNCoverResidency(int flowOffset) {
 
 void artCacheShutdown(void) {
   stopClassicArtWorker();
+  stopCollectionFarArtWorker(NULL, 0);
   stopCollectionArtWorker();
   stopOrbitArtWorker();
   stopGridArtWorker();
