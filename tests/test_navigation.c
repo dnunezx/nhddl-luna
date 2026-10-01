@@ -62,6 +62,45 @@ static void testTiming(void) {
   assert(lunaNavGridCascadeProgress(1000, 3, 1) == 1000);
 }
 
+static void testCollectionLayering(void) {
+  int positions[PSBBN_COVER_CACHE_COUNT];
+  uint8_t drawable[PSBBN_COVER_CACHE_COUNT];
+  memset(drawable, 1, sizeof(drawable));
+  uint32_t duration = lunaNavDurationFrames(PSBBN_ANIMATION_DURATION_MS, 60);
+
+  // The second held step starts before the first jacket has cleared focus.
+  int remaining = lunaNavClassicGlideFrameOffset(1000,
+                                               PSBBN_REPEAT_FRAMES_NTSC, duration);
+  assert(remaining > 0 && remaining < 1000);
+  for (int direction = -1; direction <= 1; direction += 2) {
+    int offset = direction * (1000 + remaining);
+    for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++)
+      positions[i] = (i - PSBBN_COVER_CACHE_FOCUS) * 1000 + offset;
+    int foreground = lunaNavCollectionForeground(positions, drawable,
+                                                PSBBN_COVER_CACHE_COUNT);
+    assert(foreground == PSBBN_COVER_CACHE_FOCUS + (direction > 0 ? -2 : 1));
+    assert(positions[foreground] <= 0);
+    assert(positions[foreground + 1] > 0); // Up Next has not reached focus.
+    drawable[foreground] = 0; // Duplicate or hidden jackets cannot own depth.
+    assert(lunaNavCollectionForeground(positions, drawable,
+                                      PSBBN_COVER_CACHE_COUNT) == foreground - 1);
+    drawable[foreground] = 1;
+  }
+
+  // Preserve a single forward tap's outgoing jacket throughout its glide.
+  for (uint32_t frame = 0; frame <= duration; frame++) {
+    int offset = lunaNavClassicGlideFrameOffset(1000, frame, duration);
+    for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++)
+      positions[i] = (i - PSBBN_COVER_CACHE_FOCUS) * 1000 + offset;
+    assert(lunaNavCollectionForeground(positions, drawable,
+                                      PSBBN_COVER_CACHE_COUNT) ==
+           PSBBN_COVER_CACHE_FOCUS - (offset > 0));
+  }
+  memset(drawable, 0, sizeof(drawable));
+  assert(lunaNavCollectionForeground(positions, drawable,
+                                    PSBBN_COVER_CACHE_COUNT) == -1);
+}
+
 static void testCollectionFastScan(void) {
   LunaCollectionScan scan = {0};
   assert(lunaCollectionScanUpdate(&scan, 1, 100, COLLECTION_SCAN_STEP_MS) == 0);
@@ -210,6 +249,7 @@ int main(void) {
   testGridNavigation();
   testBufferSelection();
   testTiming();
+  testCollectionLayering();
   testCollectionFastScan();
   testOrbitFastScan();
   testScrollFast();

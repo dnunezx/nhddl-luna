@@ -363,8 +363,7 @@ int artCacheInit(void) {
   thread.stack = collectionArtStack;
   thread.stack_size = sizeof(collectionArtStack);
   thread.gp_reg = &_gp;
-  // The UI thread runs at 0x20 and can busy-wait for vblank. Stay just ahead
-  // of it so the next cover job is not starved for seconds during scrolling.
+  // Give artwork priority over the UI (0x20) and ambient audio (0x21).
   thread.initial_priority = 0x1f;
   collectionArtStopping = 0;
   collectionArtThreadId = CreateThread(&thread);

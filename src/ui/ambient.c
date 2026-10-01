@@ -309,7 +309,8 @@ void ambientStart(int shouldPlay) {
   thread.stack = threadStack;
   thread.stack_size = sizeof(threadStack);
   thread.gp_reg = &_gp;
-  thread.initial_priority = 0x10;
+  // Keep ambient audio below artwork (0x1f) and the UI (0x20).
+  thread.initial_priority = 0x21;
   enabled = shouldPlay != 0;
   stopping = 0;
   threadId = CreateThread(&thread);

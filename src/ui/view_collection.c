@@ -319,15 +319,10 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
   }
 
   if (flowOffset != 0 && outgoingTitleIdx >= 0) {
-    // Forward selection keeps the old jacket in front; reverse selection
-    // brings the new jacket in from the enlarged foreground side.
-    int foregroundTitleIdx = (flowOffset > 0) ? outgoingTitleIdx : selectedTitleIdx;
-    for (int cacheIdx = 0; cacheIdx < PSBBN_COVER_CACHE_COUNT; cacheIdx++) {
-      if (drawable[cacheIdx] && targetIndex[cacheIdx] == foregroundTitleIdx) {
-        foregroundCacheIdx = cacheIdx;
-        break;
-      }
-    }
+    // Held repeats queue the next selection before the current glide ends.
+    // Keep upcoming jackets behind the cover actually leaving focus.
+    foregroundCacheIdx = lunaNavCollectionForeground(position, drawable,
+                                                     PSBBN_COVER_CACHE_COUNT);
   }
 
   // Draw the background stream far-to-near, then the foreground cover.

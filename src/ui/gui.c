@@ -240,8 +240,8 @@ int uiInit() {
 // Frees textures and deinits gsKit
 void closeUI() {
   gsKit_vram_clear(gsGlobal);
-  closeFont();
   artCacheShutdown();
+  closeFont();
   gsKit_deinit_global(gsGlobal);
   gsGlobal = NULL;
 }
@@ -587,7 +587,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         psbbnAnimationElapsedFrames = 0;
       } else if (psbbnAnimationTargetIdx != flowSelectedTitleIdx) {
         int currentOffset = view == UI_VIEW_PSBBN
-            ? lunaNavCubicGlideFrameOffset(psbbnAnimationStartOffset,
+            ? lunaNavClassicGlideFrameOffset(psbbnAnimationStartOffset,
                 psbbnAnimationElapsedFrames,
                 lunaNavDurationFrames(psbbnAnimationDuration, collectionFps))
             : lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart,
@@ -616,7 +616,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       }
 
       flowOffset = view == UI_VIEW_PSBBN
-          ? lunaNavCubicGlideFrameOffset(psbbnAnimationStartOffset,
+          ? lunaNavClassicGlideFrameOffset(psbbnAnimationStartOffset,
               psbbnAnimationElapsedFrames,
               lunaNavDurationFrames(psbbnAnimationDuration, collectionFps))
           : lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart,

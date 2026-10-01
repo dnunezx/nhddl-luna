@@ -189,6 +189,19 @@ int lunaNavDirection(int total, int fromIdx, int toIdx) {
   return (forwardDistance <= backwardDistance) ? 1 : -1;
 }
 
+int lunaNavCollectionForeground(const int *positions, const uint8_t *drawable,
+                                int count) {
+  int foreground = -1;
+  // A queued selection can still be in the upcoming stack. The cover at
+  // focus or leaving toward the viewer owns the foreground until it clears.
+  for (int i = 0; i < count; i++) {
+    if (drawable[i] && positions[i] <= 0 &&
+        (foreground < 0 || positions[i] > positions[foreground]))
+      foreground = i;
+  }
+  return foreground;
+}
+
 int lunaNavEase(int progress) {
   int inverse = 1000 - progress;
   return 1000 - (int)(((int64_t)inverse * inverse * (3000 - (2 * inverse))) /
@@ -207,6 +220,14 @@ int lunaNavAnimatedOffset(int startOffset, uint32_t startTime, uint32_t duration
 uint32_t lunaNavDurationFrames(uint32_t durationMs, int framesPerSecond) {
   uint32_t frames = (uint32_t)(((uint64_t)durationMs * framesPerSecond + 500) / 1000);
   return frames > 0 ? frames : 1;
+}
+
+int lunaNavClassicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
+                                   uint32_t durationFrames) {
+  int progress = (durationFrames == 0 || elapsedFrames >= durationFrames)
+                     ? 1000
+                     : (int)((elapsedFrames * 1000ULL) / durationFrames);
+  return (startOffset * (1000 - lunaNavEase(progress))) / 1000;
 }
 
 int lunaNavCubicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,

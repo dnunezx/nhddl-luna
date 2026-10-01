@@ -659,7 +659,9 @@ static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *b
   png_structp png_ptr;
   png_infop info_ptr;
   png_uint_32 width, height;
-  png_bytep *row_pointers;
+  // These owners must survive libpng's longjmp on malformed/truncated input.
+  png_bytep volatile pixelBuffer = NULL;
+  png_bytep *volatile row_pointers = NULL;
 
   uint32_t sig_read = 0;
   int row, i, k = 0, j, bit_depth, color_type, interlace_type;
@@ -682,7 +684,9 @@ static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *b
   }
 
   if (setjmp(png_jmpbuf(png_ptr))) {
-    DPRINTF("ERROR: Failed to setup libpng long jump\n");
+    DPRINTF("ERROR: Failed to decode PNG\n");
+    free(row_pointers);
+    free(pixelBuffer);
     png_destroy_read_struct(&png_ptr, &info_ptr, (png_infopp)NULL);
     fclose(file);
     return -1;
@@ -718,6 +722,7 @@ static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *b
   if (!hasAlpha)
     png_set_filler(png_ptr, 0xff, PNG_FILLER_AFTER);
 
+  png_set_interlace_handling(png_ptr);
   png_read_update_info(png_ptr, info_ptr);
 
   if (png_get_channels(png_ptr, info_ptr) != 4) {
@@ -727,25 +732,28 @@ static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *b
     return -1;
   }
 
-  texture->Width = width;
-  texture->Height = height;
-  texture->VramClut = 0;
-  texture->Clut = NULL;
-  texture->PSM = GS_PSM_CT32;
-  texture->Filter = GS_FILTER_NEAREST;
-  texture->Mem = memalign(128, gsKit_texture_size(texture->Width, texture->Height, texture->PSM));
-
-  int row_bytes = png_get_rowbytes(png_ptr, info_ptr);
+  // Limit dimensions to the GS texture range before its integer size math.
+  if (width == 0 || height == 0 || width > 1024 || height > 1024 ||
+      png_get_rowbytes(png_ptr, info_ptr) != (size_t)width * 4)
+    png_error(png_ptr, "Unsupported PNG dimensions");
+  pixelBuffer = memalign(128, gsKit_texture_size(width, height, GS_PSM_CT32));
+  if (pixelBuffer == NULL)
+    png_error(png_ptr, "Out of memory for PNG pixels");
   row_pointers = calloc(height, sizeof(png_bytep));
+  if (row_pointers == NULL)
+    png_error(png_ptr, "Out of memory for PNG rows");
+  // Decode straight into the DMA buffer. Per-row copies doubled peak pixel
+  // memory and fragmented the EE heap during sustained Collection scrolling.
   for (row = 0; row < height; row++)
-    row_pointers[row] = malloc(row_bytes);
+    row_pointers[row] = pixelBuffer + (size_t)row * width * 4;
 
   png_read_image(png_ptr, row_pointers);
+  png_read_end(png_ptr, NULL);
 
   struct pixel {
     uint8_t r, g, b, a;
   };
-  struct pixel *pixels = (struct pixel *)texture->Mem;
+  struct pixel *pixels = (struct pixel *)pixelBuffer;
 
   for (i = 0; i < height; i++) {
     for (j = 0; j < width; j++) {
@@ -765,13 +773,18 @@ static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *b
     }
   }
 
-  for (row = 0; row < height; row++)
-    free(row_pointers[row]);
-
   free(row_pointers);
-  png_read_end(png_ptr, NULL);
   png_destroy_read_struct(&png_ptr, &info_ptr, (png_infopp)NULL);
   fclose(file);
+
+  // Publish only complete artwork so a failed job never exposes freed pixels.
+  texture->Width = width;
+  texture->Height = height;
+  texture->VramClut = 0;
+  texture->Clut = NULL;
+  texture->PSM = GS_PSM_CT32;
+  texture->Filter = GS_FILTER_NEAREST;
+  texture->Mem = (u32 *)pixelBuffer;
 
   if (upload)
     gsKit_TexManager_bind(gsGlobal, texture);
