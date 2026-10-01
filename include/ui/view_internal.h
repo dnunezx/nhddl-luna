@@ -20,6 +20,7 @@ int psbbnFieldStableY(int y);
 int psbbnFieldStableHeight(void);
 void drawGlassDiamond(int centerX, int centerY, int radius, int z, uint64_t color);
 void drawGlassPanel(int x1, int y1, int x2, int y2, int z);
+void drawGlassPanelWithFillAlpha(int x1, int y1, int x2, int y2, int z, int fillAlpha);
 void drawOrbitalDisc(int centerX, int centerY, int radius, int z,
                      uint64_t centerColor, uint64_t edgeColor);
 void drawSharedLibraryBackground(uint32_t frameNowMs);

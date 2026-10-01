@@ -39,7 +39,7 @@
 #define LIBRARY_RETURN_FADE_MS 180
 #define CLASSIC_LIST_ENTRY_SLIDE_MS 360
 #define LIBRARY_VIEW_ENTRY_MS 320
-#define QUICK_MENU_SLIDE_MS 160
+#define QUICK_MENU_SLIDE_MS 200
 
 void closeUI();
 int uiLoop(TargetList *titles, int preparedCollectionIdx);
@@ -84,7 +84,7 @@ static void drawLibraryFooter(int canLaunch) {
                 (PromptBar){NULL, prompts, 4});
 }
 
-static void drawLibraryQuickMenu(int progress, int selected, UILibraryView view,
+static void drawLibraryQuickMenu(int progress, int closing, int selected, UILibraryView view,
                                  int favoritesOnly, int isFavorite,
                                  int total, const char *title) {
   if (progress <= 0)
@@ -96,25 +96,42 @@ static void drawLibraryQuickMenu(int progress, int selected, UILibraryView view,
   const IconType icons[] = {ICON_SELECT, ICON_SQUARE, ICON_TRIANGLE, ICON_R3};
   int count = view == UI_VIEW_ORBIT ? 4 : 3;
   int rowHeight = getFontLineHeight() + 10;
-  int height = (count + 3) * rowHeight + 12;
+  int height = (count + 2) * rowHeight + 12;
   int slide = 354 * (1000 - lunaNavEase(progress)) / 1000;
   int left = gsGlobal->Width - 354 + slide;
   int right = gsGlobal->Width - 20 + slide;
   int top = 16;
   gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
-  gsKit_prim_sprite(gsGlobal, left, top, right, top + height, 0,
-                    glassPresetColor(0x06, 0x12, 0x28, 0x80));
-  drawTextWindow(left + 16, top + 10, right - 16, top + 10 + rowHeight,
-                 0, HeaderTextColor, ALIGN_VCENTER, "Quick menu");
-  drawTextWindow(left + 16, top + rowHeight + 10, right - 16,
-                 top + 2 * rowHeight + 10, 0, HeaderTextColor,
-                 ALIGN_VCENTER, total > 0 ? title : "No favorites yet");
+  gsKit_prim_sprite(gsGlobal, 0, 0, gsGlobal->Width, gsGlobal->Height, 0,
+                    GS_SETREG_RGBA(0x00, 0x04, 0x0A, (0x14 * progress) / 1000));
+  // A pair of faint rails trails the glass as it accelerates offscreen.
+  int wake = closing ? (4 * progress * (1000 - progress)) / 1000 : 0;
+  if (wake > 0) {
+    gsKit_prim_sprite(gsGlobal, left - 16, top + 12, left - 12,
+                      top + height - 12, 0,
+                      glassPresetColor(0x64, 0xB0, 0xD8, (0x25 * wake) / 1000));
+    gsKit_prim_sprite(gsGlobal, left - 29, top + 22, left - 26,
+                      top + height - 22, 0,
+                      glassPresetColor(0x50, 0x92, 0xB8, (0x13 * wake) / 1000));
+  }
+  drawGlassPanelWithFillAlpha(left, top, right, top + height, 0, 0x44);
+  if (wake > 0)
+    gsKit_prim_sprite(gsGlobal, left, top + 8, left + 3,
+                      top + height - 8, 1,
+                      glassPresetColor(0xA0, 0xE0, 0xF8, (0x30 * wake) / 1000));
+  drawTextWindow(left + 16, top + 10, right - 16,
+                 top + rowHeight + 10, 0, HeaderTextColor,
+                 ALIGN_CENTER, total > 0 ? title : "No favorites yet");
   for (int i = 0; i < count; i++) {
-    int y = top + (i + 2) * rowHeight + 8;
+    int y = top + (i + 1) * rowHeight + 8;
     int enabled = i == 0 || (total > 0 && (i != 3 || total > 1));
-    if (i == selected)
+    if (i == selected) {
       gsKit_prim_sprite(gsGlobal, left + 8, y, right - 8, y + rowHeight, 0,
                         glassPresetColor(0x16, 0x54, 0x82, 0x60));
+      gsKit_prim_sprite(gsGlobal, left + 8, y + 2, left + 11,
+                        y + rowHeight - 2, 1,
+                        glassPresetColor(0x70, 0xD8, 0xF8, 0x68));
+    }
     if (i >= 2)
       drawIconWindow(left + 16, y, 0, y + rowHeight, 0,
                      enabled ? FontMainColor : HeaderTextColor, ALIGN_VCENTER, icons[i]);
@@ -123,7 +140,7 @@ static void drawLibraryQuickMenu(int progress, int selected, UILibraryView view,
                    enabled ? FontMainColor : HeaderTextColor, ALIGN_VCENTER, labels[i]);
   }
   const ButtonPrompt help[] = {{ICON_DPAD, "Choose"}, {ICON_CROSS, "Confirm"}};
-  drawPromptBar(left + 8, top + (count + 2) * rowHeight + 8,
+  drawPromptBar(left + 8, top + (count + 1) * rowHeight + 8,
                 right - 8, top + height, 0, HeaderTextColor,
                 (PromptBar){NULL, help, 2});
   gsKit_set_test(gsGlobal, GS_ZTEST_ON);
@@ -967,7 +984,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     int favoriteIndex = favoritesOnly && titles->total > 0
         ? lunaNavMarkedByRank(allFavoriteFlags, allTitles->total, selectedTitleIdx)
         : selectedTitleIdx;
-    drawLibraryQuickMenu(quickMenuProgress, quickMenu.selected, view,
+    drawLibraryQuickMenu(quickMenuProgress, !quickMenu.open, quickMenu.selected, view,
                          favoritesOnly, titles->total > 0 && allFavoriteFlags[favoriteIndex],
                          titles->total, curTarget->name);
     if (quickMenuMessage != NULL && (int32_t)(quickMenuMessageUntil - quickNow) > 0) {
