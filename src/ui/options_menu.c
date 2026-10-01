@@ -39,7 +39,8 @@ typedef enum {
   GAME_COMPATIBILITY,
   GAME_VIDEO,
   GAME_LAUNCH,
-  GAME_SECTION_COUNT
+  GAME_SECTION_COUNT,
+  GAME_VIDEO_OUT
 } GameSection;
 
 typedef struct {
@@ -89,6 +90,8 @@ typedef struct {
   GameSection gameSection;
   int selectedGameHubRow;
   int selectedGameRow;
+  int videoOutOpl;
+  int videoOutFirstRow;
   int selectedGlobal;
   int selectedView;
   int selectedOrbsRow;
@@ -103,10 +106,11 @@ static const char *const gameRowLabels[LUNA_GAME_ROW_COUNT] = {
     "EE: Unhook syscalls", "IOP: Emulate DVD-DL",
     "IOP: Fix game buffer overrun", "Launch arguments",
     "VMC slot 1", "VMC slot 2",
-    "Video mode", "Field flipping",
+    "Video out", "Field flipping",
     "Show PS2 logo", "Debug colors", "Game core",
     "Accurate reads", "Synchronous reads", "Unhook syscalls",
-    "Skip videos", "Emulate DVD-DL", "Disable IGR", "Disable IGR"};
+    "Skip videos", "Emulate DVD-DL", "Disable IGR", "Disable IGR",
+    "Video out", "Field flipping"};
 
 static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Use faster IOP disc reads for this game.",
@@ -117,7 +121,7 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Review every launch argument, including global overrides.",
     "Assign an existing OPL card image from this drive's VMC folder.",
     "Assign an existing OPL card image to the second slot.",
-    "Choose a forced output mode for this game.",
+    "Open the Neutrino and OPL video output modes.",
     "Choose field flipping for a forced video mode.",
     "Choose Inherit to use the Global PS2 logo setting.",
     "Display debug colors while loading.",
@@ -128,7 +132,9 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Skip PSS and Bink videos in OPL.",
     "Emulate a dual-layer DVD in OPL.",
     "Disable OPL's in-game reset for this title.",
-    "Disable Neutrino's in-game return for this title."};
+    "Disable Neutrino's in-game return for this title.",
+    "Open the Neutrino and OPL video output modes.",
+    "Emulate field flipping when OPL forces a video output mode."};
 
 static const char *const gameSectionLabels[GAME_SECTION_COUNT] = {
     "Virtual memory cards", "Compatibility", "Video", "Launch & debug"};
@@ -160,6 +166,8 @@ static int gameUsesOpl(const OptionsMenuState *state) {
 }
 
 static int gameSectionRowCount(const OptionsMenuState *state, GameSection section) {
+  if (section == GAME_VIDEO_OUT)
+    return lunaGameVideoModeCount(state->videoOutOpl);
   if (section == GAME_COMPATIBILITY)
     return gameUsesOpl(state) ? LUNA_OPL_COMPAT_COUNT :
                                LUNA_NEUTRINO_COMPAT_ROW_COUNT;
@@ -170,6 +178,8 @@ static int gameSectionRowCount(const OptionsMenuState *state, GameSection sectio
 
 static LunaGameRow gameSectionRow(const OptionsMenuState *state,
                                   GameSection section, int row) {
+  if (section == GAME_VIDEO && gameUsesOpl(state))
+    return row == 0 ? LUNA_GAME_OPL_VIDEO_MODE : LUNA_GAME_OPL_FIELD_FLIP;
   if (section == GAME_COMPATIBILITY)
     return gameUsesOpl(state) ? oplCompatRows[row] : neutrinoCompatRows[row];
   return gameSectionRows[section][row];
@@ -309,10 +319,51 @@ static void drawCompatibilityTabs(const OptionsMenuState *state, int baseX, int 
   const int middle = (baseX + gsGlobal->Width) / 2;
   const int neutrinoX = middle - 100;
   const int oplX = middle + 48;
-  const int opl = gameUsesOpl(state);
+  const int videoOut = state->gameSection == GAME_VIDEO_OUT;
+  const int opl = videoOut ? state->videoOutOpl : gameUsesOpl(state);
   const uint64_t disabled = GS_SETREG_RGBA(0x48, 0x4B, 0x50, 0x80);
   drawText(neutrinoX, y, 0, 0, 0, opl ? disabled : ColorSelected, "Neutrino");
   drawText(oplX, y, 0, 0, 0, opl ? ColorSelected : disabled, "OPL");
+  if (videoOut && state->target->device->mode == MODE_ATA) {
+    drawText(neutrinoX - 22, y, 0, 0, 0, HeaderTextColor, "<");
+    drawText(oplX + 48, y, 0, 0, 0, HeaderTextColor, ">");
+  }
+}
+
+static void drawVideoOutRows(OptionsMenuState *state, int baseX, int firstY,
+                             int rowStep, int menuBottom) {
+  drawCompatibilityTabs(state, baseX, firstY);
+  const int rowStart = firstY + rowStep;
+  const int count = lunaGameVideoModeCount(state->videoOutOpl);
+  const int mode = state->videoOutOpl ? state->gameOptions.oplVideoMode :
+                                       state->gameOptions.videoMode;
+  int visible = (menuBottom - getFontLineHeight() - rowStart) / rowStep + 1;
+  if (visible < 1)
+    visible = 1;
+  int first = state->videoOutFirstRow;
+  if (state->selectedGameRow < first)
+    first = state->selectedGameRow;
+  if (state->selectedGameRow >= first + visible)
+    first = state->selectedGameRow - visible + 1;
+  if (first != state->videoOutFirstRow)
+    state->selector.initialized = 0;
+  state->videoOutFirstRow = first;
+  int selectorY = optionsSelectorY(&state->selector, state->page,
+      state->selectedGameRow, rowStart + (state->selectedGameRow - first) * rowStep);
+  for (int row = first; row < count && row < first + visible; row++)
+    drawOptionsTextRow(baseX, rowStart + (row - first) * rowStep,
+                       gsGlobal->Width - baseX, row == state->selectedGameRow,
+                       selectorY, lunaGameVideoModeLabel(state->videoOutOpl, row),
+                       mode == row ? "On" : "Off");
+  char position[20];
+  snprintf(position, sizeof(position), "%d/%d", state->selectedGameRow + 1, count);
+  drawText(gsGlobal->Width - baseX - getLineWidth(position) - 12,
+           firstY, 0, 0, 0, FontMainColor, position);
+  drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
+                 gsGlobal->Height - footerHeight, 0, HeaderTextColor, ALIGN_LEFT,
+                 state->selectedGameRow == 0 ?
+                     "Keep the game's original output. Left/right changes tabs." :
+                     "Select one output per core. Left/right changes tabs.");
 }
 
 static int optionsGlobalRowY(int index, int firstY, int rowStep, int lineHeight) {
@@ -623,7 +674,8 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
       const char *const summaries[GAME_SECTION_COUNT] = {
           gameVMCEnabled(state->titleArguments) ? "Enabled" : "Disabled",
           compatSummary,
-          lunaGameOptionsValue(&state->gameOptions, LUNA_GAME_VIDEO_MODE),
+          lunaGameOptionsValue(&state->gameOptions,
+              gameUsesOpl(state) ? LUNA_GAME_OPL_VIDEO_MODE : LUNA_GAME_VIDEO_MODE),
           state->target->device->mode == MODE_ATA ? "4 options" : "3 options"};
       drawOptionsSection(contentTop, "Game settings", 0);
       int selectorY = optionsSelectorY(&state->selector, state->page,
@@ -640,8 +692,11 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
       const GameSection section = state->gameSection;
       if (state->selectedGameRow >= gameSectionRowCount(state, section))
         state->selectedGameRow = 0;
-      drawOptionsSection(contentTop, gameSectionLabels[section], 0);
-      if (section == GAME_MEMORY_CARDS) {
+      drawOptionsSection(contentTop, section == GAME_VIDEO_OUT ? "Video out" :
+                                                          gameSectionLabels[section], 0);
+      if (section == GAME_VIDEO_OUT) {
+        drawVideoOutRows(state, baseX, firstY, gameStep, menuBottom);
+      } else if (section == GAME_MEMORY_CARDS) {
         drawGameVMCRows(state, baseX, firstY, gameStep, menuBottom);
       } else {
         int rowStart = firstY;
@@ -678,6 +733,11 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                         (state->selectedGameHubRow == GAME_MEMORY_CARDS ?
                             (gameVMCEnabled(state->titleArguments) ? "Manage" : "Enable") :
                             "Open") :
+                    state->page == OPTIONS_PER_GAME &&
+                    state->gameSection == GAME_VIDEO_OUT ? "Select" :
+                    state->page == OPTIONS_PER_GAME &&
+                    state->gameSection == GAME_VIDEO && state->selectedGameRow == 0 ?
+                        "Open" :
                     state->page == OPTIONS_PER_GAME &&
                     state->gameSection == GAME_MEMORY_CARDS ?
                         (state->selectedGameRow == 2 ? "Create" :
@@ -1149,7 +1209,8 @@ static int handleGameInput(OptionsMenuState *state, int input) {
     return 0;
   }
   if (input & PAD_TRIANGLE) {
-    state->gameSection = GAME_HUB;
+    state->gameSection = state->gameSection == GAME_VIDEO_OUT ? GAME_VIDEO : GAME_HUB;
+    state->selectedGameRow = 0;
     state->selector.initialized = 0;
     return 0;
   }
@@ -1162,6 +1223,25 @@ static int handleGameInput(OptionsMenuState *state, int input) {
   }
   if (input & PAD_DOWN) {
     state->selectedGameRow = (state->selectedGameRow + 1) % count;
+    return 0;
+  }
+  if (state->gameSection == GAME_VIDEO_OUT) {
+    if ((input & (PAD_LEFT | PAD_RIGHT)) &&
+        state->target->device->mode == MODE_ATA) {
+      state->videoOutOpl = !state->videoOutOpl;
+      int mode = state->videoOutOpl ? state->gameOptions.oplVideoMode :
+                                     state->gameOptions.videoMode;
+      state->selectedGameRow = mode > 0 ? mode : 0;
+      state->videoOutFirstRow = 0;
+      state->selector.initialized = 0;
+    } else if (input & (PAD_CROSS | PAD_CIRCLE)) {
+      int current = state->videoOutOpl ? state->gameOptions.oplVideoMode :
+                                        state->gameOptions.videoMode;
+      int mode = current == state->selectedGameRow ? 0 : state->selectedGameRow;
+      if (lunaGameOptionsSetVideoMode(&state->gameOptions, state->titleArguments,
+                                     state->videoOutOpl, mode))
+        state->titleArgumentsChanged = 1;
+    }
     return 0;
   }
   if (state->gameSection == GAME_MEMORY_CARDS &&
@@ -1208,7 +1288,16 @@ static int handleGameInput(OptionsMenuState *state, int input) {
     return 0;
   LunaGameRow selectedRow = gameSectionRow(state, state->gameSection,
                                             state->selectedGameRow);
-  if ((selectedRow == LUNA_GAME_VMC_SLOT1 || selectedRow == LUNA_GAME_VMC_SLOT2) &&
+  if ((selectedRow == LUNA_GAME_VIDEO_MODE || selectedRow == LUNA_GAME_OPL_VIDEO_MODE) &&
+      (input & (PAD_CROSS | PAD_CIRCLE))) {
+    state->gameSection = GAME_VIDEO_OUT;
+    state->videoOutOpl = gameUsesOpl(state);
+    int mode = state->videoOutOpl ? state->gameOptions.oplVideoMode :
+                                   state->gameOptions.videoMode;
+    state->selectedGameRow = mode > 0 ? mode : 0;
+    state->videoOutFirstRow = 0;
+    state->selector.initialized = 0;
+  } else if ((selectedRow == LUNA_GAME_VMC_SLOT1 || selectedRow == LUNA_GAME_VMC_SLOT2) &&
       (input & (PAD_CROSS | PAD_CIRCLE))) {
     int slot = selectedRow - LUNA_GAME_VMC_SLOT1;
     if (uiVMCPickerLoop(state->target, state->titleArguments, &state->gameOptions, slot)) {

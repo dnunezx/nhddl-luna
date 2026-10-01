@@ -7,7 +7,9 @@
 #define LUNA_GAME_COMPAT_COUNT 5
 #define LUNA_NEUTRINO_COMPAT_ROW_COUNT 6
 #define LUNA_OPL_COMPAT_COUNT 6
-#define LUNA_GAME_ROW_COUNT 20
+#define LUNA_GAME_ROW_COUNT 22
+#define LUNA_NEUTRINO_VIDEO_MODE_COUNT 6
+#define LUNA_OPL_VIDEO_MODE_COUNT 30
 
 typedef enum {
   LUNA_GAME_FAST_READS,
@@ -29,7 +31,9 @@ typedef enum {
   LUNA_GAME_OPL_SKIP_VIDEOS,
   LUNA_GAME_OPL_DVD_DL,
   LUNA_GAME_OPL_DISABLE_IGR,
-  LUNA_GAME_NEUTRINO_DISABLE_IGR
+  LUNA_GAME_NEUTRINO_DISABLE_IGR,
+  LUNA_GAME_OPL_VIDEO_MODE,
+  LUNA_GAME_OPL_FIELD_FLIP
 } LunaGameRow;
 
 typedef struct {
@@ -37,6 +41,8 @@ typedef struct {
   uint8_t oplCompat;
   int videoMode; // 0 = default, 1..5 = forced modes, -1 = unrecognized value
   int fieldFlip; // 0 = off, 1..3 = field flipping modes
+  int oplVideoMode; // 0 = off, 1..29 = pinned OPL GSM preset + 1
+  int oplFieldFlip;
   int ps2Logo;
   int debugColors;
   int neutrinoIgrDisabled;
@@ -47,6 +53,10 @@ typedef struct {
 
 void lunaGameOptionsRead(LunaGameOptions *options, ArgumentList *arguments);
 uint8_t lunaGetOplCompatMask(ArgumentList *arguments);
+int lunaGameVideoModeCount(int opl);
+const char *lunaGameVideoModeLabel(int opl, int mode);
+int lunaGameOptionsSetVideoMode(LunaGameOptions *options,
+                               ArgumentList *arguments, int opl, int mode);
 // Returns 1 when an option changed, 0 otherwise. Launch arguments use a separate page.
 int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
                           LunaGameRow row, int direction);

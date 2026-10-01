@@ -7,6 +7,7 @@
 #include "dprintf.h"
 #include "ui/ambient.h"
 #include "ui/game_options.h"
+#include "opl_gsm_presets.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <kernel.h>
@@ -307,6 +308,42 @@ static int patchKernel(void *entry, void *storageEnd, void **eeloadCopy,
   return eeload && memory ? 0 : -ENOTSUP;
 }
 
+static void prepareOplGsm(ArgumentList *arguments, OplEeCoreConfig *config) {
+  LunaGameOptions options;
+  lunaGameOptionsRead(&options, arguments);
+  if (options.oplVideoMode <= 0 ||
+      options.oplVideoMode >= LUNA_OPL_VIDEO_MODE_COUNT)
+    return; // Missing, Off, or invalid metadata must never enable GSM.
+  const LunaOplGsmPreset *preset = &lunaOplGsmPresets[options.oplVideoMode - 1];
+#ifdef _DTL_T10000
+  if (preset->mode == GS_MODE_DTV_576P)
+    preset = &lunaOplGsmPresets[2]; // Match OPL's TOOL fallback to PAL.
+#endif
+  OplGsmConfig *gsm = &config->GsmConfig;
+  gsm->interlace = preset->interlace;
+  gsm->mode = preset->mode;
+  gsm->ffmd = preset->ffmd;
+  gsm->display = preset->display;
+  gsm->syncv = preset->syncv;
+  gsm->smode2 = (preset->ffmd << 1) | preset->interlace;
+  gsm->FIELD_fix = options.oplFieldFlip;
+  // Match OPL's BIOS checks for 576p support and GS display offsets.
+  char romver[16] = {0};
+  int fd = open("rom0:ROMVER", O_RDONLY);
+  if (fd >= 0) {
+    int length = read(fd, romver, sizeof(romver) - 1);
+    close(fd);
+    if (length >= 14) {
+      char version[5];
+      memcpy(version, romver, 4);
+      version[4] = '\0';
+      gsm->k576P_fix = strtoul(version, NULL, 10) < 210;
+      gsm->kGsDxDyOffsetSupported = strtoul(romver + 6, NULL, 10) > 20010608;
+    }
+  }
+  config->EnableGSMOp = 1;
+}
+
 int launchOplAta(Target *target, ArgumentList *arguments,
                  LaunchProgressCallback progress, void *userdata) {
   uint8_t compat = lunaGetOplCompatMask(arguments);
@@ -387,6 +424,7 @@ int launchOplAta(Target *target, ArgumentList *arguments,
   config->ModStorageStart = table;
   config->ModStorageEnd = storageEnd;
   GetOsdConfigParam(&config->CustomOSDConfigParam);
+  prepareOplGsm(arguments, config);
 
   result = patchKernel((void *)elf->entry, storageEnd,
                        &config->eeloadCopy, &config->initUserMemory);

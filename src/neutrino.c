@@ -59,6 +59,8 @@ int assembleArgv(ArgumentList *arguments, char **argv[]) {
   while (curArg != NULL) {
     if (!curArg->isDisabled && strcmp(curArg->arg, "luna_core") != 0 &&
         strcmp(curArg->arg, "luna_opl_compat") != 0 &&
+        strcmp(curArg->arg, "luna_opl_gsm") != 0 &&
+        strcmp(curArg->arg, "luna_opl_field_flip") != 0 &&
         strcmp(curArg->arg, "luna_neutrino_disable_igr") != 0) {
       argSize = strlen(curArg->arg) + (curArg->value ? strlen(curArg->value) : 0) + 3; // + \0, = and -
       char *value = calloc(sizeof(char), argSize);

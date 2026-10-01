@@ -166,6 +166,51 @@ int main(void) {
   freeArguments(&noLogo);
 
   freeArguments(&arguments);
+
+  ArgumentList outputs = {0};
+  lunaGameOptionsRead(&options, &outputs);
+  assert(options.videoMode == 0 && options.oplVideoMode == 0);
+  assert(!options.fieldFlip && !options.oplFieldFlip);
+  assert(!strcmp(lunaGameOptionsValue(&options, LUNA_GAME_VIDEO_MODE), "Default"));
+  assert(!strcmp(lunaGameOptionsValue(&options, LUNA_GAME_OPL_VIDEO_MODE), "Default"));
+  assert(!lunaGameOptionsSetVideoMode(&options, &outputs, 0, -1));
+  assert(!lunaGameOptionsSetVideoMode(&options, &outputs, 1, LUNA_OPL_VIDEO_MODE_COUNT));
+  for (int opl = 0; opl <= 1; opl++) {
+    for (int mode = 1; mode < lunaGameVideoModeCount(opl); mode++) {
+      assert(lunaGameOptionsSetVideoMode(&options, &outputs, opl, mode));
+      lunaGameOptionsRead(&options, &outputs);
+      assert((opl ? options.oplVideoMode : options.videoMode) == mode);
+      assert(strcmp(lunaGameVideoModeLabel(opl, mode), "Custom"));
+    }
+  }
+  assert(options.videoMode == 5 && options.oplVideoMode == 29);
+  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 0, 2));
+  assert(lunaGameOptionsChange(&options, &outputs, LUNA_GAME_FIELD_FLIP, 1));
+  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 0, 3));
+  assert(!strcmp(getArgument(&outputs, "gsm")->value, "1080ix1:1"));
+  assert(lunaGameOptionsChange(&options, &outputs, LUNA_GAME_OPL_FIELD_FLIP, 1));
+  assert(options.oplFieldFlip && options.fieldFlip == 1);
+  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 1, 11));
+  assert(options.videoMode == 3 && options.oplVideoMode == 11);
+  getArgument(&outputs, "gsm")->isGlobal = 1;
+  getArgument(&outputs, "luna_opl_gsm")->isGlobal = 1;
+  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 0, 0));
+  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 1, 0));
+  assert(getArgument(&outputs, "gsm")->isDisabled);
+  assert(!getArgument(&outputs, "gsm")->isGlobal);
+  assert(getArgument(&outputs, "luna_opl_gsm")->isDisabled);
+  assert(!getArgument(&outputs, "luna_opl_gsm")->isGlobal);
+  assert(options.videoMode == 0 && options.oplVideoMode == 0 && !options.fieldFlip);
+  // A malformed advanced value stays visible as Custom; unrelated edits preserve it.
+  Argument *oplVideo = getArgument(&outputs, "luna_opl_gsm");
+  free(oplVideo->value);
+  oplVideo->value = strdup("999");
+  oplVideo->isDisabled = 0;
+  lunaGameOptionsRead(&options, &outputs);
+  assert(options.oplVideoMode == -1);
+  assert(lunaGameOptionsSetVideoMode(&options, &outputs, 0, 2));
+  assert(!strcmp(oplVideo->value, "999"));
+  freeArguments(&outputs);
   puts("game options: ok");
   return 0;
 }

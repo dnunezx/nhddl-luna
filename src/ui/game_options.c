@@ -8,7 +8,29 @@ static const char compatDigits[LUNA_GAME_COMPAT_COUNT] = {'0', '2', '3', '5', '7
 static const char *const videoValues[] = {"", "fp1", "fp2", "1080ix1", "1080ix2", "1080ix3"};
 static const char *const videoLabels[] = {"Default", "240p/288p", "480p/576p",
                                           "1080i x1", "1080i x2", "1080i x3"};
+// Order matches the pinned OPL src/gsm.c preset table. Zero keeps GSM off.
+static const char *const oplVideoLabels[LUNA_OPL_VIDEO_MODE_COUNT] = {
+    "Default", "NTSC 480i", "NTSC non-interlaced", "PAL 576i",
+    "PAL non-interlaced", "PAL 60Hz", "PAL 60Hz non-interlaced",
+    "PS1 480p 60Hz", "PS1 576p 50Hz", "480p 60Hz", "576p 50Hz",
+    "720p 60Hz", "1080i 60Hz", "1080i 60Hz (frame)",
+    "VGA 640x480p 60Hz", "VGA 640x480p 72Hz", "VGA 640x480p 75Hz",
+    "VGA 640x480p 85Hz", "VGA 640x960i 60Hz", "VGA 800x600p 56Hz",
+    "VGA 800x600p 60Hz", "VGA 800x600p 72Hz", "VGA 800x600p 75Hz",
+    "VGA 800x600p 85Hz", "VGA 1024x768p 60Hz", "VGA 1024x768p 70Hz",
+    "VGA 1024x768p 75Hz", "VGA 1024x768p 85Hz",
+    "VGA 1280x1024p 60Hz", "VGA 1280x1024p 75Hz"};
 static const char *const flipLabels[] = {"Off", "Type 1", "Type 2", "Type 3"};
+
+int lunaGameVideoModeCount(int opl) {
+  return opl ? LUNA_OPL_VIDEO_MODE_COUNT : LUNA_NEUTRINO_VIDEO_MODE_COUNT;
+}
+
+const char *lunaGameVideoModeLabel(int opl, int mode) {
+  if (mode < 0 || mode >= lunaGameVideoModeCount(opl))
+    return "Custom";
+  return opl ? oplVideoLabels[mode] : videoLabels[mode];
+}
 
 static int argumentEnabled(ArgumentList *arguments, const char *name) {
   Argument *argument = getArgument(arguments, name);
@@ -34,6 +56,14 @@ void lunaGameOptionsRead(LunaGameOptions *options, ArgumentList *arguments) {
         options->compat |= 1U << i;
   }
   options->oplCompat = lunaGetOplCompatMask(arguments);
+  Argument *oplVideo = getArgument(arguments, "luna_opl_gsm");
+  if (oplVideo != NULL && !oplVideo->isDisabled && oplVideo->value != NULL) {
+    char *end;
+    long mode = strtol(oplVideo->value, &end, 10);
+    options->oplVideoMode = end != oplVideo->value && *end == '\0' &&
+        mode >= 0 && mode < LUNA_OPL_VIDEO_MODE_COUNT ? (int)mode : -1;
+  }
+  options->oplFieldFlip = argumentEnabled(arguments, "luna_opl_field_flip");
 
   Argument *video = getArgument(arguments, "gsm");
   if (video != NULL && !video->isDisabled && video->value != NULL) {
@@ -100,6 +130,27 @@ static int setArgument(ArgumentList *arguments, const char *name, const char *va
   return 1;
 }
 
+int lunaGameOptionsSetVideoMode(LunaGameOptions *options,
+                               ArgumentList *arguments, int opl, int mode) {
+  if (mode < 0 || mode >= lunaGameVideoModeCount(opl))
+    return 0;
+  char value[12];
+  const char *name = opl ? "luna_opl_gsm" : "gsm";
+  if (opl)
+    snprintf(value, sizeof(value), "%d", mode);
+  else if (mode && options->fieldFlip)
+    snprintf(value, sizeof(value), "%s:%d", videoValues[mode], options->fieldFlip);
+  else
+    snprintf(value, sizeof(value), "%s", videoValues[mode]);
+  if (!setArgument(arguments, name, value, mode != 0))
+    return 0;
+  Argument *video = getArgument(arguments, name);
+  if (video != NULL)
+    video->isGlobal = 0; // Off must also override an inherited forced mode.
+  lunaGameOptionsRead(options, arguments);
+  return 1;
+}
+
 int lunaGameOptionsSetVMC(LunaGameOptions *options, ArgumentList *arguments,
                           int slot, const char *path) {
   if (slot < 0 || slot > 1 || path == NULL)
@@ -112,6 +163,21 @@ int lunaGameOptionsSetVMC(LunaGameOptions *options, ArgumentList *arguments,
 
 int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
                           LunaGameRow row, int direction) {
+  if (row == LUNA_GAME_OPL_VIDEO_MODE) {
+    int mode = options->oplVideoMode < 0 ? 0 :
+        (options->oplVideoMode + (direction < 0 ? LUNA_OPL_VIDEO_MODE_COUNT - 1 : 1)) %
+        LUNA_OPL_VIDEO_MODE_COUNT;
+    return lunaGameOptionsSetVideoMode(options, arguments, 1, mode);
+  }
+  if (row == LUNA_GAME_OPL_FIELD_FLIP) {
+    if (!setArgument(arguments, "luna_opl_field_flip", "", !options->oplFieldFlip))
+      return 0;
+    Argument *flip = getArgument(arguments, "luna_opl_field_flip");
+    if (flip != NULL)
+      flip->isGlobal = 0;
+    lunaGameOptionsRead(options, arguments);
+    return 1;
+  }
   if (row == LUNA_GAME_NEUTRINO_DISABLE_IGR) {
     int disabled = !options->neutrinoIgrDisabled;
     if (!setArgument(arguments, "luna_neutrino_disable_igr", "", disabled))
@@ -161,6 +227,8 @@ int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
       nextFlip = (nextFlip + (direction < 0 ? 3 : 1)) % 4;
       if (nextFlip != 0 && nextMode <= 0)
         nextMode = 2; // The legacy menu selected 480p/576p for field flipping.
+      if (nextMode < 0)
+        nextMode = 0;
     }
     char value[12];
     if (nextFlip)
@@ -169,6 +237,9 @@ int lunaGameOptionsChange(LunaGameOptions *options, ArgumentList *arguments,
       snprintf(value, sizeof(value), "%s", videoValues[nextMode]);
     if (!setArgument(arguments, "gsm", value, nextMode != 0))
       return 0;
+    Argument *video = getArgument(arguments, "gsm");
+    if (video != NULL)
+      video->isGlobal = 0;
     options->videoMode = nextMode;
     options->fieldFlip = nextFlip;
     return 1;
@@ -247,7 +318,11 @@ const char *lunaGameOptionsValue(const LunaGameOptions *options, LunaGameRow row
   if (row >= LUNA_GAME_FAST_READS && row <= LUNA_GAME_BUFFER_OVERRUN)
     return (options->compat & (1 << (row - LUNA_GAME_FAST_READS))) ? "On" : "Off";
   if (row == LUNA_GAME_VIDEO_MODE)
-    return options->videoMode < 0 ? "Custom" : videoLabels[options->videoMode];
+    return lunaGameVideoModeLabel(0, options->videoMode);
+  if (row == LUNA_GAME_OPL_VIDEO_MODE)
+    return lunaGameVideoModeLabel(1, options->oplVideoMode);
+  if (row == LUNA_GAME_OPL_FIELD_FLIP)
+    return options->oplFieldFlip ? "On" : "Off";
   if (row == LUNA_GAME_FIELD_FLIP)
     return flipLabels[options->fieldFlip];
   if (row == LUNA_GAME_VMC_SLOT1 || row == LUNA_GAME_VMC_SLOT2)
