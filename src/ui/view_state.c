@@ -626,7 +626,7 @@ int loadAmbientSoundEnabled(Target *target) {
   char value[24];
 
   if (device == NULL || device->mountpoint == NULL)
-    return 1;
+    return 0;
   for (int i = 0; i < 2; i++) {
     if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
       continue;
@@ -643,7 +643,7 @@ int loadAmbientSoundEnabled(Target *target) {
     if (!strcmp(value, "on"))
       return 1;
   }
-  return 1;
+  return 0;
 }
 
 int saveAmbientSoundEnabled(Target *target, int enabled) {

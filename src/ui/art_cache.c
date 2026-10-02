@@ -711,6 +711,46 @@ static PSBBNPixel *createArtThumbnail(const PSBBNPixel *source, int width, int h
   return thumbnail;
 }
 
+// Scroll artwork shares GS VRAM with two framebuffers, the depth buffer,
+// the font, and the System Configuration capture. gsKit's texture manager
+// loops forever if asked to bind a texture larger than its entire pool.
+static int fitScrollArtToVram(GSTEXTURE *texture, int background) {
+  const int maxWidth = 256;
+  const int maxHeight = background ? 192 : 128;
+  const u32 available = 4U * 1024U * 1024U - gsGlobal->CurrentPointer;
+  int width = texture->Width;
+  int height = texture->Height;
+  if (width > maxWidth) {
+    height = (int)((int64_t)height * maxWidth / width);
+    width = maxWidth;
+  }
+  if (height > maxHeight) {
+    width = (int)((int64_t)width * maxHeight / height);
+    height = maxHeight;
+  }
+  if (width < 1) width = 1;
+  if (height < 1) height = 1;
+  while (width > 1 && height > 1 &&
+         gsKit_texture_size(width, height, GS_PSM_CT32) + 65536U > available) {
+    width /= 2;
+    height /= 2;
+  }
+  if (gsKit_texture_size(width, height, GS_PSM_CT32) > available)
+    return -1;
+  if (width != texture->Width || height != texture->Height) {
+    PSBBNPixel *pixels = createArtThumbnail((const PSBBNPixel *)texture->Mem,
+                                             texture->Width, texture->Height,
+                                             width, height);
+    if (pixels == NULL)
+      return -1;
+    free(texture->Mem);
+    texture->Mem = (u32 *)pixels;
+    texture->Width = width;
+    texture->Height = height;
+  }
+  return 0;
+}
+
 static PSBBNPixel *createPSBBNThumbnail(const PSBBNPixel *source, int width, int height,
                                       int size) {
   return createArtThumbnail(source, width, height, size, size);
@@ -1170,7 +1210,8 @@ static void scrollArtWorker(void) {
     decoded.Delayed = 1;
     scrollArtJob.result = decodePNGTextureRGBA(gsGlobal, &decoded, scrollArtJob.path);
     if (scrollArtJob.result == 0 && decoded.Mem != NULL &&
-        decoded.Width > 0 && decoded.Height > 0) {
+        decoded.Width > 0 && decoded.Height > 0 &&
+        fitScrollArtToVram(&decoded, scrollArtJob.background) == 0) {
       decoded.Filter = GS_FILTER_LINEAR;
       decoded.Delayed = 1;
       decoded.Vram = 0;

@@ -46,7 +46,7 @@ int saveGlassColorPreset(Target *target, GlassColorPreset preset);
 UIFont loadUIFont(Target *target);
 int saveUIFont(Target *target, UIFont selection);
 
-// Ambient sound is enabled when no valid preference has been saved.
+// Ambient sound is disabled when no valid preference has been saved.
 int loadAmbientSoundEnabled(Target *target);
 int saveAmbientSoundEnabled(Target *target, int enabled);
 

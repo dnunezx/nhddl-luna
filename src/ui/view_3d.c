@@ -403,8 +403,6 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
     width = cellWidth - 16;
     height = width / CASE_ASPECT;
   }
-  drawTextWindow(left, headerHeight - getFontLineHeight(), gridRight, 0,
-      5, HeaderTextColor, ALIGN_LEFT, "3D");
   float rearFoot = top + height * 0.78f + 12;
   float frontFoot = bottom - 10;
   float centerX = (left + gridRight) * 0.5f;

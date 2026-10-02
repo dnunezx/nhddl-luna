@@ -1,21 +1,17 @@
 // Ambient Orbs: reusable animated formation asset.
 #include "ui/view_internal.h"
 #include "ui/ambient_orbs.h"
+#include "ui/ps2_menu_scene.h"
 #include "options.h"
 #include <stdio.h>
 #include <string.h>
 
-// The original seven-orb ellipse expands to twelve points for formations.
+// LUNA formations use twelve lights; the original PS2 behavior uses seven.
 #define ORB_ORBIT_COUNT 7
 #define ORB_COUNT 12
-#define ORB_ORBIT_PERIOD_MS 2200
 #define ORB_SPREAD_PERIOD_MS 4300
-#define ORB_TILT_PERIOD_MS 6100
-#define ORB_DESYNC_PERIOD_MS 5200
 #define ORB_CONTRACT_PERIOD_MS 24000
 #define ORB_PULSE_PERIOD_MS 1800
-#define ORB_SPREAD_PHASE 2600
-#define ORB_DESYNC_PHASE 3800
 #define ORB_TRAIL_STEP_MS 40
 #define ORB_TRAIL_SEGMENTS 6
 #define ORB_PLAYTIME_TRAIL_STEP_MS 120
@@ -24,7 +20,7 @@
 #define ORB_SPLASH_FORMATION_PERIOD_MS 1800
 #define ORB_FORMATION_MORPH_MS 1000
 #define ORB_SPLASH_FORMATION_MORPH_MS 550
-#define ORB_PLAYTIME_MS 10000
+#define ORB_PLAYTIME_MS 17000
 #define ORB_PLAYTIME_ENTRY_MS 400
 #define ORB_PLAYTIME_SWEEP_X_MS 12000
 #define ORB_PLAYTIME_SWEEP_Y_MS 16000
@@ -70,6 +66,16 @@ static uint32_t originalClockAnchorMs;
 static uint32_t originalClockStartMs;
 static uint32_t originalScatterPhase;
 static int systemConfigClockReady;
+static uint32_t systemConfigFrame;
+static float systemConfigRadius;
+static int16_t systemConfigTilt, systemConfigSpin;
+
+typedef struct {
+  uint64_t clockMs;
+  uint32_t elapsedMs;
+  float radius;
+  int16_t tilt, spin;
+} SystemConfigOrbScene;
 static uint32_t orbSelectionEvents[ORB_SELECTION_EVENT_COUNT];
 static uint32_t orbLastSelectionEventMs;
 static int orbSelectionEventNext;
@@ -582,28 +588,13 @@ static void drawOrbGlowDisc(float centerX, float centerY, float radius,
 }
 
 typedef struct {
-  uint32_t orbit;
   float breath;
-  float desync;
-  float tilt;
   float scale;
 } OrbMotion;
 
-typedef struct {
-  uint32_t base;
-  float spreadWeight;
-  float desyncWeight;
-} OrbPath;
-
 static OrbMotion orbMotion(uint32_t elapsedMs) {
   OrbMotion motion;
-  motion.orbit = glassPhase(elapsedMs, ORB_ORBIT_PERIOD_MS, 0);
   motion.breath = orbWave(glassPhase(elapsedMs, ORB_SPREAD_PERIOD_MS, 0));
-  motion.desync = orbWave(glassPhase(elapsedMs, ORB_DESYNC_PERIOD_MS, 0));
-  float tiltWave = orbWave(glassPhase(elapsedMs, ORB_TILT_PERIOD_MS, 0));
-  if (tiltWave < 0)
-    tiltWave = -tiltWave;
-  motion.tilt = 26.0f + (tiltWave * 74.0f) / 127.0f;
   // Fast grouping rides on a slower swell, as in the reference animation.
   const float slowScale = 80.0f + orbWave(glassPhase(elapsedMs,
                                   ORB_CONTRACT_PERIOD_MS, 0) + (8 << 11)) * 20.0f / 127.0f;
@@ -613,23 +604,7 @@ static OrbMotion orbMotion(uint32_t elapsedMs) {
   return motion;
 }
 
-static void orbPosition(const OrbPath *path, const OrbMotion *motion,
-                        int centerX, int centerY, int radiusX, int radiusY,
-                        float *x, float *y, float *depth) {
-  const int spread = (int)(path->spreadWeight * motion->breath *
-                           ORB_SPREAD_PHASE / (127.0f * 127.0f));
-  const uint32_t phaseX = motion->orbit + path->base + spread;
-  const int offsetY = (int)(path->desyncWeight * motion->desync *
-                            ORB_DESYNC_PHASE / (127.0f * 127.0f));
-  const uint32_t phaseY = phaseX + offsetY;
-  if (depth != NULL)
-    *depth = (orbWave(phaseX) + 127.0f) / 2.0f;
-  *x = centerX + orbWave(phaseX + (8 << 11)) * radiusX * motion->scale / (127.0f * 100.0f);
-  *y = centerY + orbWave(phaseY) * radiusY * motion->tilt * motion->scale / (127.0f * 100.0f * 100.0f);
-}
-
 typedef enum {
-  ORB_SHAPE_ORBIT,
   ORB_SHAPE_DIAMOND,
   ORB_SHAPE_CUBE,
   ORB_SHAPE_OCTAHEDRON,
@@ -731,8 +706,7 @@ static OrbFormation *orbFormationAt(uint32_t elapsedMs, int formationMode) {
   static OrbFormation orbitFormation;
   static OrbFormation splashFormation;
   static const OrbShape orbitShapes[] = {
-    ORB_SHAPE_CUBE, ORB_SHAPE_OCTAHEDRON,
-    ORB_SHAPE_ORBIT, ORB_SHAPE_LUNA
+    ORB_SHAPE_CUBE, ORB_SHAPE_OCTAHEDRON, ORB_SHAPE_LUNA
   };
   OrbFormation *formation = formationMode == 3 ? &scrollFormation :
                             formationMode == 2 ? &splashFormation :
@@ -758,7 +732,7 @@ static OrbFormation *orbFormationAt(uint32_t elapsedMs, int formationMode) {
     formation->startMs = glassStartMs;
     formation->epochMs = epochMs;
     formation->from = formationMode == 2 ? ORB_SHAPE_LUNA :
-                      formationMode == 1 ? ORB_SHAPE_CUBE : ORB_SHAPE_ORBIT;
+                      formationMode == 1 ? ORB_SHAPE_CUBE : ORB_SHAPE_DIAMOND;
     formation->to = formation->from;
     formation->previousFrom = formation->from;
     formation->previousTo = formation->to;
@@ -841,16 +815,6 @@ static void orbPatternPosition(OrbShape shape, int index, uint32_t elapsedMs,
                                float *depth) {
   if (shape == ORB_SHAPE_PLAYTIME) {
     orbPlaytimePosition(index, elapsedMs, motion, x, y, depth);
-    return;
-  }
-  if (shape == ORB_SHAPE_ORBIT) {
-    OrbPath path;
-    path.base = (uint32_t)(((uint64_t)index << 16) /
-                           (index < ORB_ORBIT_COUNT ? ORB_ORBIT_COUNT : ORB_COUNT));
-    path.spreadWeight = orbWave(path.base + (2 << 11));
-    path.desyncWeight = orbWave(path.base);
-    orbPosition(&path, motion, centerX, centerY, radiusX, radiusY,
-                x, y, depth);
     return;
   }
   if (shape == ORB_SHAPE_LUNA) {
@@ -1060,11 +1024,7 @@ static void orbFormationPosition(const OrbFormation *formation, int index,
     *y = fromY + (toY - fromY) * blend;
     *depth = fromDepth + (toDepth - fromDepth) * blend;
   }
-  const float fromOpacity = index < ORB_ORBIT_COUNT ||
-                             from != ORB_SHAPE_ORBIT ? 1.0f : 0.0f;
-  const float toOpacity = index < ORB_ORBIT_COUNT ||
-                           to != ORB_SHAPE_ORBIT ? 1.0f : 0.0f;
-  *opacity = fromOpacity + (toOpacity - fromOpacity) * blend;
+  *opacity = 1.0f;
 }
 
 static void scrollGlyphPoint(char glyph, int index, uint32_t animationMs,
@@ -1232,8 +1192,7 @@ static void drawOrbFormationEdges(OrbShape shape, float extent,
     {2, 5}, {2, 6}, {3, 6}, {3, 7},
     {4, 8}, {5, 8}, {6, 8}, {7, 8}
   };
-  if (extent <= 0.0f || shape == ORB_SHAPE_ORBIT ||
-      shape == ORB_SHAPE_PLAYTIME ||
+  if (extent <= 0.0f || shape == ORB_SHAPE_PLAYTIME ||
       shape == ORB_SHAPE_SPHERE || shape == ORB_SHAPE_LUNA)
     return;
   float x[ORB_COUNT], y[ORB_COUNT], depth;
@@ -1395,7 +1354,8 @@ static void drawOriginalMask(GSTEXTURE *texture, float x, float y,
 }
 
 static void drawOriginalOrbSprite(float x, float y, float size, int z,
-                                  int red, int green, int blue, float opacity) {
+                                  int red, int green, int blue, float opacity,
+                                  int softenMasks) {
   const float haloX = 30.0f * size;
   const float haloY = 15.0f * size;
   const int haloAlpha = (int)(0x3c * opacity);
@@ -1403,31 +1363,48 @@ static void drawOriginalOrbSprite(float x, float y, float size, int z,
   int coreRed = 0x80, coreGreen = 0x80, coreBlue = 0x80;
   orbTintColor(&red, &green, &blue, ORBS_COLOR_PART_ORBS);
   orbTintColor(&coreRed, &coreGreen, &coreBlue, ORBS_COLOR_PART_ORBS);
-  // The ROM softens the whole 3D layer with five framebuffer passes. Soft
-  // copies of its actual halo mask approximate that spread within the orb
-  // layer, leaving the surrounding LUNA interface sharp.
+  // Other orb backgrounds approximate the ROM's softness within the mask.
+  // System Configuration now has the real scene-wide five-pass blur, so
+  // draw its halo once at the source alpha and let that postprocess soften it.
   static const int offsets[4][2] = {{-2, 0}, {2, 0}, {0, -2}, {0, 2}};
-  for (int tap = 0; tap < 4; tap++)
+  for (int tap = 0; softenMasks && tap < 4; tap++)
     drawOriginalMask(&originalHaloTexture, x + offsets[tap][0] * size,
                      y + offsets[tap][1] * size, haloX * 1.05f,
                      haloY * 1.05f, z, red, green, blue, haloAlpha / 10);
   drawOriginalMask(&originalHaloTexture, x, y, haloX, haloY,
-                   z, red, green, blue, haloAlpha * 3 / 4);
+                   z, red, green, blue, softenMasks ? haloAlpha * 3 / 4 : haloAlpha);
   drawOriginalMask(&originalCoreTexture, x, y, 4.5f * size, 2.25f * size,
                    z, coreRed, coreGreen, coreBlue, coreAlpha);
 }
 
+static void systemConfigOrbPoint(const SystemConfigOrbScene *scene,
+                                 int index, uint32_t age,
+                                 float *x, float *y, float *depth) {
+  if (age > scene->elapsedMs) age = scene->elapsedMs;
+  const uint64_t clockMs = scene->clockMs - age;
+  const uint32_t spin = (uint16_t)scene->spin -
+                         (uint32_t)((uint64_t)age * 65536U / 60000U);
+  const uint32_t tilt = (uint16_t)scene->tilt -
+                         (uint32_t)((uint64_t)age * 65536U / 43200000U);
+  float wx, wy, wz;
+  ps2MenuOrbWorld(index, clockMs, scene->radius, tilt, spin, &wx, &wy, &wz);
+  ps2MenuCamera(&wx, &wy, &wz, 0);
+  ps2MenuProject(wx, wy, wz, gsGlobal->Width, gsGlobal->Height, x, y);
+  // The shared sprite renderer's size becomes exactly 103 / camera Z.
+  *depth = (wz / 103.0f - 1.0f) / 0.23f;
+}
+
 static void drawOriginalOrbs(int centerX, int centerY, int radiusX,
                               int radiusY, uint32_t now, int trailZ,
-                              int forceBiosMasks) {
+                              int forceBiosMasks, const SystemConfigOrbScene *scene) {
   static const int entryColor[ORB_ORBIT_COUNT][3] = {
       {0x00, 0x00, 0x80}, {0x00, 0x80, 0x00},
       {0x00, 0x80, 0x80}, {0x80, 0x00, 0x00},
       {0x80, 0x00, 0x44}, {0x80, 0x44, 0x00},
       {0x80, 0x80, 0x80}};
-  const uint32_t elapsed = now >= originalClockAnchorMs ?
+  const uint32_t elapsed = scene ? scene->elapsedMs : now >= originalClockAnchorMs ?
                            now - originalClockAnchorMs : 0;
-  const float entry = elapsed >= 2135U ? 0.0f :
+  const float entry = scene || elapsed >= 2135U ? 0.0f :
                       1.0f - elapsed / 2135.0f;
   gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 2, 0, 1, 0), 0);
@@ -1438,16 +1415,22 @@ static void drawOriginalOrbs(int centerX, int centerY, int radiusX,
     int tailRed = red, tailGreen = green, tailBlue = blue;
     orbTintColor(&tailRed, &tailGreen, &tailBlue, ORBS_COLOR_PART_TAILS);
     float headX, headY, headDepth;
-    originalOrbPoint(i, now, centerX, centerY, radiusX, radiusY,
-                     &headX, &headY, &headDepth);
+    if (scene)
+      systemConfigOrbPoint(scene, i, 0, &headX, &headY, &headDepth);
+    else
+      originalOrbPoint(i, now, centerX, centerY, radiusX, radiusY,
+                       &headX, &headY, &headDepth);
     float newerX = headX, newerY = headY;
     for (int segment = 1; segment <= 43; segment++) {
       const uint32_t age = (uint32_t)segment * 50U;
       const uint32_t sampleNow = age < elapsed ? now - age :
                                   originalClockAnchorMs;
       float olderX, olderY, olderDepth;
-      originalOrbPoint(i, sampleNow, centerX, centerY, radiusX, radiusY,
-                       &olderX, &olderY, &olderDepth);
+      if (scene)
+        systemConfigOrbPoint(scene, i, age, &olderX, &olderY, &olderDepth);
+      else
+        originalOrbPoint(i, sampleNow, centerX, centerY, radiusX, radiusY,
+                         &olderX, &olderY, &olderDepth);
       const float oldFade = segment < 43 ? 1.0f - segment / 43.0f : 0.0f;
       const float newFade = 1.0f - (segment - 1) / 43.0f;
       const int oldRed = (int)(tailRed * oldFade * oldFade * oldFade * oldFade);
@@ -1469,7 +1452,7 @@ static void drawOriginalOrbs(int centerX, int centerY, int radiusX,
     if ((forceBiosMasks || ambientOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL) &&
         originalMasksLoaded) {
       drawOriginalOrbSprite(headX, headY, size, trailZ + 1,
-                            red, green, blue, 1.0f);
+                            red, green, blue, 1.0f, scene == NULL);
     } else {
       drawOriginalOrbDisc(headX, headY, 30.0f * size, 15.0f * size,
                            trailZ + 1,
@@ -1496,7 +1479,7 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
   orbBackgroundColorsActive = formationMode == 0;
   if (formationMode != 2 && ambientOrbsTheme == ORBS_THEME_PS2_ORIGINAL) {
     drawOriginalOrbs(centerX, centerY, radiusX, radiusY,
-                     glassStartMs + elapsedMs, trailZ, 0);
+                     glassStartMs + elapsedMs, trailZ, 0, NULL);
     return;
   }
   OrbFormation *formation = orbFormationAt(formationMs, formationMode);
@@ -1719,7 +1702,7 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
         originalMasksLoaded) {
       const float originalSize = 1.0f / (1.0f + depth / 640.0f);
       drawOriginalOrbSprite(x, y, originalSize, trailZ + 1,
-                            0x30, 0x62, 0x80, opacity);
+                            0x30, 0x62, 0x80, opacity, 1);
     } else {
       drawOrbGlowDisc(x, y, haloRadius, trailZ + 1,
                       orbLightColor(0x70, 0xA8, 0xE8, haloAlpha,
@@ -1763,24 +1746,40 @@ void drawAmbientOrbsOrbit(int centerX, int centerY, int radiusX,
                    elapsedMs, elapsedMs, 1, 1, 100, trailZ, 0, 1);
 }
 
-void drawAmbientOrbsSystemConfig(int centerX, int centerY, int radiusX,
-                                 int radiusY, uint32_t now, int trailZ) {
+void drawAmbientOrbsSystemConfig(uint64_t clockMs, uint32_t now,
+                                 uint32_t elapsedMs, int trailZ) {
+  const uint32_t frame = (uint32_t)((uint64_t)elapsedMs * 60U / 1000U);
+  const int16_t tiltTarget = (int16_t)((clockMs % 43200000U) * 65536U / 43200000U);
+  const int16_t spinTarget = (int16_t)((clockMs % 60000U) * 65536U / 60000U);
   if (!systemConfigClockReady) {
-    const uint32_t stamp = getTimestamp();
-    const uint32_t hour = (stamp >> 12) & 31U;
-    const uint32_t minute = (stamp >> 6) & 63U;
-    const uint32_t second = stamp & 63U;
-    originalClockStartMs =
-        ((hour < 24 ? hour : 0) * 3600U +
-         (minute < 60 ? minute : 0) * 60U +
-         (second < 60 ? second : 0)) * 1000U;
-    originalClockAnchorMs = now;
-    originalScatterPhase = stamp & 0xFFFFU;
+    systemConfigRadius = 10.0f;
+    systemConfigTilt = tiltTarget;
+    systemConfigSpin = spinTarget;
+    systemConfigFrame = frame;
     systemConfigClockReady = 1;
   }
+  // UpdateOrbs / CarouselClock: minute-driven radius and signed angle easing.
+  // Bound catch-up after another background has been displayed for a while.
+  const uint32_t missed = frame - systemConfigFrame;
+  const uint32_t steps = missed < 120U ? missed : 120U;
+  const float radiusTarget = 10.0f + 7.25f *
+                             (clockMs % 3600000U) / 3600000.0f;
+  for (uint32_t i = 0; i < steps; i++) {
+    systemConfigRadius += (radiusTarget - systemConfigRadius) * 0.005f;
+    if (systemConfigSpin > -201 && systemConfigSpin < 201)
+      systemConfigTilt = tiltTarget;
+    else
+      systemConfigTilt = (int16_t)(systemConfigTilt +
+                                   (int16_t)(tiltTarget - systemConfigTilt) * 0.1f);
+    systemConfigSpin = (int16_t)(systemConfigSpin +
+                                 (int16_t)(spinTarget - systemConfigSpin) * 0.1f);
+  }
+  systemConfigFrame = frame;
+  const SystemConfigOrbScene scene = {
+      clockMs, elapsedMs, systemConfigRadius, systemConfigTilt, systemConfigSpin};
   const int oldBackgroundColors = orbBackgroundColorsActive;
   orbBackgroundColorsActive = 0;
-  drawOriginalOrbs(centerX, centerY, radiusX, radiusY, now, trailZ, 1);
+  drawOriginalOrbs(0, 0, 0, 0, now, trailZ, 1, &scene);
   orbBackgroundColorsActive = oldBackgroundColors;
 }
 

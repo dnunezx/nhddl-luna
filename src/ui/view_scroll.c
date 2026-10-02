@@ -2,6 +2,7 @@
 #include "ui/view_internal.h"
 #include "ui/view_scroll.h"
 #include "ui/ambient_orbs.h"
+#include "ui/ps2_menu_scene.h"
 #include "options.h"
 #include "dprintf.h"
 #include <gsInline.h>
@@ -32,7 +33,8 @@ static GSTEXTURE configFlowTexture;
 static GSTEXTURE configRefTexture;
 static u32 configInversePixels[64 * 64] __attribute__((aligned(128)));
 static GSTEXTURE configInverseTexture;
-static GSTEXTURE configCaptureTexture;
+static GSTEXTURE configWorkTexture[2];
+static u32 configWorkZ;
 static int configCaptureReady;
 static float configRodVerts[16][4][4];
 static float configRodNormals[16][4];
@@ -45,29 +47,53 @@ static int biosConfigGeometryLoaded;
 static int configClockInitialized;
 static uint32_t configClockAnchorMs;
 static uint32_t configClockStartMs;
+static float configFrontSplit;
+static int configSplitHour = -1;
+static uint32_t configSplitFrame;
 static int openingCaptureReady;
 
 #define OPENING_CAPTURE_SIZE 128
-#define CONFIG_CAPTURE_SIZE 256
+#define CONFIG_WORK_SIZE 256
 
 void initOpeningCubeCapture(void) {
   // A library refresh creates a new GS context; ROM textures must be rebound.
   biosFogTextureLoaded = biosCubeTextureLoaded = 0;
   biosOpeningCubeTexturesLoaded = biosConfigTexturesLoaded = 0;
   configCaptureReady = configClockInitialized = 0;
+  configFrontSplit = 0.0f;
+  configSplitHour = -1;
+  configSplitFrame = 0;
   memset(&openingCaptureTexture, 0, sizeof(openingCaptureTexture));
   memset(&openingWorkTexture, 0, sizeof(openingWorkTexture));
+  memset(configWorkTexture, 0, sizeof(configWorkTexture));
   openingCaptureReady = 0;
-  const u32 bufferSize = gsKit_texture_size(OPENING_CAPTURE_SIZE,
-                                           OPENING_CAPTURE_SIZE, GS_PSM_CT24);
-  u32 captureVram = gsKit_vram_alloc(gsGlobal, bufferSize,
+  // The scenes are mutually exclusive. Share two work buffers with the
+  // opening cube, reserving them BEFORE the texture manager starts. Full
+  // screen wb3/wb4 do not fit beside LUNA's two framebuffers, Z and artwork
+  // in 4 MB, so resample the whole backdrop into two small CT32 pages.
+  // PAL needs 256x128 to retain room for the 256x256 font and artwork;
+  // NTSC/480p can use 256x256. Both axes stay powers of two for REPEAT.
+  // CT32 preserves bloom alpha; a separate small Z buffer keeps scaled
+  // work passes from overwriting the screen's differently pitched depth.
+  const int workHeight = gsGlobal->Mode == GS_MODE_PAL ? 128 : CONFIG_WORK_SIZE;
+  const u32 workSize = gsKit_texture_size(CONFIG_WORK_SIZE, workHeight, GS_PSM_CT32);
+  const u32 zSize = gsKit_texture_size(CONFIG_WORK_SIZE, workHeight, GS_PSM_CT16S);
+  u32 captureVram = gsKit_vram_alloc(gsGlobal, workSize * 2 + zSize,
                                     GSKIT_ALLOC_SYSBUFFER);
-  u32 workVram = gsKit_vram_alloc(gsGlobal, bufferSize,
-                                 GSKIT_ALLOC_SYSBUFFER);
-  if (captureVram == GSKIT_ALLOC_ERROR || workVram == GSKIT_ALLOC_ERROR) {
-    DPRINTF("LUNA: no VRAM for opening cube work buffers\n");
+  if (captureVram == GSKIT_ALLOC_ERROR) {
+    DPRINTF("LUNA: no VRAM for opening cube or System Configuration capture\n");
     return;
   }
+  for (int i = 0; i < 2; i++) {
+    configWorkTexture[i].Width = CONFIG_WORK_SIZE;
+    configWorkTexture[i].Height = workHeight;
+    configWorkTexture[i].PSM = GS_PSM_CT32;
+    configWorkTexture[i].TBW = CONFIG_WORK_SIZE / 64;
+    configWorkTexture[i].Vram = captureVram + i * workSize;
+    configWorkTexture[i].Filter = GS_FILTER_LINEAR;
+  }
+  configWorkZ = captureVram + workSize * 2;
+  configCaptureReady = 1;
   openingCaptureTexture.Width = OPENING_CAPTURE_SIZE;
   openingCaptureTexture.Height = OPENING_CAPTURE_SIZE;
   openingCaptureTexture.PSM = GS_PSM_CT24;
@@ -75,7 +101,7 @@ void initOpeningCubeCapture(void) {
   openingCaptureTexture.Vram = captureVram;
   openingCaptureTexture.Filter = GS_FILTER_LINEAR;
   openingWorkTexture = openingCaptureTexture;
-  openingWorkTexture.Vram = workVram;
+  openingWorkTexture.Vram = configWorkTexture[1].Vram;
   openingCaptureReady = 1;
 }
 
@@ -363,26 +389,6 @@ static int loadBiosConfigGeometry(void) {
   return 0;
 }
 
-static void initConfigRodCapture(void) {
-  if (configCaptureReady)
-    return;
-  const u32 bytes = gsKit_texture_size(CONFIG_CAPTURE_SIZE,
-                                       CONFIG_CAPTURE_SIZE, GS_PSM_CT24);
-  const u32 vram = gsKit_vram_alloc(gsGlobal, bytes, GSKIT_ALLOC_SYSBUFFER);
-  if (vram == GSKIT_ALLOC_ERROR) {
-    DPRINTF("LUNA: no VRAM for System Configuration refraction\n");
-    return;
-  }
-  memset(&configCaptureTexture, 0, sizeof(configCaptureTexture));
-  configCaptureTexture.Width = CONFIG_CAPTURE_SIZE;
-  configCaptureTexture.Height = CONFIG_CAPTURE_SIZE;
-  configCaptureTexture.PSM = GS_PSM_CT24;
-  configCaptureTexture.TBW = CONFIG_CAPTURE_SIZE / 64;
-  configCaptureTexture.Vram = vram;
-  configCaptureTexture.Filter = GS_FILTER_LINEAR;
-  configCaptureReady = 1;
-}
-
 // The opening cube is built from these three ROM textures in osdbits/opening.c.
 // Keep them in the BIOS at runtime; no Sony texture data is stored in LUNA.
 static int loadBiosOpeningCubeTextures(void) {
@@ -440,11 +446,9 @@ int setLibraryBackground(LibraryBackground background) {
   if (background == LIBRARY_BACKGROUND_MIDNIGHT_CUBES && loadBiosCubeTexture())
     return -1;
   if (background == LIBRARY_BACKGROUND_SYSTEM_CONFIG &&
-      (loadBiosConfigTextures() || loadBiosConfigGeometry() ||
+      (!configCaptureReady || loadBiosConfigTextures() || loadBiosConfigGeometry() ||
        loadAmbientOrbsSystemConfigAssets()))
     return -1;
-  if (background == LIBRARY_BACKGROUND_SYSTEM_CONFIG)
-    initConfigRodCapture();
   libraryBackground = background >= LIBRARY_BACKGROUND_STARS &&
                       background < LIBRARY_BACKGROUND_COUNT ?
                       background : LIBRARY_BACKGROUND_STARS;
@@ -1294,17 +1298,10 @@ static void configTransform(float *x, float *y, float *z,
   b = b * rotation->orbitC - d * rotation->orbitS;
   d = a * rotation->tiltC - e * rotation->tiltS;
   e = a * rotation->tiltS + e * rotation->tiltC;
-  // Inverse of the ROM's camera yaw 0.145 and pitch 0.031, with its
-  // camera at (10.436, 0, -103). Normals omit the camera translation.
-  a = d * 0.989506f - b * 0.144492f;
-  b = d * 0.144492f + b * 0.989506f;
-  if (!normal) {
-    a -= 10.436f;
-    b += 103.0f;
-  }
-  *x = a;
-  *y = e * 0.999520f + b * 0.030995f;
-  *z = b * 0.999520f - e * 0.030995f;
+  *x = d;
+  *y = e;
+  *z = b;
+  ps2MenuCamera(x, y, z, normal);
 }
 
 static float configRodDepth(int slot, uint32_t tilt, uint32_t orbit,
@@ -1363,150 +1360,394 @@ static void drawBiosTunnel(uint32_t elapsedMs, int centerX, int centerY) {
   }
 }
 
-static void drawBiosRod(int slot, uint32_t tilt, uint32_t orbit,
-                        uint32_t spin, int front) {
-  const uint32_t slotAngle = slot * (65536U / 12U) - 32768U;
+// Port of osdbits/menuconfig.c's rod passes (0x22D920 / 0x22E428).
+// Geometry stays in the running BIOS; these are only transforms and GS packets.
+// Screen positions remain native-resolution; work-target positions and sampled
+// screen UVs are scaled together into our shared power-of-two pages.
+typedef struct {
+  ConfigRodFace face[2][16];
+  int pieces, index;
+  float refX, refY, split;
+} ConfigRodScene;
+
+static ConfigRodScene configRodScene[12];
+static int configRenderTarget = -1;
+
+static u64 *configPacket(int count) {
+  u64 *packet = gsKit_heap_alloc(gsGlobal, count, count * 16, GIF_AD);
+  packet[0] = GIF_TAG_AD(count);
+  packet[1] = GIF_AD;
+  return packet + 2;
+}
+
+static u32 configFloatBits(float value) {
+  u32 bits;
+  memcpy(&bits, &value, sizeof(bits));
+  return bits;
+}
+
+static void configSetTarget(int work) {
+  configRenderTarget = work;
+  const int width = work < 0 ? gsGlobal->Width : CONFIG_WORK_SIZE;
+  const int height = work < 0 ? gsGlobal->Height : configWorkTexture[work].Height;
+  const u32 vram = work < 0 ? gsGlobal->ScreenBuffer[gsGlobal->ActiveBuffer] :
+                              configWorkTexture[work].Vram;
+  const u32 zram = work < 0 ? gsGlobal->ZBuffer : configWorkZ;
+  u64 *p = configPacket(4);
+  p[0] = GS_SETREG_FRAME(vram / 8192, width / 64,
+                         work < 0 ? gsGlobal->PSM : GS_PSM_CT32, 0);
+  p[1] = gsGlobal->PrimContext ? GS_FRAME_2 : GS_FRAME_1;
+  p[2] = GS_SETREG_ZBUF(zram / 8192, gsGlobal->PSMZ & 15, 0);
+  p[3] = gsGlobal->PrimContext ? GS_ZBUF_2 : GS_ZBUF_1;
+  p[4] = GS_SETREG_SCISSOR(0, width - 1, 0, height - 1);
+  p[5] = gsGlobal->PrimContext ? GS_SCISSOR_2 : GS_SCISSOR_1;
+  p[6] = 0;
+  p[7] = GS_TEXFLUSH;
+}
+
+static void configSetTest(int gequal) {
+  u64 *p = configPacket(1);
+  // Alpha zero is meaningful in work buffers: disable LUNA's UI alpha test.
+  p[0] = GS_SETREG_TEST(0, 0, 0, 0, 0, 0, 1, gequal ? 2 : 1);
+  p[1] = gsGlobal->PrimContext ? GS_TEST_2 : GS_TEST_1;
+}
+
+static void configBindTexture(GSTEXTURE *texture, int repeat, int resident) {
+  if (!resident)
+    gsKit_TexManager_bind(gsGlobal, texture);
+  int tw = 0, th = 0;
+  while ((1 << tw) < texture->Width) tw++;
+  while ((1 << th) < texture->Height) th++;
+  u64 *p = configPacket(4);
+  p[0] = 0;
+  p[1] = GS_TEXFLUSH;
+  p[2] = GS_SETREG_TEX0(texture->Vram / 256, texture->TBW, texture->PSM,
+                        tw, th, 1, 0, 0, 0, 0, 0, 0);
+  p[3] = gsGlobal->PrimContext ? GS_TEX0_2 : GS_TEX0_1;
+  p[4] = GS_SETREG_TEX1(1, 0, 1, 1, 0, 0, 0);
+  p[5] = gsGlobal->PrimContext ? GS_TEX1_2 : GS_TEX1_1;
+  p[6] = GS_SETREG_CLAMP(repeat ? 0 : 1, repeat ? 0 : 1, 0, 0, 0, 0);
+  p[7] = gsGlobal->PrimContext ? GS_CLAMP_2 : GS_CLAMP_1;
+}
+
+static void configBlitRect(GSTEXTURE *texture, u64 color, int blend,
+                           float width, float height,
+                           float sourceWidth, float sourceHeight) {
+  configBindTexture(texture, 0, 1);
+  u64 *p = configPacket(6);
+  p[0] = 6 | 16 | 256 | (blend ? 64 : 0) | (gsGlobal->PrimContext << 9);
+  p[1] = GS_PRIM;
+  p[2] = color;
+  p[3] = GS_RGBAQ;
+  p[4] = GS_SETREG_UV(8, 8);
+  p[5] = GS_UV;
+  p[6] = GS_SETREG_XYZ2(gsKit_float_to_int_x(gsGlobal, 0),
+                        gsKit_float_to_int_y(gsGlobal, 0), 0);
+  p[7] = GS_XYZ2;
+  p[8] = GS_SETREG_UV((int)(sourceWidth * 16.0f) + 8,
+                       (int)(sourceHeight * 16.0f) + 8);
+  p[9] = GS_UV;
+  p[10] = GS_SETREG_XYZ2(gsKit_float_to_int_x(gsGlobal, width),
+                         gsKit_float_to_int_y(gsGlobal, height), 0);
+  p[11] = GS_XYZ2;
+}
+
+static void configBlit(GSTEXTURE *texture, u64 color, int blend) {
+  const int width = configRenderTarget < 0 ? gsGlobal->Width : CONFIG_WORK_SIZE;
+  const int height = configRenderTarget < 0 ? gsGlobal->Height :
+                      configWorkTexture[configRenderTarget].Height;
+  configBlitRect(texture, color, blend, width, height, texture->Width, texture->Height);
+}
+
+// MenuZoomBlur -> 0x22C3C0(5): AFTER the 3D scene and bloom, BEFORE UI.
+// Bilinear, opaque round trips through wb4, with progressively different
+// fractional sampling grids. Adapt retail's 319.25x149.25 working rect to
+// our smaller reserved page; do not allocate VRAM or blur library artwork.
+static void configZoomBlur(GSTEXTURE *screen) {
+  const u64 white = GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80);
+  configSetTest(0);
+  for (int pass = 0; pass < 5; pass++) {
+    const float width = (319.25f - pass * 2.0f) * CONFIG_WORK_SIZE / 320.0f;
+    const float height = (149.25f - pass) * configWorkTexture[1].Height / 150.0f;
+    configSetTarget(1);
+    configBlitRect(screen, white, 0, width, height,
+                    gsGlobal->Width, gsGlobal->Height - 1.0f);
+    configSetTarget(-1);
+    configBlitRect(&configWorkTexture[1], white, 0,
+                    gsGlobal->Width, gsGlobal->Height - 1.0f, width, height);
+  }
+}
+
+static void configClearWork(void) {
+  const int alpha = gsGlobal->PrimAlphaEnable;
+  gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
+  gsKit_prim_sprite(gsGlobal, 0, 0, CONFIG_WORK_SIZE, configWorkTexture[0].Height, 0,
+                    GS_SETREG_RGBA(0, 0, 0, 0x80));
+  gsGlobal->PrimAlphaEnable = alpha;
+}
+
+static void configEmitVertex(u64 *p, const ConfigRodVertex *v) {
+  const float sx = configRenderTarget < 0 ? 1.0f :
+                    CONFIG_WORK_SIZE / (float)gsGlobal->Width;
+  const float sy = configRenderTarget < 0 ? 1.0f :
+                    configWorkTexture[0].Height / (float)gsGlobal->Height;
+  // LUNA uses Z16S rather than retail's Z32. Preserve reversed-depth
+  // ordering (near >= far) in its 16-bit range for GEQUAL and emboss.
+  const u32 depth = (u32)(65535.0f / v->z);
+  p[0] = GS_SETREG_XYZF2(gsKit_float_to_int_x(gsGlobal, v->x * sx),
+                         gsKit_float_to_int_y(gsGlobal, v->y * sy), depth, 0);
+  p[1] = GS_XYZF2;
+}
+
+static void configBuildRod(ConfigRodScene *scene, int slot, int index,
+                            uint32_t tilt, uint32_t orbit, uint32_t spin,
+                            float split) {
+  const uint32_t slotAngle = (slot * 65536U) / 12U - 32768U;
   const ConfigRodRotation rotation = {
       configSin(slotAngle), configCos(slotAngle),
       configSin(orbit), configCos(orbit),
       configSin(tilt), configCos(tilt),
       configSin(spin), configCos(spin)};
-  ConfigRodFace face[16];
-  float minX = 10000.0f, minY = 10000.0f;
-  float maxX = -10000.0f, maxY = -10000.0f;
-  const int centerX = gsGlobal->Width / 2;
-  const int centerY = gsGlobal->Height / 2;
-  for (int i = 0; i < 16; i++) {
-    ConfigRodFace *f = &face[i];
-    f->normalX = configRodNormals[i][0];
-    f->normalY = configRodNormals[i][1];
-    f->normalZ = configRodNormals[i][2];
-    configTransform(&f->normalX, &f->normalY, &f->normalZ,
-                    &rotation, 1);
-    for (int j = 0; j < 4; j++) {
-      ConfigRodVertex *v = &f->vertex[j];
-      float x = configRodVerts[i][j][0];
-      float y = configRodVerts[i][j][1];
-      float z = configRodVerts[i][j][2];
-      configTransform(&x, &y, &z, &rotation, 0);
-      if (z < 10.0f)
-        z = 10.0f;
-      v->cameraX = x;
-      v->cameraY = y;
-      v->z = z;
-      v->x = centerX + x * 512.0f / z;
-      v->y = centerY - y * 512.0f * gsGlobal->Height / (480.0f * z);
-      v->u = configRodUvs[i][j][0];
-      v->v = configRodUvs[i][j][1];
-      if (v->x < minX) minX = v->x;
-      if (v->x > maxX) maxX = v->x;
-      if (v->y < minY) minY = v->y;
-      if (v->y > maxY) maxY = v->y;
-    }
-    const float e2x = f->vertex[2].x - f->vertex[0].x;
-    const float e2y = f->vertex[2].y - f->vertex[0].y;
-    const float e1x = f->vertex[1].x - f->vertex[0].x;
-    const float e1y = f->vertex[1].y - f->vertex[0].y;
-    f->nearFace = e2x * e1y - e2y * e1x <= 0.0f;
-    const ConfigRodVertex *v = &f->vertex[0];
-    const float length = sqrtf(v->cameraX * v->cameraX +
-                               v->cameraY * v->cameraY + v->z * v->z);
-    const float dot = (v->cameraX * f->normalX +
-                       v->cameraY * f->normalY + v->z * f->normalZ) / length;
-    f->fresnel = 1.0f - fabsf(dot);
-    if (f->fresnel < 0.0f) f->fresnel = 0.0f;
-    if (f->fresnel > 1.0f) f->fresnel = 1.0f;
-  }
-  int left = (int)((minX + maxX) * 0.5f) - CONFIG_CAPTURE_SIZE / 2;
-  int top = (int)((minY + maxY) * 0.5f) - CONFIG_CAPTURE_SIZE / 2;
-  if (left < 0) left = 0;
-  if (top < 0) top = 0;
-  if (left > gsGlobal->Width - CONFIG_CAPTURE_SIZE)
-    left = gsGlobal->Width - CONFIG_CAPTURE_SIZE;
-  if (top > gsGlobal->Height - CONFIG_CAPTURE_SIZE)
-    top = gsGlobal->Height - CONFIG_CAPTURE_SIZE;
-  if (configCaptureReady)
-    copyCapturePixels(gsGlobal->ScreenBuffer[gsGlobal->ActiveBuffer],
-                      gsGlobal->Width, left, top,
-                      configCaptureTexture.Vram, CONFIG_CAPTURE_SIZE);
-  for (int layer = 0; layer < 2; layer++) {
+  scene->pieces = split > 0.0f ? 2 : 1;
+  scene->index = index;
+  scene->split = split;
+  float ox = 0, oy = 0, oz = 0;
+  configTransform(&ox, &oy, &oz, &rotation, 0);
+  ps2MenuProject(ox, oy, oz, gsGlobal->Width, gsGlobal->Height,
+                  &scene->refX, &scene->refY);
+  scene->refX = (scene->refX - gsGlobal->Width * 0.5f) * 0.9f;
+  scene->refY = (scene->refY - gsGlobal->Height * 0.5f) * 0.9f;
+  for (int piece = 0; piece < scene->pieces; piece++) {
+    const float scale = scene->pieces == 1 ? 1.0f :
+                         piece == 0 ? split : 1.0f - split;
+    const float offset = piece ? 26.0f * split : 0.0f;
     for (int i = 0; i < 16; i++) {
-      ConfigRodFace *f = &face[i];
-      if (f->nearFace != layer)
-        continue;
-      const float fres = f->fresnel;
-      const int bright = (int)((front ? 200.0f : 160.0f) * 10.0f *
-                               fres * fres * fres * fres);
-      const int red = clampColor((front ? 0x76 : 0x2D) + bright);
-      const int green = clampColor((front ? 0x97 : 0x55) + bright);
-      const int blue = clampColor((front ? 0xB2 : 0x66) + bright);
-      gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
-      if (configCaptureReady) {
-        float u[4], v[4];
-        for (int j = 0; j < 4; j++) {
-          const ConfigRodVertex *p = &f->vertex[j];
-          u[j] = openingCubeUv(p->x - left - f->normalX * 1000.0f / p->z,
-                                CONFIG_CAPTURE_SIZE);
-          v[j] = openingCubeUv(p->y - top + f->normalY * 500.0f / p->z,
-                                CONFIG_CAPTURE_SIZE);
-        }
-        gsKit_TexManager_bind(gsGlobal, &configCaptureTexture);
-        gsKit_prim_quad_texture(gsGlobal, &configCaptureTexture,
-                                f->vertex[0].x, f->vertex[0].y, u[0], v[0],
-                                f->vertex[1].x, f->vertex[1].y, u[1], v[1],
-                                f->vertex[2].x, f->vertex[2].y, u[2], v[2],
-                                f->vertex[3].x, f->vertex[3].y, u[3], v[3], 0,
-                                GS_SETREG_RGBA(red, green, blue,
-                                               layer ? 0x58 : 0x2A));
-      } else {
-        gsKit_prim_quad_gouraud(gsGlobal,
-                                f->vertex[0].x, f->vertex[0].y,
-                                f->vertex[1].x, f->vertex[1].y,
-                                f->vertex[2].x, f->vertex[2].y,
-                                f->vertex[3].x, f->vertex[3].y, 0,
-                                GS_SETREG_RGBA(red, green, blue, 0x28),
-                                GS_SETREG_RGBA(red, green, blue, 0x28),
-                                GS_SETREG_RGBA(red, green, blue, 0x28),
-                                GS_SETREG_RGBA(red, green, blue, 0x28));
-      }
-      if (!layer)
-        continue;
-      float ru[4], rv[4], bu[4], bv[4];
+      ConfigRodFace *f = &scene->face[piece][i];
+      f->normalX = configRodNormals[i][0];
+      f->normalY = configRodNormals[i][1];
+      f->normalZ = configRodNormals[i][2];
+      configTransform(&f->normalX, &f->normalY, &f->normalZ, &rotation, 1);
       for (int j = 0; j < 4; j++) {
-        const ConfigRodVertex *p = &f->vertex[j];
-        const float length = sqrtf(p->cameraX * p->cameraX +
-                                   p->cameraY * p->cameraY + p->z * p->z);
-        const float dot = fabsf(2.0f *
-            (p->cameraX * f->normalX + p->cameraY * f->normalY +
-             p->z * f->normalZ) / length);
-        ru[j] = configWrapUv(((p->cameraX / length +
-                               f->normalX * dot) + 1.0f) * 32.0f);
-        rv[j] = configWrapUv(((p->cameraY / length +
-                               f->normalY * dot) + 1.0f) * 16.0f);
-        bu[j] = configWrapUv((p->u + slot * 0.1f + i * 0.1f) * 64.0f);
-        bv[j] = configWrapUv((p->v + slot * 0.1f + i * 0.1f) * 64.0f);
+        ConfigRodVertex *v = &f->vertex[j];
+        float x = configRodVerts[i][j][0];
+        float y = configRodVerts[i][j][1] * scale + offset;
+        float z = configRodVerts[i][j][2];
+        configTransform(&x, &y, &z, &rotation, 0);
+        if (z < 10.0f) z = 10.0f;
+        v->cameraX = x;
+        v->cameraY = y;
+        v->z = z;
+        ps2MenuProject(x, y, z, gsGlobal->Width, gsGlobal->Height, &v->x, &v->y);
+        v->u = configRodUvs[i][j][0];
+        v->v = configRodUvs[i][j][1] * scale;
       }
-      GSTEXTURE *const texture[4] = {&configRefTexture, &bumpTexture,
-                                     &configInverseTexture, &configFlowTexture};
-      for (int pass = 0; pass < 4; pass++) {
-        gsKit_TexManager_bind(gsGlobal, texture[pass]);
-        gsKit_set_primalpha(gsGlobal, pass == 1 ?
-                            GS_SETREG_ALPHA(2, 0, 0, 1, 0) :
-                            GS_SETREG_ALPHA(0, 2, 0, 1, 0), 0);
-        const float *u = pass == 1 || pass == 2 ? bu : ru;
-        const float *v = pass == 1 || pass == 2 ? bv : rv;
-        gsKit_prim_quad_texture(gsGlobal, texture[pass],
-                                f->vertex[0].x, f->vertex[0].y, u[0], v[0],
-                                f->vertex[1].x, f->vertex[1].y, u[1], v[1],
-                                f->vertex[2].x, f->vertex[2].y, u[2], v[2],
-                                f->vertex[3].x, f->vertex[3].y, u[3], v[3], 0,
-                                GS_SETREG_RGBA(pass == 1 || pass == 2 ? 0x28 : 0x6A,
-                                               pass == 1 || pass == 2 ? 0x28 : 0x9A,
-                                               pass == 1 || pass == 2 ? 0x28 : 0xC2,
-                                               pass == 1 || pass == 2 ? 0x10 : 0x1B));
+      const float e2x = f->vertex[2].x - f->vertex[0].x;
+      const float e2y = f->vertex[2].y - f->vertex[0].y;
+      const float e1x = f->vertex[1].x - f->vertex[0].x;
+      const float e1y = f->vertex[1].y - f->vertex[0].y;
+      // osdbits projects +camera Y down; LUNA projects it up. That
+      // reflection reverses winding, so its cull!=0 NEAR set is >=0 here.
+      f->nearFace = e2x * e1y - e2y * e1x >= 0.0f;
+      const ConfigRodVertex *v = &f->vertex[0];
+      const float length = sqrtf(v->cameraX * v->cameraX +
+                                 v->cameraY * v->cameraY + v->z * v->z);
+      f->fresnel = 1.0f - fabsf((v->cameraX * f->normalX +
+                       v->cameraY * f->normalY + v->z * f->normalZ) / length);
+      if (f->fresnel < 0.0f) f->fresnel = 0.0f;
+      if (f->fresnel > 1.0f) f->fresnel = 1.0f;
+    }
+  }
+}
+
+static int configRodFaceSelected(const ConfigRodScene *scene, int piece,
+                                 int face, int near) {
+  // Split meshes omit caps at the cut, exactly MESH_LOWER / MESH_UPPER.
+  if (scene->pieces == 2 && (piece ? face == 8 || face == 9 : face < 8))
+    return 0;
+  return scene->face[piece][face].nearFace == near;
+}
+
+static void configRefractRod(const ConfigRodScene *scene, int near, int extra,
+                              int front) {
+  for (int piece = 0; piece < scene->pieces; piece++) {
+    const int lower = scene->pieces == 2 && piece == 0;
+    const int red = lower ? 167 : front ? (0x2D + 167) / 2 : 0x2D;
+    const int green = lower ? 217 : front ? (0x55 + 217) / 2 : 0x55;
+    const int blue = lower ? 255 : front ? (0x66 + 255) / 2 : 0x66;
+    const float size = lower ? 100.0f : front ? 200.0f : 160.0f;
+    for (int i = 0; i < 16; i++) {
+      if (!configRodFaceSelected(scene, piece, i, near)) continue;
+      const ConfigRodFace *f = &scene->face[piece][i];
+      const float fres = f->fresnel;
+      float bright = size * 10.0f * fres * fres * fres * fres;
+      // 0x22C4E0's cosine rolloff prevents fully edge-on faces flashing.
+      if (fres > 0.9f)
+        bright = (int)bright * (1.0f - cosf((1.0f - fres) *
+                                           3.14159265359f / 0.1f)) * 0.5f;
+      u64 *p = configPacket(10);
+      p[0] = 276 | (fres > 0.99f ? 0 : 128) | (gsGlobal->PrimContext << 9);
+      p[1] = GS_PRIM;
+      p[2] = GS_SETREG_RGBA(clampColor(red + (int)bright + extra),
+                            clampColor(green + (int)bright + extra),
+                            clampColor(blue + (int)bright + extra), 0x80);
+      p[3] = GS_RGBAQ;
+      for (int j = 0; j < 4; j++) {
+        const ConfigRodVertex *v = &f->vertex[j];
+        float u = (v->x - gsGlobal->Width * 0.5f - scene->refX) * 0.95f +
+                   scene->refX + gsGlobal->Width * 0.5f -
+                   f->normalX * 1000.0f / v->z;
+        float t = (v->y - gsGlobal->Height * 0.5f - scene->refY) * 0.95f +
+                   scene->refY + gsGlobal->Height * 0.5f +
+                   f->normalY * 500.0f / v->z;
+        if (u < 0.0f) u = 0.0f;
+        // Continuous UVs; hardware REPEAT, never modulo each vertex.
+        u *= CONFIG_WORK_SIZE / (float)gsGlobal->Width;
+        // Retail adds +256 before packing V. Keep an equivalent whole-
+        // texture-period bias AFTER resampling: a negative V must not
+        // become ~1024 at one vertex and stretch interpolation across the
+        // 14-bit UV-register boundary. REPEAT removes this bias per pixel.
+        t = t * configWorkTexture[0].Height / (float)gsGlobal->Height +
+             configWorkTexture[0].Height;
+        p[4 + j * 4] = GS_SETREG_UV(((int)(u * 16.0f)) & 0x3fff,
+                                    ((int)(t * 16.0f)) & 0x3fff);
+        p[5 + j * 4] = GS_UV;
+        configEmitVertex(p + 6 + j * 4, v);
       }
     }
   }
+}
+
+static void configEmbossRod(const ConfigRodScene *scene, int near,
+                             float offset, int strength) {
+  for (int piece = 0; piece < scene->pieces; piece++) {
+    const float tofs = piece ? 2.0f * scene->split : 0.0f;
+    for (int i = 0; i < 16; i++) {
+      if (!configRodFaceSelected(scene, piece, i, near)) continue;
+      const ConfigRodFace *f = &scene->face[piece][i];
+      const float phase = scene->index * 0.1f + i * 0.1f + offset;
+      u64 *p = configPacket(13);
+      p[0] = 84 | (gsGlobal->PrimContext << 9); // ST/Q, ABE on.
+      p[1] = GS_PRIM;
+      for (int j = 0; j < 4; j++) {
+        const ConfigRodVertex *v = &f->vertex[j];
+        const float q = 1.0f / v->z;
+        const float s = (v->u + phase) * q;
+        const float t = (v->v + phase + tofs) * q;
+        p[2 + j * 6] = GS_SETREG_STQ(configFloatBits(s), configFloatBits(t));
+        p[3 + j * 6] = GS_ST;
+        p[4 + j * 6] = GS_SETREG_RGBAQ(strength, strength, strength, 0x80,
+                                      configFloatBits(q));
+        p[5 + j * 6] = GS_RGBAQ;
+        configEmitVertex(p + 6 + j * 6, v);
+      }
+    }
+  }
+}
+
+static void configReflectRod(const ConfigRodScene *scene, int front) {
+  const int color = scene->pieces == 2 || !front ? 0x3C : 0x80;
+  const int alpha = scene->pieces == 2 || !front ? 0x80 : 0x1E;
+  for (int piece = 0; piece < scene->pieces; piece++) {
+    for (int i = 0; i < 16; i++) {
+      if (!configRodFaceSelected(scene, piece, i, 1)) continue;
+      const ConfigRodFace *f = &scene->face[piece][i];
+      u64 *p = configPacket(10);
+      p[0] = 276 | (gsGlobal->PrimContext << 9); // TEXCFLOW, ABE/AA1 off.
+      p[1] = GS_PRIM;
+      p[2] = GS_SETREG_RGBA(color, color, color, alpha);
+      p[3] = GS_RGBAQ;
+      for (int j = 0; j < 4; j++) {
+        const ConfigRodVertex *v = &f->vertex[j];
+        const float length = sqrtf(v->cameraX * v->cameraX +
+                                   v->cameraY * v->cameraY + v->z * v->z);
+        const float dot = fabsf(2.0f * (v->cameraX * f->normalX +
+                                 v->cameraY * f->normalY + v->z * f->normalZ) / length);
+        // A whole TEXCFLOW period also keeps reflection UVs continuous if
+        // rounded transforms put an otherwise zero coordinate just below 0.
+        const float u = (v->cameraX / length + f->normalX * dot + 1.0f) * 32.0f + 64.0f;
+        const float t = (v->cameraY / length + f->normalY * dot + 1.0f) * 16.0f + 64.0f;
+        p[4 + j * 4] = GS_SETREG_UV(((int)(u * 16.0f)) & 0x3fff,
+                                    ((int)(t * 16.0f)) & 0x3fff);
+        p[5 + j * 4] = GS_UV;
+        configEmitVertex(p + 6 + j * 4, v);
+      }
+    }
+  }
+}
+
+static void drawBiosRod(const ConfigRodScene *scene, int front) {
+  // 1: far refraction wb3 -> wb4 (opaque except AA1 coverage).
+  configSetTarget(1);
+  configSetTest(0);
+  configBindTexture(&configWorkTexture[0], 1, 1);
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+  configRefractRod(scene, 0, 0, front);
+  // 2/3: same TEXCBUMP, subtract at phase then add at phase - 0.008.
+  configSetTest(1);
+  configBindTexture(&bumpTexture, 1, 0);
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(2, 0, 0, 1, 0), 0);
+  configEmbossRod(scene, 0, 0.0f, 8);
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 2, 0, 1, 0), 0);
+  configEmbossRod(scene, 0, -0.008f, 8);
+  // 4: near refraction wb4 -> screen. No masked work-buffer composite.
+  configSetTarget(-1);
+  configSetTest(1);
+  configBindTexture(&configWorkTexture[1], 1, 1);
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+  configRefractRod(scene, 1, 0, front);
+  // 5: near refraction wb4 -> wb3, washed out by extra = 255.
+  configSetTarget(0);
+  configRefractRod(scene, 1, 255, front);
+}
+
+static void configBloom(const int *order) {
+  // Deferred 0x2267E8: clear, render ALL rods, then composite, twice.
+  for (int walk = 0; walk < 2; walk++) {
+    configSetTarget(1);
+    configSetTest(0);
+    configClearWork();
+    for (int n = 0; n < 12; n++) {
+      const int slot = order[n];
+      const ConfigRodScene *scene = &configRodScene[slot];
+      configBindTexture(&configFlowTexture, 1, 0);
+      configReflectRod(scene, slot == 0);
+      // Split branch swaps BUMP/BINV relative to the plain branch.
+      const int inverse = scene->pieces == 2 ? walk != 0 : walk == 0;
+      configBindTexture(inverse ? &configInverseTexture : &bumpTexture, 1, 0);
+      gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(2, 0, 0, 1, 0), 0);
+      configEmbossRod(scene, 1, walk ? -0.008f : 0.0f, 0x28);
+    }
+    configSetTarget(-1);
+    gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 2, 0, 1, 0), 0);
+    configBlit(&configWorkTexture[1], GS_SETREG_RGBA(0x80, 0x80, 0x80, 30), 1);
+  }
+}
+
+static void configRestoreState(void) {
+  configSetTarget(-1);
+  configSetTest(0);
+  // Return a clean depth plane to LUNA's 2D UI without changing colour.
+  u64 *p = configPacket(1);
+  p[0] = GS_SETREG_FRAME(gsGlobal->ScreenBuffer[gsGlobal->ActiveBuffer] / 8192,
+                         gsGlobal->Width / 64, gsGlobal->PSM, 0xffffffffU);
+  p[1] = gsGlobal->PrimContext ? GS_FRAME_2 : GS_FRAME_1;
+  const int alpha = gsGlobal->PrimAlphaEnable;
+  gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
+  gsKit_prim_sprite(gsGlobal, 0, 0, gsGlobal->Width, gsGlobal->Height, 0, 0);
+  gsGlobal->PrimAlphaEnable = alpha;
+  configSetTarget(-1);
+  const GSTEST *test = gsGlobal->Test;
+  const GSCLAMP *clamp = gsGlobal->Clamp;
+  p = configPacket(3);
+  p[0] = GS_SETREG_TEST(test->ATE, test->ATST, test->AREF, test->AFAIL,
+                       test->DATE, test->DATM, test->ZTE, test->ZTST);
+  p[1] = gsGlobal->PrimContext ? GS_TEST_2 : GS_TEST_1;
+  p[2] = GS_SETREG_CLAMP(clamp->WMS, clamp->WMT, clamp->MINU, clamp->MAXU,
+                        clamp->MINV, clamp->MAXV);
+  p[3] = gsGlobal->PrimContext ? GS_CLAMP_2 : GS_CLAMP_1;
+  p[4] = GS_SETREG_ZBUF(gsGlobal->ZBuffer / 8192, gsGlobal->PSMZ & 15,
+                       !gsGlobal->ZBuffering);
+  p[5] = gsGlobal->PrimContext ? GS_ZBUF_2 : GS_ZBUF_1;
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
 }
 
@@ -1533,11 +1774,40 @@ static void drawBiosSystemConfiguration(uint32_t frameNowMs) {
   gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 0,
                     GS_SETREG_RGBA(0, 0, 0, 0x80));
   drawBiosTunnel(elapsedMs, width / 2, height / 2);
+  // MenuBackdrop (0x21D0A0): both pages capture the un-tinted wall ONCE,
+  // before objects, then wb3 is modulated back onto the visible screen.
+  GSTEXTURE screen = {0};
+  screen.Width = width;
+  screen.Height = height;
+  screen.PSM = gsGlobal->PSM;
+  screen.TBW = width / 64;
+  screen.Vram = gsGlobal->ScreenBuffer[gsGlobal->ActiveBuffer];
+  configSetTest(0);
+  for (int work = 0; work < 2; work++) {
+    configSetTarget(work);
+    configBlit(&screen, GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80), 0);
+  }
+  configSetTarget(-1);
+  configBlit(&configWorkTexture[0], GS_SETREG_RGBA(0x37, 0x28, 0x3C, 0x80), 0);
+  // Source CarouselClock/CarouselColors drive the front rod's split using
+  // 1 - minutes/60 (the overview prose differs; the implementation wins).
+  const uint32_t splitFrame = (uint32_t)((uint64_t)elapsedMs * 60U / 1000U);
+  if (configSplitHour != (int)hour) {
+    configFrontSplit = 0.0f;
+    configSplitHour = hour;
+    configSplitFrame = splitFrame;
+  }
+  const float splitMax = 1.0f - (clockMs % 3600000U) / 60000.0f / 60.0f;
+  configFrontSplit += (splitFrame - configSplitFrame) * 0.004f;
+  if (configFrontSplit > splitMax) configFrontSplit = splitMax;
+  configSplitFrame = splitFrame;
   int order[12];
   float depth[12];
   for (int i = 0; i < 12; i++) {
     order[i] = i;
     depth[i] = configRodDepth(i, tilt, orbit, spin);
+    configBuildRod(&configRodScene[i], i, (i + hour) % 12U,
+                    tilt, orbit, spin, i == 0 ? configFrontSplit : 0.0f);
   }
   for (int i = 0; i < 11; i++) {
     for (int j = i + 1; j < 12; j++) {
@@ -1549,10 +1819,15 @@ static void drawBiosSystemConfiguration(uint32_t frameNowMs) {
     }
   }
   for (int i = 0; i < 12; i++)
-    drawBiosRod(order[i], tilt, orbit, spin, order[i] == 0);
-  drawAmbientOrbsSystemConfig(width / 2, height / 2,
-                               width * 19 / 100, height * 24 / 100,
-                               frameNowMs, 2);
+    drawBiosRod(&configRodScene[order[i]], order[i] == 0);
+  configSetTarget(-1);
+  // The orb renderer owns its test/blend setup; start it from LUNA's state.
+  configRestoreState();
+  drawAmbientOrbsSystemConfig(clockMs, frameNowMs, elapsedMs, 2);
+  configSetTest(0);
+  configBloom(order);
+  configZoomBlur(&screen);
+  configRestoreState();
 }
 
 void drawSharedLibraryBackground(uint32_t frameNowMs) {

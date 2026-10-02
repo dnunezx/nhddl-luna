@@ -315,7 +315,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   int classicEntryListSlideActive = 0;
   uint32_t classicEntryListSlideStartMs = 0;
   int classicArtOverlap = 0;
-  int ambientEnabled = 1;
+  int ambientEnabled = 0;
   uint32_t enabledViews = UI_VIEW_DEFAULT_MASK;
   uint32_t classicArtDueMs = 0;
   LunaNavRepeatState classicRepeat = {0};
@@ -947,6 +947,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       int originalIndex = favoritesOnly && titles->total > 0
           ? lunaNavMarkedByRank(allFavoriteFlags, allTitles->total, selectedTitleIdx)
           : curTarget->idx;
+      DPRINTF("Library filter switch begin: view=%d favorites=%d total=%d\n",
+              view, favoritesOnly, titles->total);
       favoritesOnly = !favoritesOnly;
       titles = favoritesOnly ? favoriteTitles : allTitles;
       favoriteFlags = favoritesOnly ? visibleFavoriteFlags : allFavoriteFlags;
@@ -980,7 +982,11 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     restart_library_view:
       if (previousView == UI_VIEW_PSBBN && view != UI_VIEW_PSBBN)
         stopCollectionFarArtWorker(titles, selectedTitleIdx);
-      if (libraryListChanged)
+      // PSBBN and Orbit release their cache in the view cleanup below.
+      // Releasing it here as well tears down the same texture window twice
+      // when switching Collection between All and Favorites.
+      if (libraryListChanged && previousView != UI_VIEW_PSBBN &&
+          previousView != UI_VIEW_ORBIT)
         releasePSBBNCovers();
       entryView = (int)view;
       entryPending = view != UI_VIEW_CLASSIC;
@@ -1059,6 +1065,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       }
       if (saveLastLibraryView(curTarget, view))
         DPRINTF("WARN: Could not save selected library view\n");
+      if (libraryListChanged)
+        DPRINTF("Library filter switch done: view=%d favorites=%d total=%d\n",
+                view, favoritesOnly, titles->total);
     } else if ((quickAction == 1 || (view == UI_VIEW_CLASSIC && (input & PAD_SQUARE))) &&
                !favoriteButtonHeld && titles->total > 0) {
       int originalIndex = favoritesOnly

@@ -40,15 +40,16 @@ void setAmbientOrbsColor(AmbientOrbsColorPart part, AmbientOrbsColor color);
 // Returns 1 when the Ambient Orbs background was selected and drawn.
 int drawAmbientOrbsBackground(uint32_t now);
 
-// Orbit view cycles its centered cube, octahedron, orbit, and LUNA formations.
+// Orbit view cycles its centered cube, octahedron, and LUNA formations.
 void resetAmbientOrbsOrbit(uint32_t now);
 void drawAmbientOrbsOrbit(int centerX, int centerY, int radiusX,
                           int radiusY, uint32_t now, int trailZ);
 // The System Configuration scene always uses the BIOS orb masks and the
 // retail seven-orb clock motion, independent of LUNA's orb preferences.
 int loadAmbientOrbsSystemConfigAssets(void);
-void drawAmbientOrbsSystemConfig(int centerX, int centerY, int radiusX,
-                                 int radiusY, uint32_t now, int trailZ);
+// Shares the rod scene's clock, world origin and camera; no screen ellipse.
+void drawAmbientOrbsSystemConfig(uint64_t clockMs, uint32_t now,
+                                 uint32_t elapsedMs, int trailZ);
 
 // Boot splash alternates centered LUNA and rotating cube formations.
 // Its orb sprites use the bright LUNA appearance.

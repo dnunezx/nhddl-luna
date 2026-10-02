@@ -36,3 +36,6 @@ mkdir -p "$build_dir"
   -Itests/storage-stubs -Iinclude src/genres.c tests/test_genres.c \
   -o "$build_dir/test_genres"
 "$build_dir/test_genres"
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Iinclude \
+  tests/test_ps2_menu_scene.c -lm -o "$build_dir/test_ps2_menu_scene"
+"$build_dir/test_ps2_menu_scene"
