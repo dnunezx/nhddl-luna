@@ -34,6 +34,7 @@ set(SOURCES
     src/ui/handoff.c
     src/ui/ambient.c
   src/ui/navigation.c
+  src/ui/case_page.c
   src/ui/view_state.c
   src/ui/art_cache.c
   src/ui/collection_art.c

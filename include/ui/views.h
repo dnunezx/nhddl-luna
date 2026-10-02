@@ -22,6 +22,10 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers,
                int flowOffset, int randomActive, int entryProgress,
                uint32_t frameNowMs, const char *nextViewLabel);
 void resetCaseGrid(void);
+void beginCaseGridExit(uint32_t now);
+int caseGridExitFinished(uint32_t now);
+void setCaseGridPageDirection(int direction);
+int caseGridVisibleTitleIndex(void);
 void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs);
 
 #endif

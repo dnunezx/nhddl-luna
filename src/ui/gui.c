@@ -38,6 +38,7 @@
 #define LIBRARY_RETURN_FADE_MS 180
 #define CLASSIC_LIST_ENTRY_SLIDE_MS 360
 #define LIBRARY_VIEW_ENTRY_MS 320
+#define CASE_VIEW_HANDOFF_MS 180
 #define QUICK_MENU_SLIDE_MS 200
 
 void closeUI();
@@ -65,13 +66,13 @@ uint32_t uiNowMs(void) {
 }
 
 static int libraryViewEntryProgress(int entryView, UILibraryView view,
-                                    uint32_t startMs, uint32_t now) {
+                                    uint32_t startMs, uint32_t durationMs, uint32_t now) {
   if (entryView != (int)view)
     return 1000;
   uint32_t elapsed = now - startMs;
-  if (elapsed >= LIBRARY_VIEW_ENTRY_MS)
+  if (elapsed >= durationMs)
     return 1000;
-  return lunaNavEase((int)(elapsed * 1000U / LIBRARY_VIEW_ENTRY_MS));
+  return lunaNavEase((int)(elapsed * 1000U / durationMs));
 }
 
 static void drawLibraryFooter(int canLaunch) {
@@ -313,6 +314,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   int classicDisplayedDiscAvailable = 0;
   int classicEntryListSlideActive = 0;
   uint32_t classicEntryListSlideStartMs = 0;
+  uint32_t classicEntryListSlideDurationMs = CLASSIC_LIST_ENTRY_SLIDE_MS;
   int classicArtOverlap = 0;
   int ambientEnabled = 0;
   uint32_t enabledViews = UI_VIEW_DEFAULT_MASK;
@@ -324,6 +326,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   int entryView = -1;
   int entryPending = 0;
   uint32_t entryStartMs = 0;
+  uint32_t entryDurationMs = LIBRARY_VIEW_ENTRY_MS;
+  int caseViewSwitchPending = 0;
   Target *curTarget = titles->first;
 
   // Get last launched title and find it in the target list
@@ -437,10 +441,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   while (1) {
     gsKit_clear(gsGlobal, BGColor);
     gsKit_TexManager_nextFrame(gsGlobal);
-    // A decode may finish after 3D releases its slots. Drain the
-    // invalidated result even while another view is active.
-    if (view != UI_VIEW_3D)
-      serviceGridArt();
     const UILibraryView nextView = lunaNavNextView(view, enabledViews);
     const char *nextViewLabel = nextView == view ? "Only view" :
                                 lunaNavViewLabel(nextView);
@@ -619,11 +619,11 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                             flowOffset, psbbnOutgoingTitleIdx, favoritesOnly,
                             collectionScan.active,
                             entryPending ? -1 :
-                                libraryViewEntryProgress(entryView, view, entryStartMs, now),
+                                libraryViewEntryProgress(entryView, view, entryStartMs, entryDurationMs, now),
                             now, nextViewLabel);
       } else if (view == UI_VIEW_ORBIT)
         drawOrbit(titles, selectedTitleIdx, psbbnCoverTextures, flowOffset,
-                  orbitRandomActive, libraryViewEntryProgress(entryView, view, entryStartMs, now),
+                  orbitRandomActive, libraryViewEntryProgress(entryView, view, entryStartMs, entryDurationMs, now),
                   now, nextViewLabel);
       else {
         int visualFocus = orbsVisualCacheIndex(flowOffset);
@@ -639,7 +639,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
           entryPending = 0;
         }
         drawOrbsView(titles, selectedTitleIdx, flowOffset, visualFocus,
-                     scrollFast.active, libraryViewEntryProgress(entryView, view, entryStartMs, now),
+                     scrollFast.active, libraryViewEntryProgress(entryView, view, entryStartMs, entryDurationMs, now),
                      now, nextViewLabel);
       }
     } else {
@@ -649,11 +649,11 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       int listEntryProgress = 1000;
       if (classicEntryListSlideActive) {
         const uint32_t elapsed = frameNowMs - classicEntryListSlideStartMs;
-        if (elapsed >= CLASSIC_LIST_ENTRY_SLIDE_MS)
+        if (elapsed >= classicEntryListSlideDurationMs)
           classicEntryListSlideActive = 0;
         else
           listEntryProgress = lunaNavEase(
-              (int)(elapsed * 1000U / CLASSIC_LIST_ENTRY_SLIDE_MS));
+              (int)(elapsed * 1000U / classicEntryListSlideDurationMs));
       }
       drawTitleList(titles, selectedTitleIdx, maxTitlesPerPage,
                     (classicDisplayedCoverAvailable && !favoritesEmpty) ? coverTexture : NULL,
@@ -728,6 +728,18 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     // Keep rendering after options close, while ignoring the Triangle press
     // that closed them until the button is released.
     input = pollInput();
+    int transitionCircleHeld = (input & PAD_CIRCLE) != 0;
+    int finishCaseViewSwitch = caseViewSwitchPending && caseGridExitFinished(uiNowMs());
+    if (caseViewSwitchPending) {
+      // Render the outgoing shelf on the normal frame loop. Keep polling so
+      // a held Circle cannot immediately skip the destination view.
+      circleButtonHeld = transitionCircleHeld;
+      quickPreviousInput = input;
+      prevInput = 0;
+      if (!finishCaseViewSwitch)
+        continue;
+      input = 0;
+    }
     int quickAction = -1;
     int quickWasCaptured = quickMenu.captured;
     int quickWasOpen = quickMenu.open;
@@ -748,6 +760,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         selectedTitleIdx = orbitVisibleTitleIndex();
       else if (titles->total > 0 && view == UI_VIEW_ORBS && orbsVisualTitleIdx >= 0)
         selectedTitleIdx = orbsVisualTitleIdx;
+      else if (titles->total > 0 && view == UI_VIEW_3D && caseGridVisibleTitleIndex() >= 0)
+        selectedTitleIdx = caseGridVisibleTitleIndex();
       if (titles->total > 0)
         curTarget = getTargetByIdx(titles, selectedTitleIdx);
       psbbnAnimationTargetIdx = -1;
@@ -788,6 +802,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       input &= PAD_SELECT | PAD_CIRCLE | PAD_START;
     int circlePressed = (input & PAD_CIRCLE) && !circleButtonHeld;
     circleButtonHeld = (input & PAD_CIRCLE) != 0;
+    if (finishCaseViewSwitch)
+      circleButtonHeld = transitionCircleHeld;
     if (!circlePressed)
       input &= ~PAD_CIRCLE;
     if (optionsTriangleHeld) {
@@ -901,6 +917,13 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       prevInput = input;
     }
 
+    // Actions use the visible 3D shelf while another page is sweeping out.
+    if (titles->total > 0 && view == UI_VIEW_3D && caseGridVisibleTitleIndex() >= 0 &&
+        (input & (PAD_CROSS | PAD_TRIANGLE | PAD_CIRCLE | PAD_START | PAD_SELECT))) {
+      selectedTitleIdx = caseGridVisibleTitleIndex();
+      curTarget = getTargetByIdx(titles, selectedTitleIdx);
+    }
+
     // Actions use the logo at the fixed Orbs marker even when the next
     // queued selection has not finished gliding into place.
     if (titles->total > 0 && view == UI_VIEW_ORBS && orbsVisualTitleIdx >= 0 &&
@@ -966,8 +989,15 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       uiLaunchTitle(target, NULL);
       // Something went wrong, main loop must exit immediately
       return -1;
-    } else if (input & PAD_CIRCLE) {
+    } else if ((input & PAD_CIRCLE) || finishCaseViewSwitch) {
       wasCollectionFavorites = favoritesOnly;
+      if (!finishCaseViewSwitch && view == UI_VIEW_3D &&
+          lunaNavNextView(view, enabledViews) != view && titles->total > 0) {
+        beginCaseGridExit(uiNowMs());
+        caseViewSwitchPending = 1;
+        continue;
+      }
+      caseViewSwitchPending = 0;
       view = lunaNavNextView(view, enabledViews);
       if (view == previousView)
         continue;
@@ -981,12 +1011,16 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
           previousView != UI_VIEW_ORBIT)
         releasePSBBNCovers();
       entryView = (int)view;
+      entryDurationMs = previousView == UI_VIEW_3D && view != previousView
+          ? CASE_VIEW_HANDOFF_MS : LIBRARY_VIEW_ENTRY_MS;
       entryPending = view != UI_VIEW_CLASSIC;
       classicEntryFirstFramePending = view == UI_VIEW_CLASSIC &&
                                       previousView != UI_VIEW_CLASSIC;
       classicEntryListSlideActive = view == UI_VIEW_CLASSIC &&
                                     previousView != UI_VIEW_CLASSIC && titles->total > 0;
       classicEntryListSlideStartMs = uiNowMs();
+      classicEntryListSlideDurationMs = previousView == UI_VIEW_3D
+          ? CASE_VIEW_HANDOFF_MS : CLASSIC_LIST_ENTRY_SLIDE_MS;
       if (previousView == UI_VIEW_CLASSIC || libraryListChanged ||
           (view != UI_VIEW_CLASSIC && view != UI_VIEW_PSBBN && view != UI_VIEW_ORBIT)) {
         cancelClassicArt();
@@ -1022,8 +1056,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       } else if (previousView == UI_VIEW_ORBS) {
         releaseOrbsArt();
       } else if (previousView == UI_VIEW_3D) {
-        releaseGridCovers();
         setGridCaseArtwork(0);
+        releaseGridCovers();
       }
       if (view == UI_VIEW_3D)
         resetCaseGrid();
@@ -1102,6 +1136,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       }
       orbitRandomButtonHeld = 1;
     } else if (view == UI_VIEW_3D && (input & (PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN))) {
+      setCaseGridPageDirection((input & PAD_LEFT) ? -1 : (input & PAD_RIGHT) ? 1 :
+                               (input & PAD_UP) ? -1 : 1);
       if (input & PAD_LEFT)
         selectedTitleIdx = lunaNavWrap(titles->total, selectedTitleIdx - 1);
       else if (input & PAD_RIGHT)
@@ -1130,6 +1166,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     } else if (input & GRID_RIGHT_SHOULDERS) {
       // Switch to the next page.
       if (view == UI_VIEW_3D) {
+        setCaseGridPageDirection(1);
         selectedTitleIdx = lunaNavCaseGridPage(titles->total, selectedTitleIdx, 1);
       } else if (favoritesOnly) {
         int favoriteIdx = lunaNavMarkedPage(favoriteFlags, titles->total, selectedTitleIdx,
@@ -1146,6 +1183,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     } else if (input & GRID_LEFT_SHOULDERS) {
       // Switch to the previous page.
       if (view == UI_VIEW_3D) {
+        setCaseGridPageDirection(-1);
         selectedTitleIdx = lunaNavCaseGridPage(titles->total, selectedTitleIdx, -1);
       } else if (favoritesOnly) {
         int favoriteIdx = lunaNavMarkedPage(favoriteFlags, titles->total, selectedTitleIdx,

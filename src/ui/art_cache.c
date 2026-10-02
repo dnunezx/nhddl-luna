@@ -131,6 +131,7 @@ static int gridArtThreadId = -1;
 static int gridArtWakeSema = -1;
 static int gridArtDoneSema = -1;
 static volatile int gridArtStopping;
+static int gridArtAccepting;
 static uint8_t gridArtStack[16384] __attribute__((aligned(16)));
 static struct {
   volatile int state; // 0: idle, 1: decoding, 2: ready
@@ -168,12 +169,15 @@ static int collectionCoverPath(TargetList *titles, int selectedTitleIdx, int cac
 static void orbitArtWorker(void);
 static void stopOrbitArtWorker(void);
 static void gridArtWorker(void);
+static void startGridArtWorker(void);
 static void stopGridArtWorker(void);
 static void scrollArtWorker(void);
 static void stopScrollArtWorker(void);
 
 void setGridCaseArtwork(int enabled) {
   enabled = enabled != 0;
+  if (!enabled)
+    stopGridArtWorker();
   if (gridCaseArtwork && !enabled) {
     // Case thumbnails are larger than Grid's and have no use after exit.
     for (int i = 0; i < GRID_THUMBNAIL_CACHE_COUNT; i++) {
@@ -185,6 +189,8 @@ void setGridCaseArtwork(int enabled) {
     }
   }
   gridCaseArtwork = enabled;
+  if (enabled)
+    startGridArtWorker();
 }
 
 static const char orbsArtPath[] = "/ART/ORBS";
@@ -288,31 +294,7 @@ int artCacheInit(void) {
   } else {
     stopOrbitArtWorker();
   }
-  ee_sema_t gridSemaphore;
-  ee_thread_t gridThread;
-  memset(&gridSemaphore, 0, sizeof(gridSemaphore));
-  gridSemaphore.init_count = 0;
-  gridSemaphore.max_count = 1;
-  gridArtWakeSema = CreateSema(&gridSemaphore);
-  gridArtDoneSema = CreateSema(&gridSemaphore);
-  if (gridArtWakeSema >= 0 && gridArtDoneSema >= 0) {
-    memset(&gridThread, 0, sizeof(gridThread));
-    gridThread.func = gridArtWorker;
-    gridThread.stack = gridArtStack;
-    gridThread.stack_size = sizeof(gridArtStack);
-    gridThread.gp_reg = &_gp;
-    gridThread.initial_priority = 0x1f;
-    gridArtStopping = 0;
-    gridArtThreadId = CreateThread(&gridThread);
-    if (gridArtThreadId < 0 || StartThread(gridArtThreadId, NULL) < 0) {
-      if (gridArtThreadId >= 0)
-        DeleteThread(gridArtThreadId);
-      gridArtThreadId = -1;
-      stopGridArtWorker();
-    }
-  } else {
-    stopGridArtWorker();
-  }
+  // The case worker starts on 3D entry and is joined before cache teardown.
   ee_sema_t scrollSemaphore;
   ee_thread_t scrollThread;
   memset(&scrollSemaphore, 0, sizeof(scrollSemaphore));
@@ -1388,6 +1370,47 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
   return 0;
 }
 
+static void startGridArtWorker(void) {
+  gridArtAccepting = 1;
+  if (gridArtThreadId >= 0)
+    return;
+  ee_sema_t semaphore;
+  ee_thread_t thread;
+  memset(&semaphore, 0, sizeof(semaphore));
+  semaphore.max_count = 1;
+  gridArtWakeSema = CreateSema(&semaphore);
+  gridArtDoneSema = CreateSema(&semaphore);
+  if (gridArtWakeSema >= 0 && gridArtDoneSema >= 0) {
+    memset(&thread, 0, sizeof(thread));
+    thread.func = gridArtWorker;
+    thread.stack = gridArtStack;
+    thread.stack_size = sizeof(gridArtStack);
+    thread.gp_reg = &_gp;
+    thread.initial_priority = 0x1f;
+    gridArtStopping = 0;
+    gridArtThreadId = CreateThread(&thread);
+    if (gridArtThreadId >= 0 && StartThread(gridArtThreadId, NULL) >= 0) {
+      DPRINTF("3D art worker started\n");
+      return;
+    }
+    if (gridArtThreadId >= 0)
+      DeleteThread(gridArtThreadId);
+    gridArtThreadId = -1;
+  }
+  stopGridArtWorker();
+  // Retain the synchronous fallback if thread creation failed.
+  gridArtAccepting = 1;
+}
+
+void pauseGridArtRequests(void) {
+  DPRINTF("3D art requests paused: decoder_busy=%d\n", !gridArtIsIdle());
+  gridArtAccepting = 0;
+}
+
+int gridArtIsIdle(void) {
+  return gridArtThreadId < 0 || gridArtJob.state != 1;
+}
+
 static void gridArtWorker(void) {
   while (1) {
     WaitSema(gridArtWakeSema);
@@ -1439,12 +1462,14 @@ static void gridArtWorker(void) {
 }
 
 static void stopGridArtWorker(void) {
+  gridArtAccepting = 0;
   if (gridArtThreadId >= 0) {
     gridArtStopping = 1;
     SignalSema(gridArtWakeSema);
     WaitSema(gridArtDoneSema);
     DeleteThread(gridArtThreadId);
     gridArtThreadId = -1;
+    DPRINTF("3D art worker stopped before cache release\n");
   }
   if (gridArtWakeSema >= 0)
     DeleteSema(gridArtWakeSema);
@@ -1508,6 +1533,9 @@ int serviceGridArt(void) {
 }
 
 void releaseGridCovers(void) {
+  // Invalidate generations only after the decoder has stopped touching the
+  // heap. The destination view must never decode alongside a retiring job.
+  stopGridArtWorker();
   for (int buffer = 0; buffer < GRID_PAGE_BUFFERS; buffer++) {
     gridPageGeneration[buffer]++;
     for (int slot = 0; slot < GRID_CACHE_PAGE_SIZE; slot++) {
@@ -1544,6 +1572,13 @@ int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot
                      int prioritySlot, int *didLoadArtwork) {
   const int pageSize = gridCaseArtwork ? CASE_GRID_PAGE_SIZE : GRID_PAGE_SIZE;
   *didLoadArtwork = 0;
+  if (!gridArtAccepting) {
+    for (int slot = 0; slot < pageSize; slot++) {
+      if (!gridCoverResolved[buffer][slot])
+        return 0;
+    }
+    return 1;
+  }
   if (gridArtThreadId >= 0) {
     while (1) {
       int slot = prioritySlot >= 0 && prioritySlot < pageSize &&
@@ -1630,6 +1665,8 @@ int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot
 }
 
 int refreshGridSelectedCover(Target *target, int buffer) {
+  if (!gridArtAccepting)
+    return gridSelectedStatus[buffer] == 2 ? 1 : gridSelectedStatus[buffer] == 3 ? 0 : -1;
   if (gridArtThreadId >= 0) {
     char path[255];
     int pathResult = gridArtworkPath(target, path, sizeof(path));

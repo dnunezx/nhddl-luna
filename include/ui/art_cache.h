@@ -36,6 +36,8 @@ void releaseGridTexture(GSTEXTURE *texture);
 int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot,
                      int prioritySlot, int *didLoadArtwork);
 int serviceGridArt(void);
+void pauseGridArtRequests(void);
+int gridArtIsIdle(void);
 int gridPageSlotReady(int buffer, int slot);
 // Returns -1 while loading, 0 for missing artwork, 1 when the cover is ready.
 int refreshGridSelectedCover(Target *target, int buffer);

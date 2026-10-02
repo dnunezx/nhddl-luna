@@ -1,11 +1,14 @@
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/view_internal.h"
+#include "ui/case_page.h"
 #include <stdio.h>
 
 static int pageBases[GRID_PAGE_BUFFERS];
 static int pageComplete[GRID_PAGE_BUFFERS];
 static int nextSlots[GRID_PAGE_BUFFERS];
 static int selectedArtIdx;
+static LunaCasePage casePage;
+static int casePageDirection = 1;
 
 #define CASE_FOCUS_MS 180U
 #define CASE_TURN_MS 300U
@@ -15,11 +18,17 @@ static int selectedArtIdx;
 #define CASE_TITLE_SCROLL_SPEED 30U
 #define CASE_TITLE_START_PAUSE_MS 1000U
 #define CASE_TITLE_END_PAUSE_MS 1200U
-#define CASE_ENTRY_ROW_STAGGER_MS 75U
-#define CASE_ENTRY_COLUMN_STAGGER_MS 22U
-#define CASE_ENTRY_CASE_MS 360U
-#define CASE_ENTRY_PREVIEW_DELAY_MS 170U
-#define CASE_ENTRY_PREVIEW_MS 430U
+#define CASE_ENTRY_ROW_STAGGER_MS 36U
+#define CASE_ENTRY_COLUMN_STAGGER_MS 14U
+#define CASE_ENTRY_CASE_MS 250U
+#define CASE_ENTRY_PREVIEW_DELAY_MS 140U
+#define CASE_ENTRY_PREVIEW_MS 310U
+#define CASE_EXIT_ROW_STAGGER_MS 22U
+#define CASE_EXIT_COLUMN_STAGGER_MS 8U
+#define CASE_EXIT_SELECTED_DELAY_MS 110U
+#define CASE_EXIT_CASE_MS 150U
+#define CASE_EXIT_PREVIEW_MS 200U
+#define CASE_EXIT_MS (CASE_EXIT_SELECTED_DELAY_MS + CASE_EXIT_CASE_MS)
 static float caseFocus[CASE_GRID_PAGE_SIZE];
 static float caseFocusStart[CASE_GRID_PAGE_SIZE];
 static float caseTurn[CASE_GRID_PAGE_SIZE];
@@ -27,17 +36,50 @@ static float caseTurnStart[CASE_GRID_PAGE_SIZE];
 static uint32_t caseFocusStartMs;
 static uint32_t caseEntryStartMs;
 static int caseEntryPending;
+static uint32_t caseExitStartMs;
+static int caseExitActive;
+static int caseDrawOpacity = 0x80;
 static int caseFocusPage = -1;
 static int caseFocusSlot = -1;
 
-static float caseEntryEase(uint32_t now, uint32_t delay, uint32_t duration) {
-  uint32_t elapsed = now - caseEntryStartMs;
+static float caseMotionEase(uint32_t now, uint32_t start, uint32_t delay,
+                             uint32_t duration) {
+  uint32_t elapsed = now - start;
   if (elapsed <= delay)
     return 0.0f;
   elapsed -= delay;
   if (elapsed >= duration)
     return 1.0f;
   return lunaNavEase((int)(elapsed * 1000U / duration)) / 1000.0f;
+}
+
+static float caseEntryEase(uint32_t now, uint32_t delay, uint32_t duration) {
+  // Freeze the entrance at its current position if Circle is pressed early.
+  return caseMotionEase(caseExitActive ? caseExitStartMs : now,
+                        caseEntryStartMs, delay, duration);
+}
+
+void beginCaseGridExit(uint32_t now) {
+  pauseGridArtRequests();
+  caseExitStartMs = now;
+  caseExitActive = 1;
+}
+
+int caseGridExitFinished(uint32_t now) {
+  return caseExitActive && now - caseExitStartMs >= CASE_EXIT_MS && gridArtIsIdle();
+}
+
+void setCaseGridPageDirection(int direction) {
+  casePageDirection = direction;
+}
+
+int caseGridVisibleTitleIndex(void) {
+  return casePage.visibleIdx;
+}
+
+static uint64_t caseColor(uint64_t color) {
+  uint64_t alpha = ((color >> 24) & 0xFF) * caseDrawOpacity / 0x80;
+  return (color & ~((uint64_t)0xFF << 24)) | (alpha << 24);
 }
 
 // Standard Amaray shell: 135 x 190 x 14 mm, with a 130 x 184 mm insert.
@@ -80,6 +122,7 @@ static void caseOutline(CasePoint *p, float x, float y, float w, float h, float 
 }
 
 static void caseFace(const CasePoint *p, int z, uint64_t color) {
+  color = caseColor(color);
   for (int i = 1; i < 7; i++)
     gsKit_prim_triangle_gouraud(gsGlobal, p[0].x, p[0].y, p[i].x, p[i].y,
         p[i + 1].x, p[i + 1].y, z, color, color, color);
@@ -87,6 +130,8 @@ static void caseFace(const CasePoint *p, int z, uint64_t color) {
 
 static void caseQuad(CasePoint a, CasePoint b, CasePoint c, CasePoint d,
                      int z, uint64_t outer, uint64_t inner) {
+  outer = caseColor(outer);
+  inner = caseColor(inner);
   gsKit_prim_quad_gouraud(gsGlobal, a.x, a.y, b.x, b.y, c.x, c.y, d.x, d.y,
       z, outer, outer, inner, inner);
 }
@@ -139,6 +184,9 @@ void resetCaseGrid(void) {
   selectedArtIdx = -1;
   caseFocusPage = caseFocusSlot = -1;
   caseEntryPending = 1;
+  caseExitActive = 0;
+  lunaCasePageReset(&casePage);
+  casePageDirection = 1;
 }
 
 static void drawCaseTexture(const CaseGeometry *g, GSTEXTURE *cover, float x, float y,
@@ -151,7 +199,8 @@ static void drawCaseTexture(const CaseGeometry *g, GSTEXTURE *cover, float x, fl
   gsGlobal->Test->AREF = 0x80;
   gsGlobal->Test->AFAIL = 0;
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
-  gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
+  // FIX blends the opaque jacket without changing its alpha-test value.
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 2, 1, caseDrawOpacity), 0);
   // Subdivide both axes so the GS's affine texture interpolation follows the
   // projected plane without a conspicuous diagonal distortion on the cover.
   for (int row = 0; row < 4; row++) {
@@ -207,8 +256,8 @@ static void drawCaseShimmer(const CaseGeometry *g, int z, float phase,
     CasePoint b = projectCase(g, topRight, 0, 0);
     CasePoint c = projectCase(g, bottomLeft, g->height, 0);
     CasePoint d = projectCase(g, bottomRight, g->height, 0);
-    uint64_t left = GS_SETREG_RGBA(0xE0, 0xF2, 0xFF, alpha[i]);
-    uint64_t right = GS_SETREG_RGBA(0xE0, 0xF2, 0xFF, alpha[i + 1]);
+    uint64_t left = caseColor(GS_SETREG_RGBA(0xE0, 0xF2, 0xFF, alpha[i]));
+    uint64_t right = caseColor(GS_SETREG_RGBA(0xE0, 0xF2, 0xFF, alpha[i + 1]));
     gsKit_prim_quad_gouraud(gsGlobal, a.x, a.y, b.x, b.y,
         c.x, c.y, d.x, d.y, z, left, right, left, right);
   }
@@ -235,22 +284,28 @@ static void drawCaseContact(float x, float foot, float width, float height,
         foot + 0.6f + ring[i][1] * radiusY + ring[i][0] * radiusX * slope,
         center + ring[j][0] * radiusX,
         foot + 0.6f + ring[j][1] * radiusY + ring[j][0] * radiusX * slope,
-        z + 1, GS_SETREG_RGBA(0, 0, 0, 0x58),
+        z + 1, caseColor(GS_SETREG_RGBA(0, 0, 0, 0x58)),
         GS_SETREG_RGBA(0, 0, 0, 0), GS_SETREG_RGBA(0, 0, 0, 0));
   }
   if (selected)
     gsKit_prim_line(gsGlobal, a.x - 2, a.y + 1, b.x + 2, b.y + 1,
-        z + 2, glassPresetColor(0x70, 0xC8, 0xFF, 0x50));
+        z + 2, caseColor(glassPresetColor(0x70, 0xC8, 0xFF, 0x50)));
 }
 
 // A closed case with a genuinely projected front, top, and right side.
 static void drawCase(float x, float y, float width, float height,
                      GSTEXTURE *cover, int selected, int resolved, int large,
-                     int rowZ, float turn, float shimmerPhase) {
+                     int rowZ, float turn, float shimmerPhase, float visibility,
+                     float pose) {
+  caseDrawOpacity = (int)(0x80 * visibility);
+  turn *= pose;
+  float retreat = 1.0f - pose;
   CaseGeometry g = {x + width * 0.5f, y + height, width, height,
                     width * (14.0f / 135.0f),
-                    0.819152f + 0.180848f * turn, 0.573576f * (1.0f - turn),
-                    0.906308f + 0.093692f * turn, 0.422618f * (1.0f - turn)};
+                    0.819152f + 0.180848f * turn - 0.150021f * retreat,
+                    0.573576f * (1.0f - turn) + 0.169569f * retreat,
+                    0.906308f + 0.093692f * turn - 0.140264f * retreat,
+                    0.422618f * (1.0f - turn) + 0.220170f * retreat};
   // At thumbnail size, retain enough thickness to distinguish the two faces.
   if (g.depth < 5.0f) g.depth = 5.0f;
   float radius = width * 0.025f, bevel = width * 0.009f;
@@ -300,9 +355,9 @@ static void drawCase(float x, float y, float width, float height,
   CasePoint seamLeft = projectCase(&g, radius, 0, g.depth * 0.54f);
   CasePoint seamRight = projectCase(&g, width - radius, 0, g.depth * 0.54f);
   gsKit_prim_line(gsGlobal, seamTop.x, seamTop.y, seamBottom.x, seamBottom.y,
-      z + 2, GS_SETREG_RGBA(5, 6, 8, 0x80));
+      z + 2, caseColor(GS_SETREG_RGBA(5, 6, 8, 0x80)));
   gsKit_prim_line(gsGlobal, seamLeft.x, seamLeft.y, seamRight.x, seamRight.y,
-      z + 2, GS_SETREG_RGBA(0x14, 0x16, 0x1A, 0x80));
+      z + 2, caseColor(GS_SETREG_RGBA(0x14, 0x16, 0x1A, 0x80)));
   CasePoint a = projectCase(&g, width, height * 0.44f, g.depth * 0.38f);
   CasePoint b = projectCase(&g, width, height * 0.44f, g.depth * 0.80f);
   CasePoint c = projectCase(&g, width, height * 0.56f, g.depth * 0.38f);
@@ -332,10 +387,10 @@ static void drawCase(float x, float y, float width, float height,
     caseQuad(a, b, c, d, z + 5, empty, empty);
     CasePoint center = projectCase(&g, width * 0.5f, height * 0.5f, 0);
     drawGlassDiamond(center.x, center.y, large ? 16 : 7,
-        z + 6, glassMissingCoverDiamondColor(0x60));
+        z + 6, caseColor(glassMissingCoverDiamondColor(0x60)));
     if (large)
       drawTextWindow(left + 4, bottom - height * 0.25f, right - 4, 0,
-          z + 6, HeaderTextColor, ALIGN_HCENTER, resolved ? "NO COVER" : "LOADING");
+          z + 6, caseColor(HeaderTextColor), ALIGN_HCENTER, resolved ? "NO COVER" : "LOADING");
   }
   if (cover != NULL)
     drawCaseShimmer(&g, z + 6, shimmerPhase, large);
@@ -348,19 +403,20 @@ static void drawCase(float x, float y, float width, float height,
   c = projectCase(&g, paperX, paperY + paperHeight, 0);
   d = projectCase(&g, paperX + paperWidth, paperY + paperHeight, 0);
   gsKit_prim_line(gsGlobal, a.x, a.y, c.x, c.y, z + 7,
-      GS_SETREG_RGBA(0xB0, 0xBA, 0xC8, 0x0B));
+      caseColor(GS_SETREG_RGBA(0xB0, 0xBA, 0xC8, 0x0B)));
   gsKit_prim_line(gsGlobal, b.x, b.y, d.x, d.y, z + 7,
-      GS_SETREG_RGBA(0, 0, 0, 0x24));
+      caseColor(GS_SETREG_RGBA(0, 0, 0, 0x24)));
   if (selected) {
     caseOutline(shadow, left - 2, top - 2, right - left + 4,
         bottom - top + 4, radius + 2);
-    uint64_t glow = glassPresetColor(0x70, 0xC8, 0xFF, 0x70);
+    uint64_t glow = caseColor(glassPresetColor(0x70, 0xC8, 0xFF, 0x70));
     for (int i = 0; i < 8; i++) {
       int j = (i + 1) & 7;
       gsKit_prim_line(gsGlobal, shadow[i].x, shadow[i].y,
           shadow[j].x, shadow[j].y, z + 8, glow);
     }
   }
+  caseDrawOpacity = 0x80;
 }
 void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs) {
   drawSharedLibraryBackground(frameNowMs);
@@ -371,8 +427,15 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
     caseEntryPending = 0;
   }
   serviceGridArt();
+  uint32_t pageNow = caseExitActive ? caseExitStartMs : frameNowMs;
+  if (!caseExitActive)
+    lunaCasePageUpdate(&casePage, selectedTitleIdx, casePageDirection, pageNow);
+  selectedTitleIdx = casePage.visibleIdx;
   int pageBase = selectedTitleIdx / CASE_GRID_PAGE_SIZE * CASE_GRID_PAGE_SIZE;
-  updateCaseFocus(pageBase, selectedTitleIdx - pageBase, frameNowMs);
+  // Let the shelf settle before the new selected case zooms and turns.
+  uint32_t focusNow = casePage.stage == CASE_PAGE_OUT ? casePage.startMs : pageNow;
+  updateCaseFocus(pageBase, casePage.stage == CASE_PAGE_IN ? -1 : selectedTitleIdx - pageBase,
+                  focusNow);
   // No neighboring page is drawn or prefetched. Reuse one texture page so
   // browsing 3D cannot leave three case pages resident in EE RAM and VRAM.
   int buffer = 0;
@@ -406,6 +469,7 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
   float rearFoot = top + height * 0.78f + 12;
   float frontFoot = bottom - 10;
   float centerX = (left + gridRight) * 0.5f;
+  const float pageTravel = cellWidth * 1.35f;
   float shimmerPhase = -1.0f;
   uint32_t focusElapsed = frameNowMs - caseFocusStartMs;
   if (focusElapsed >= CASE_FOCUS_MS + CASE_TURN_MS) {
@@ -415,6 +479,8 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
       shimmerPhase = sweepElapsed / (float)CASE_SHIMMER_MS;
   }
   // Draw rows back to front, then the focused case above its neighbors.
+  if (casePage.stage != CASE_PAGE_IDLE)
+    gsKit_set_scissor(gsGlobal, GS_SETREG_SCISSOR(0, gridRight + 8, 0, gsGlobal->Height - 1));
   for (int pass = 0; pass < 2; pass++) {
     for (int slot = 0; slot < CASE_GRID_PAGE_SIZE && pageBase + slot < titles->total; slot++) {
       int selected = pageBase + slot == selectedTitleIdx;
@@ -424,7 +490,15 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
       uint32_t entryDelay = row * CASE_ENTRY_ROW_STAGGER_MS +
                             column * CASE_ENTRY_COLUMN_STAGGER_MS;
       float entry = caseEntryEase(frameNowMs, entryDelay, CASE_ENTRY_CASE_MS);
-      if (entry <= 0.0f) continue;
+      int pageOffset, pageVisibility;
+      lunaCasePageRow(&casePage, row, pageNow, &pageOffset, &pageVisibility);
+      if (caseExitActive) {
+        uint32_t exitDelay = selected ? CASE_EXIT_SELECTED_DELAY_MS :
+            row * CASE_EXIT_ROW_STAGGER_MS + column * CASE_EXIT_COLUMN_STAGGER_MS;
+        entry *= 1.0f - caseMotionEase(frameNowMs, caseExitStartMs,
+                                       exitDelay, CASE_EXIT_CASE_MS);
+      }
+      if (entry <= 0.0f || pageVisibility <= 0) continue;
       float distance = row / (float)(CASE_GRID_ROWS - 1);
       float rowScale = 0.78f + distance * 0.22f;
       float foot = rearFoot + (frontFoot - rearFoot) * distance +
@@ -433,21 +507,34 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
       float caseHeight = height * rowScale * zoom * (0.82f + 0.18f * entry);
       float caseWidth = caseHeight * CASE_ASPECT;
       float x = centerX + (column - (CASE_GRID_COLUMNS - 1) * 0.5f) *
-          cellWidth * rowScale - caseWidth / 2;
+          cellWidth * rowScale - caseWidth / 2 + pageOffset * pageTravel / 1000.0f;
       float y = foot - caseHeight;
       drawCase(x, y, caseWidth, caseHeight,
           gridCoverLoaded[buffer][slot] ? gridCoverTextures[buffer][slot] : NULL,
           selected, gridPageSlotReady(buffer, slot), 0,
           selected ? 68 : 8 + row * 16, caseTurn[slot],
-          selected ? shimmerPhase : -1.0f);
+          selected && !caseExitActive && casePage.stage == CASE_PAGE_IDLE ? shimmerPhase : -1.0f,
+          entry * pageVisibility / 1000.0f, entry);
     }
   }
+  if (casePage.stage != CASE_PAGE_IDLE)
+    gsKit_set_scissor(gsGlobal, GS_SETREG_SCISSOR(0, gsGlobal->Width - 1, 0, gsGlobal->Height - 1));
   int titleLeft = infoLeft + 4;
   int titleRight = right - 4;
+  float infoVisibility = caseEntryEase(frameNowMs, CASE_ENTRY_PREVIEW_DELAY_MS,
+                                        CASE_ENTRY_PREVIEW_MS);
+  if (caseExitActive)
+    infoVisibility *= 1.0f - caseMotionEase(frameNowMs, caseExitStartMs, 0,
+                                           CASE_EXIT_PREVIEW_MS);
+  float pagePreviewVisibility = lunaCasePagePreviewVisibility(&casePage, pageNow) / 1000.0f;
+  caseDrawOpacity = (int)(0x80 * infoVisibility * pagePreviewVisibility);
+  uint64_t titleColor = caseColor(HeaderTextColor);
+  uint64_t infoColor = caseColor(FontMainColor);
+  caseDrawOpacity = 0x80;
   float titleWidth = getLineWidth(target->name);
   if (titleWidth <= titleRight - titleLeft) {
     drawTextWindow(titleLeft, top, titleRight, 0, 6,
-                   HeaderTextColor, ALIGN_HCENTER, target->name);
+                   titleColor, ALIGN_HCENTER, target->name);
   } else {
     int overflow = (int)(titleWidth - (titleRight - titleLeft) + 0.99f);
     uint32_t travelMs = (uint32_t)((uint64_t)overflow * 1000U /
@@ -467,7 +554,7 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
         scrollX = overflow - (int)((uint64_t)(phase - travelMs -
                   CASE_TITLE_END_PAUSE_MS) * overflow / travelMs);
     }
-    drawTextMarquee(titleLeft, top, titleRight, 6, HeaderTextColor,
+    drawTextMarquee(titleLeft, top, titleRight, 6, titleColor,
                     target->name, scrollX);
   }
   // Leave two title lines free above the large selected case.
@@ -483,9 +570,8 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
   GSTEXTURE *preview = selectedArtIdx == selectedTitleIdx && selectedReady == 1 &&
       gridSelectedLoaded[0] ? gridSelectedTextures[0] :
       gridCoverLoaded[buffer][slot] ? gridCoverTextures[buffer][slot] : NULL;
-  float previewEntry = caseEntryEase(frameNowMs, CASE_ENTRY_PREVIEW_DELAY_MS,
-                                     CASE_ENTRY_PREVIEW_MS);
-  if (previewEntry > 0.0f) {
+  float previewEntry = infoVisibility;
+  if (previewEntry > 0.0f && pagePreviewVisibility > 0.0f) {
     float previewScale = 0.86f + 0.14f * previewEntry;
     float drawnWidth = previewWidth * previewScale;
     float drawnHeight = previewHeight * previewScale;
@@ -493,14 +579,15 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
         previewTop + (previewHeight - drawnHeight) +
             (1.0f - previewEntry) * 28.0f,
         drawnWidth, drawnHeight, preview, 0, selectedReady >= 0, 1, 72,
-        caseTurn[slot], shimmerPhase);
+        caseTurn[slot], caseExitActive || casePage.stage != CASE_PAGE_IDLE ? -1.0f : shimmerPhase,
+        previewEntry * pagePreviewVisibility, previewEntry);
   }
   snprintf(lineBuffer, sizeof(lineBuffer), "%d / %d", selectedTitleIdx + 1, titles->total);
   drawTextWindow(infoLeft, previewTop + previewHeight + previewWidth * 0.16f + 10, right, 0,
-      6, FontMainColor, ALIGN_HCENTER, lineBuffer);
+      6, infoColor, ALIGN_HCENTER, lineBuffer);
   snprintf(lineBuffer, sizeof(lineBuffer), "%d / %d",
       pageBase / CASE_GRID_PAGE_SIZE + 1,
       (titles->total + CASE_GRID_PAGE_SIZE - 1) / CASE_GRID_PAGE_SIZE);
   drawTextWindow(left, bottom + 6, gridRight, 0, 6,
-      FontMainColor, ALIGN_HCENTER, lineBuffer);
+      infoColor, ALIGN_HCENTER, lineBuffer);
 }
