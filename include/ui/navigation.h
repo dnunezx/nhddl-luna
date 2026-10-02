@@ -14,15 +14,13 @@
 #define GRID_COLUMNS 4
 #define GRID_ROWS 4
 #define GRID_PAGE_SIZE (GRID_COLUMNS * GRID_ROWS)
+#define CASE_GRID_COLUMNS 6
+#define CASE_GRID_ROWS 4
+#define CASE_GRID_PAGE_SIZE (CASE_GRID_COLUMNS * CASE_GRID_ROWS)
+#define GRID_CACHE_PAGE_SIZE CASE_GRID_PAGE_SIZE
 #define GRID_THUMBNAIL_SIZE 64
 #define GRID_PAGE_BUFFERS 3
 #define GRID_SELECTED_BUFFERS 2
-#define GRID_CASCADE_DURATION_MS 340
-#define GRID_CASCADE_ROW_STAGGER 90
-#define GRID_CASCADE_FOLLOW_DELAY 80
-#define GRID_CASCADE_ROW_DURATION 650
-#define GRID_FAST_TRACK_HOLD_MS 500
-#define GRID_FAST_TRACK_STEP_MS 140
 #define ORBIT_RANDOM_STEP_MS 85
 #define CLASSIC_REPEAT_DELAY_MS 260
 #define CLASSIC_REPEAT_INTERVAL_MS 105
@@ -70,28 +68,29 @@ int lunaQuickMenuUpdate(LunaQuickMenu *menu, int held, int controlsHeld,
 typedef enum {
   UI_VIEW_CLASSIC = 0,
   UI_VIEW_PSBBN = 1,
-  UI_VIEW_GRID = 2,
+  UI_VIEW_GRID = 2, // Retired Classic Grid ID; keep persisted IDs stable.
   UI_VIEW_ORBIT = 3,
   UI_VIEW_ORBS = 4,
-  UI_VIEW_SAVE_ICONS = 5,
+  // Keep persisted view IDs stable; slots 5 and 6 are also retired.
+  UI_VIEW_3D = 7,
+  UI_VIEW_ID_LIMIT,
 } UILibraryView;
 
-#define UI_VIEW_ALL_MASK ((1U << (UI_VIEW_SAVE_ICONS + 1)) - 1U)
+#define UI_VIEW_COUNT 5
+#define UI_VIEW_ALL_MASK (((1U << UI_VIEW_ID_LIMIT) - 1U) & \
+                          ~((1U << UI_VIEW_GRID) | (1U << 5) | (1U << 6)))
 #define UI_VIEW_DEFAULT_MASK ((1U << UI_VIEW_CLASSIC) | \
                               (1U << UI_VIEW_PSBBN) | \
-                              (1U << UI_VIEW_ORBIT))
+                              (1U << UI_VIEW_ORBIT) | \
+                              (1U << UI_VIEW_3D))
 
-extern const UILibraryView lunaViewCycleOrder[UI_VIEW_SAVE_ICONS + 1];
+extern const UILibraryView lunaViewCycleOrder[UI_VIEW_COUNT];
 
 int lunaNavWrap(int total, int index);
 int lunaNavRepeatStep(LunaNavRepeatState *state, int direction, uint32_t now,
                       uint32_t initialDelayMs, uint32_t intervalMs);
-int lunaNavGridVertical(int total, int index, int direction);
-int lunaNavGridPage(int total, int index, int direction);
-int lunaNavPageBase(int total, int pageBase, int direction);
-int lunaNavFindBuffer(const int *pageBases, int bufferCount, int pageBase);
-int lunaNavChooseBuffer(const int *pageBases, int bufferCount, int activeBuffer,
-                        int previousBuffer, int incomingBuffer);
+int lunaNavCaseGridVertical(int total, int index, int direction);
+int lunaNavCaseGridPage(int total, int index, int direction);
 int lunaNavDirection(int total, int fromIdx, int toIdx);
 int lunaNavCollectionForeground(const int *positions, const uint8_t *drawable,
                                 int count);
@@ -103,7 +102,6 @@ int lunaNavClassicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
                                    uint32_t durationFrames);
 int lunaNavCubicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
                                  uint32_t durationFrames);
-int lunaNavGridCascadeProgress(int progress, int row, int incoming);
 int lunaNavRandomTarget(int total, int selectedIndex, uint32_t randomSeed);
 int lunaNavMarkedCount(const uint8_t *marked, int total);
 int lunaNavMarkedRank(const uint8_t *marked, int total, int index);

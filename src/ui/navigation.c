@@ -91,25 +91,29 @@ int lunaNavRepeatStep(LunaNavRepeatState *state, int direction, uint32_t now,
   return 1;
 }
 
-int lunaNavGridVertical(int total, int index, int direction) {
+static int gridVertical(int total, int index, int direction, int columns) {
   int candidate;
   int column;
 
   if (total <= 0 || index < 0 || index >= total || direction == 0)
     return index;
-  candidate = index + direction * GRID_COLUMNS;
-  column = index % GRID_COLUMNS;
+  candidate = index + direction * columns;
+  column = index % columns;
   if (candidate >= 0 && candidate < total)
     return candidate;
   if (direction < 0) {
     int last = total - 1;
-    candidate = last - ((last - column) % GRID_COLUMNS);
+    candidate = last - ((last - column) % columns);
     return (candidate >= 0) ? candidate : index;
   }
   return (column < total) ? column : total - 1;
 }
 
-int lunaNavGridPage(int total, int index, int direction) {
+int lunaNavCaseGridVertical(int total, int index, int direction) {
+  return gridVertical(total, index, direction, CASE_GRID_COLUMNS);
+}
+
+static int gridPage(int total, int index, int direction, int pageSize) {
   int pageCount;
   int page;
   int cell;
@@ -118,47 +122,16 @@ int lunaNavGridPage(int total, int index, int direction) {
 
   if (total <= 0 || index < 0 || index >= total)
     return index;
-  pageCount = (total + GRID_PAGE_SIZE - 1) / GRID_PAGE_SIZE;
-  page = index / GRID_PAGE_SIZE;
-  cell = index % GRID_PAGE_SIZE;
+  pageCount = (total + pageSize - 1) / pageSize;
+  page = index / pageSize;
+  cell = index % pageSize;
   targetPage = lunaNavWrap(pageCount, page + direction);
-  candidate = targetPage * GRID_PAGE_SIZE + cell;
+  candidate = targetPage * pageSize + cell;
   return (candidate < total) ? candidate : total - 1;
 }
 
-int lunaNavPageBase(int total, int pageBase, int direction) {
-  int pageCount;
-  int page;
-
-  if (total <= 0)
-    return -1;
-  pageCount = (total + GRID_PAGE_SIZE - 1) / GRID_PAGE_SIZE;
-  page = pageBase / GRID_PAGE_SIZE;
-  return lunaNavWrap(pageCount, page + direction) * GRID_PAGE_SIZE;
-}
-
-int lunaNavFindBuffer(const int *pageBases, int bufferCount, int pageBase) {
-  int buffer;
-  for (buffer = 0; buffer < bufferCount; buffer++) {
-    if (pageBases[buffer] == pageBase)
-      return buffer;
-  }
-  return -1;
-}
-
-int lunaNavChooseBuffer(const int *pageBases, int bufferCount, int activeBuffer,
-                        int previousBuffer, int incomingBuffer) {
-  int buffer;
-  for (buffer = 0; buffer < bufferCount; buffer++) {
-    if (buffer != activeBuffer && buffer != previousBuffer &&
-        buffer != incomingBuffer && pageBases[buffer] < 0)
-      return buffer;
-  }
-  for (buffer = 0; buffer < bufferCount; buffer++) {
-    if (buffer != activeBuffer && buffer != previousBuffer && buffer != incomingBuffer)
-      return buffer;
-  }
-  return -1;
+int lunaNavCaseGridPage(int total, int index, int direction) {
+  return gridPage(total, index, direction, CASE_GRID_PAGE_SIZE);
 }
 
 int lunaNavDirection(int total, int fromIdx, int toIdx) {
@@ -221,16 +194,6 @@ int lunaNavCubicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
   int64_t duration = durationFrames;
   return (int)((startOffset * remaining * remaining * remaining) /
                (duration * duration * duration));
-}
-
-int lunaNavGridCascadeProgress(int progress, int row, int incoming) {
-  int start = row * GRID_CASCADE_ROW_STAGGER +
-              (incoming ? GRID_CASCADE_FOLLOW_DELAY : 0);
-  int rowProgress;
-  if (progress <= start)
-    return 0;
-  rowProgress = ((progress - start) * 1000) / GRID_CASCADE_ROW_DURATION;
-  return (rowProgress > 1000) ? 1000 : rowProgress;
 }
 
 int lunaNavRandomTarget(int total, int selectedIndex, uint32_t randomSeed) {
@@ -296,19 +259,21 @@ int lunaNavMarkedPage(const uint8_t *marked, int total, int index, int pageSize,
   return lunaNavMarkedByRank(marked, total, rank);
 }
 
-const UILibraryView lunaViewCycleOrder[UI_VIEW_SAVE_ICONS + 1] = {
+const UILibraryView lunaViewCycleOrder[UI_VIEW_COUNT] = {
     UI_VIEW_CLASSIC, UI_VIEW_PSBBN, UI_VIEW_ORBIT,
-    UI_VIEW_ORBS, UI_VIEW_GRID, UI_VIEW_SAVE_ICONS};
+    UI_VIEW_3D, UI_VIEW_ORBS};
 
 const char *lunaNavViewLabel(UILibraryView view) {
-  static const char *const labels[UI_VIEW_SAVE_ICONS + 1] = {
-      "List", "Collections", "Grid", "Orbit", "Scroll", "Save Icons"};
-  return view >= UI_VIEW_CLASSIC && view <= UI_VIEW_SAVE_ICONS ?
+  static const char *const labels[UI_VIEW_ID_LIMIT] = {
+      [UI_VIEW_CLASSIC] = "List", [UI_VIEW_PSBBN] = "Collections",
+      [UI_VIEW_ORBIT] = "Orbit",
+      [UI_VIEW_ORBS] = "Scroll", [UI_VIEW_3D] = "3D"};
+  return view >= UI_VIEW_CLASSIC && view < UI_VIEW_ID_LIMIT && labels[view] ?
          labels[view] : "View";
 }
 
 UILibraryView lunaNavNextView(UILibraryView view, uint32_t enabledViews) {
-  const int count = UI_VIEW_SAVE_ICONS + 1;
+  const int count = UI_VIEW_COUNT;
   int currentIndex = -1;
   for (int index = 0; index < count; index++) {
     if (lunaViewCycleOrder[index] == view) {

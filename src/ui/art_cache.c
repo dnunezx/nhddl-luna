@@ -15,7 +15,8 @@
 
 #define PSBBN_THUMBNAIL_SIZE 64
 #define PSBBN_PREVIEW_SIZE 128
-#define GRID_THUMBNAIL_BYTES (GRID_THUMBNAIL_SIZE * GRID_THUMBNAIL_SIZE * sizeof(PSBBNPixel))
+#define CASE_THUMBNAIL_WIDTH 64
+#define CASE_THUMBNAIL_HEIGHT 96
 #define GRID_THUMBNAIL_CACHE_COUNT (GRID_PAGE_BUFFERS * GRID_PAGE_SIZE)
 
 typedef struct {
@@ -42,16 +43,18 @@ static struct {
   uint32_t completed, adopted, late, failed, cacheHits, pendingFocusFrames;
   uint32_t readMs, decodeMs, featherMs, resizeMs, maxJobMs, bindMs, binds;
 } collectionArtStats;
-GSTEXTURE *gridCoverTextures[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
-uint8_t gridCoverLoaded[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
-static uint8_t gridCoverAttempted[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
-static uint8_t gridCoverResolved[GRID_PAGE_BUFFERS][GRID_PAGE_SIZE];
+GSTEXTURE *gridCoverTextures[GRID_PAGE_BUFFERS][GRID_CACHE_PAGE_SIZE];
+uint8_t gridCoverLoaded[GRID_PAGE_BUFFERS][GRID_CACHE_PAGE_SIZE];
+static uint8_t gridCoverAttempted[GRID_PAGE_BUFFERS][GRID_CACHE_PAGE_SIZE];
+static uint8_t gridCoverResolved[GRID_PAGE_BUFFERS][GRID_CACHE_PAGE_SIZE];
 static uint32_t gridPageGeneration[GRID_PAGE_BUFFERS];
 typedef struct {
   char path[255];
   PSBBNPixel *pixels;
+  int width, height;
   uint32_t lastUsed;
   uint8_t state; // 0: empty, 1: thumbnail, 2: missing file
+  uint8_t caseArtwork;
 } GridThumbnailCacheEntry;
 static GridThumbnailCacheEntry gridThumbnailCache[GRID_THUMBNAIL_CACHE_COUNT];
 static uint32_t gridThumbnailCacheClock;
@@ -60,8 +63,6 @@ uint8_t gridSelectedLoaded[GRID_SELECTED_BUFFERS];
 static uint32_t gridSelectedGeneration[GRID_SELECTED_BUFFERS];
 static uint8_t gridSelectedStatus[GRID_SELECTED_BUFFERS]; // 0: idle, 1: loading, 2: ready, 3: missing
 static char gridSelectedPath[GRID_SELECTED_BUFFERS][255];
-GSTEXTURE *saveIconSpinTexture;
-uint8_t saveIconSpinLoaded;
 GSTEXTURE *orbsLogoTextures[ORBS_LOGO_CACHE_COUNT];
 uint8_t orbsLogoLoaded[ORBS_LOGO_CACHE_COUNT];
 GSTEXTURE *orbsBackgroundTexture;
@@ -73,7 +74,7 @@ static uint8_t orbsBackgroundResolved;
 
 static const char artPath[] = "/ART";
 static const char psbbnArtPath[] = "/ART/PSBBN";
-static int gridSaveIconArtwork;
+static int gridCaseArtwork;
 
 extern void *_gp;
 static int classicArtThreadId = -1;
@@ -176,13 +177,21 @@ static void stopGridArtWorker(void);
 static void scrollArtWorker(void);
 static void stopScrollArtWorker(void);
 
-void setGridSaveIconArtwork(int enabled) {
-  gridSaveIconArtwork = enabled != 0;
+void setGridCaseArtwork(int enabled) {
+  enabled = enabled != 0;
+  if (gridCaseArtwork && !enabled) {
+    // Case thumbnails are larger than Grid's and have no use after exit.
+    for (int i = 0; i < GRID_THUMBNAIL_CACHE_COUNT; i++) {
+      GridThumbnailCacheEntry *entry = &gridThumbnailCache[i];
+      if (!entry->caseArtwork)
+        continue;
+      free(entry->pixels);
+      memset(entry, 0, sizeof(*entry));
+    }
+  }
+  gridCaseArtwork = enabled;
 }
 
-int getGridSaveIconArtwork(void) {
-  return gridSaveIconArtwork;
-}
 static const char orbsArtPath[] = "/ART/ORBS";
 static char artPathBuffer[255];
 
@@ -207,7 +216,7 @@ int artCacheInit(void) {
     psbbnCoverTextures[i]->Delayed = 1;
   }
   for (int buffer = 0; buffer < GRID_PAGE_BUFFERS; buffer++) {
-    for (int i = 0; i < GRID_PAGE_SIZE; i++) {
+    for (int i = 0; i < GRID_CACHE_PAGE_SIZE; i++) {
       gridCoverTextures[buffer][i] = calloc(sizeof(GSTEXTURE), 1);
       if (gridCoverTextures[buffer][i] == NULL) {
         artCacheShutdown();
@@ -224,12 +233,6 @@ int artCacheInit(void) {
     }
     gridSelectedTextures[buffer]->Delayed = 1;
   }
-  saveIconSpinTexture = calloc(sizeof(GSTEXTURE), 1);
-  if (saveIconSpinTexture == NULL) {
-    artCacheShutdown();
-    return -1;
-  }
-  saveIconSpinTexture->Delayed = 1;
   orbsBackgroundTexture = calloc(sizeof(GSTEXTURE), 1);
   if (orbsBackgroundTexture == NULL) {
     artCacheShutdown();
@@ -673,19 +676,19 @@ static void featherPSBBNCoverEdges(GSTEXTURE *texture) {
   }
 }
 
-static PSBBNPixel *createPSBBNThumbnail(const PSBBNPixel *source, int width, int height,
-                                         int size) {
-  PSBBNPixel *thumbnail = memalign(128, size * size * sizeof(*thumbnail));
+static PSBBNPixel *createArtThumbnail(const PSBBNPixel *source, int width, int height,
+                                      int thumbWidth, int thumbHeight) {
+  PSBBNPixel *thumbnail = memalign(128, thumbWidth * thumbHeight * sizeof(*thumbnail));
   if (thumbnail == NULL)
     return NULL;
-  for (int y = 0; y < size; y++) {
-    int sourceY1 = y * height / size;
-    int sourceY2 = (y + 1) * height / size;
+  for (int y = 0; y < thumbHeight; y++) {
+    int sourceY1 = y * height / thumbHeight;
+    int sourceY2 = (y + 1) * height / thumbHeight;
     if (sourceY2 <= sourceY1)
       sourceY2 = sourceY1 + 1;
-    for (int x = 0; x < size; x++) {
-      int sourceX1 = x * width / size;
-      int sourceX2 = (x + 1) * width / size;
+    for (int x = 0; x < thumbWidth; x++) {
+      int sourceX1 = x * width / thumbWidth;
+      int sourceX2 = (x + 1) * width / thumbWidth;
       int red = 0, green = 0, blue = 0, alpha = 0, samples = 0;
       if (sourceX2 <= sourceX1)
         sourceX2 = sourceX1 + 1;
@@ -699,13 +702,18 @@ static PSBBNPixel *createPSBBNThumbnail(const PSBBNPixel *source, int width, int
           samples++;
         }
       }
-      thumbnail[y * size + x].r = red / samples;
-      thumbnail[y * size + x].g = green / samples;
-      thumbnail[y * size + x].b = blue / samples;
-      thumbnail[y * size + x].a = alpha / samples;
+      thumbnail[y * thumbWidth + x].r = red / samples;
+      thumbnail[y * thumbWidth + x].g = green / samples;
+      thumbnail[y * thumbWidth + x].b = blue / samples;
+      thumbnail[y * thumbWidth + x].a = alpha / samples;
     }
   }
   return thumbnail;
+}
+
+static PSBBNPixel *createPSBBNThumbnail(const PSBBNPixel *source, int width, int height,
+                                      int size) {
+  return createArtThumbnail(source, width, height, size, size);
 }
 
 // Orbit keeps the decoded source and both smaller sizes in EE RAM, so a cover
@@ -1251,9 +1259,7 @@ static int gridArtworkPath(Target *target, char *path, size_t capacity) {
   device = target->device->metadev ? target->device->metadev : target->device;
   if (device->mountpoint == NULL)
     return -1;
-  int length = gridSaveIconArtwork
-      ? snprintf(path, capacity, "%s/ART/SAVEICON/%s/preview.png",
-                 device->mountpoint, target->id)
+  int length = gridCaseArtwork ? snprintf(path, capacity, "%s/ART/%s_COV.png", device->mountpoint, target->id)
       : snprintf(path, capacity, "%s%s/%s.png", device->mountpoint,
                  psbbnArtPath, target->id);
   return length >= 0 && length < (int)capacity ? 0 : -1;
@@ -1267,9 +1273,12 @@ static int findGridThumbnail(const char *path) {
   return -1;
 }
 
-static void rememberGridThumbnail(const char *path, const PSBBNPixel *pixels) {
+static void rememberGridThumbnail(const char *path, const PSBBNPixel *pixels,
+                                   int width, int height) {
   int victim = -1;
-  for (int i = 0; i < GRID_THUMBNAIL_CACHE_COUNT; i++) {
+  // Keep at most one case page in RAM; Grid can retain its smaller 64x64 tiles.
+  int limit = gridCaseArtwork ? CASE_GRID_PAGE_SIZE : GRID_THUMBNAIL_CACHE_COUNT;
+  for (int i = 0; i < limit; i++) {
     if (!gridThumbnailCache[i].state) {
       victim = i;
       break;
@@ -1278,20 +1287,22 @@ static void rememberGridThumbnail(const char *path, const PSBBNPixel *pixels) {
       victim = i;
   }
   GridThumbnailCacheEntry *entry = &gridThumbnailCache[victim];
-  if (pixels != NULL && entry->pixels == NULL) {
-    entry->pixels = malloc(GRID_THUMBNAIL_BYTES);
-    if (entry->pixels == NULL)
-      return;
-  }
-  if (pixels != NULL)
-    memcpy(entry->pixels, pixels, GRID_THUMBNAIL_BYTES);
-  else {
+  if (pixels != NULL) {
+    size_t bytes = (size_t)width * height * sizeof(*pixels);
+    PSBBNPixel *resized = realloc(entry->pixels, bytes);
+    if (resized == NULL) return;
+    entry->pixels = resized;
+    memcpy(entry->pixels, pixels, bytes);
+  } else {
     free(entry->pixels);
     entry->pixels = NULL;
   }
   snprintf(entry->path, sizeof(entry->path), "%s", path);
+  entry->width = width;
+  entry->height = height;
   entry->lastUsed = ++gridThumbnailCacheClock;
   entry->state = pixels != NULL ? 1 : 2;
+  entry->caseArtwork = gridCaseArtwork;
 }
 
 static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXTURE *texture, int thumbnail) {
@@ -1299,8 +1310,8 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
     device = device->metadev;
 
   releaseGridTexture(texture);
-  if (gridSaveIconArtwork)
-    snprintf(artPathBuffer, 255, "%s/ART/SAVEICON/%s/preview.png", device->mountpoint, titleID);
+  if (gridCaseArtwork)
+    snprintf(artPathBuffer, 255, "%s/ART/%s_COV.png", device->mountpoint, titleID);
   else
     snprintf(artPathBuffer, 255, "%s%s/%s.png", device->mountpoint, psbbnArtPath, titleID);
   if (thumbnail) {
@@ -1310,12 +1321,13 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
       entry->lastUsed = ++gridThumbnailCacheClock;
       if (entry->state == 2)
         return -1;
-      texture->Mem = memalign(128, GRID_THUMBNAIL_BYTES);
+      size_t bytes = (size_t)entry->width * entry->height * sizeof(PSBBNPixel);
+      texture->Mem = memalign(128, bytes);
       if (texture->Mem == NULL)
         return -1;
-      memcpy(texture->Mem, entry->pixels, GRID_THUMBNAIL_BYTES);
-      texture->Width = GRID_THUMBNAIL_SIZE;
-      texture->Height = GRID_THUMBNAIL_SIZE;
+      memcpy(texture->Mem, entry->pixels, bytes);
+      texture->Width = entry->width;
+      texture->Height = entry->height;
       texture->VramClut = 0;
       texture->Clut = NULL;
       texture->PSM = GS_PSM_CT32;
@@ -1330,7 +1342,7 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
       // decode failures may be retried after the page buffer is replaced.
       FILE *file = fopen(artPathBuffer, "rb");
       if (file == NULL)
-        rememberGridThumbnail(artPathBuffer, NULL);
+        rememberGridThumbnail(artPathBuffer, NULL, 0, 0);
       else
         fclose(file);
       releaseGridTexture(texture);
@@ -1340,58 +1352,24 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
   texture->Filter = GS_FILTER_LINEAR;
 
   if (thumbnail) {
-    PSBBNPixel *source = (PSBBNPixel *)texture->Mem;
-    int sourceWidth = texture->Width;
-    int sourceHeight = texture->Height;
-    PSBBNPixel *pixels = memalign(128, GRID_THUMBNAIL_BYTES);
-
+    int width = gridCaseArtwork ? CASE_THUMBNAIL_WIDTH : GRID_THUMBNAIL_SIZE;
+    int height = gridCaseArtwork ? CASE_THUMBNAIL_HEIGHT : GRID_THUMBNAIL_SIZE;
+    PSBBNPixel *pixels = createArtThumbnail((const PSBBNPixel *)texture->Mem,
+        texture->Width, texture->Height, width, height);
     if (pixels == NULL) {
       releaseGridTexture(texture);
       return -1;
     }
-    for (int y = 0; y < GRID_THUMBNAIL_SIZE; y++) {
-      int sourceY1 = y * sourceHeight / GRID_THUMBNAIL_SIZE;
-      int sourceY2 = (y + 1) * sourceHeight / GRID_THUMBNAIL_SIZE;
-      if (sourceY2 <= sourceY1)
-        sourceY2 = sourceY1 + 1;
-      for (int x = 0; x < GRID_THUMBNAIL_SIZE; x++) {
-        int sourceX1 = x * sourceWidth / GRID_THUMBNAIL_SIZE;
-        int sourceX2 = (x + 1) * sourceWidth / GRID_THUMBNAIL_SIZE;
-        int red = 0;
-        int green = 0;
-        int blue = 0;
-        int alpha = 0;
-        int samples = 0;
-
-        if (sourceX2 <= sourceX1)
-          sourceX2 = sourceX1 + 1;
-        for (int sourceY = sourceY1; sourceY < sourceY2; sourceY++) {
-          for (int sourceX = sourceX1; sourceX < sourceX2; sourceX++) {
-            PSBBNPixel pixel = source[sourceY * sourceWidth + sourceX];
-            red += pixel.r;
-            green += pixel.g;
-            blue += pixel.b;
-            alpha += pixel.a;
-            samples++;
-          }
-        }
-        pixels[y * GRID_THUMBNAIL_SIZE + x].r = red / samples;
-        pixels[y * GRID_THUMBNAIL_SIZE + x].g = green / samples;
-        pixels[y * GRID_THUMBNAIL_SIZE + x].b = blue / samples;
-        pixels[y * GRID_THUMBNAIL_SIZE + x].a = alpha / samples;
-      }
-    }
-
-    free(source);
+    free(texture->Mem);
     texture->Mem = (u32 *)pixels;
-    texture->Width = GRID_THUMBNAIL_SIZE;
-    texture->Height = GRID_THUMBNAIL_SIZE;
+    texture->Width = width;
+    texture->Height = height;
     texture->VramClut = 0;
     texture->Clut = NULL;
     texture->PSM = GS_PSM_CT32;
     texture->Filter = GS_FILTER_LINEAR;
     gsKit_TexManager_bind(gsGlobal, texture);
-    rememberGridThumbnail(artPathBuffer, pixels);
+    rememberGridThumbnail(artPathBuffer, pixels, width, height);
   }
   return 0;
 }
@@ -1406,17 +1384,18 @@ static void gridArtWorker(void) {
     gridArtJob.result = decodePNGTextureRGBA(gsGlobal, &decoded, gridArtJob.path);
     if (gridArtJob.result == 0 && decoded.Mem != NULL &&
         decoded.Width > 0 && decoded.Height > 0) {
-      if (gridArtJob.thumbnail) {
-        PSBBNPixel *pixels = createPSBBNThumbnail((const PSBBNPixel *)decoded.Mem,
-                                                  decoded.Width, decoded.Height,
-                                                  GRID_THUMBNAIL_SIZE);
+      if (gridArtJob.thumbnail == 1 || gridArtJob.thumbnail == 3) {
+        int width = gridArtJob.thumbnail == 3 ? CASE_THUMBNAIL_WIDTH : GRID_THUMBNAIL_SIZE;
+        int height = gridArtJob.thumbnail == 3 ? CASE_THUMBNAIL_HEIGHT : GRID_THUMBNAIL_SIZE;
+        PSBBNPixel *pixels = createArtThumbnail((const PSBBNPixel *)decoded.Mem,
+            decoded.Width, decoded.Height, width, height);
         if (pixels == NULL) {
           gridArtJob.result = -1;
         } else {
           free(decoded.Mem);
           decoded.Mem = (u32 *)pixels;
-          decoded.Width = GRID_THUMBNAIL_SIZE;
-          decoded.Height = GRID_THUMBNAIL_SIZE;
+          decoded.Width = width;
+          decoded.Height = height;
         }
       }
       if (gridArtJob.result == 0) {
@@ -1478,10 +1457,13 @@ int serviceGridArt(void) {
         *texture = gridArtJob.texture;
         memset(&gridArtJob.texture, 0, sizeof(gridArtJob.texture));
         gridCoverLoaded[buffer][slot] = 1;
-        rememberGridThumbnail(gridArtJob.path, (const PSBBNPixel *)texture->Mem);
+        if (gridArtJob.thumbnail == 1 || gridArtJob.thumbnail == 3)
+          rememberGridThumbnail(gridArtJob.path, (const PSBBNPixel *)texture->Mem,
+                                 texture->Width, texture->Height);
         gsKit_TexManager_bind(gsGlobal, texture);
-      } else if (gridArtJob.missingFile) {
-        rememberGridThumbnail(gridArtJob.path, NULL);
+      } else if (gridArtJob.missingFile &&
+                 (gridArtJob.thumbnail == 1 || gridArtJob.thumbnail == 3)) {
+        rememberGridThumbnail(gridArtJob.path, NULL, 0, 0);
       }
       gridCoverResolved[buffer][slot] = 1;
     }
@@ -1514,7 +1496,7 @@ int serviceGridArt(void) {
 void releaseGridCovers(void) {
   for (int buffer = 0; buffer < GRID_PAGE_BUFFERS; buffer++) {
     gridPageGeneration[buffer]++;
-    for (int slot = 0; slot < GRID_PAGE_SIZE; slot++) {
+    for (int slot = 0; slot < GRID_CACHE_PAGE_SIZE; slot++) {
       releaseGridTexture(gridCoverTextures[buffer][slot]);
       gridCoverLoaded[buffer][slot] = 0;
       gridCoverAttempted[buffer][slot] = 0;
@@ -1525,31 +1507,11 @@ void releaseGridCovers(void) {
     releaseGridTexture(gridSelectedTextures[buffer]);
     gridSelectedLoaded[buffer] = 0;
   }
-  releaseSaveIconDetails();
-}
-
-void releaseSaveIconDetails(void) {
-  if (saveIconSpinTexture != NULL)
-    releaseGridTexture(saveIconSpinTexture);
-  saveIconSpinLoaded = 0;
-}
-
-int refreshSaveIconSpin(Target *target, int frame) {
-  struct DeviceMapEntry *device = target->device->metadev ? target->device->metadev : target->device;
-  if (frame < 0 || frame >= 12)
-    return -1;
-  releaseGridTexture(saveIconSpinTexture);
-  snprintf(artPathBuffer, sizeof(artPathBuffer), "%s/ART/SAVEICON/%s/spin/%02d.png",
-           device->mountpoint, target->id, frame);
-  saveIconSpinLoaded = loadPNGTextureRGBA(gsGlobal, saveIconSpinTexture, artPathBuffer) == 0;
-  if (saveIconSpinLoaded)
-    saveIconSpinTexture->Filter = GS_FILTER_LINEAR;
-  return saveIconSpinLoaded ? 0 : -1;
 }
 
 static void resetGridPageBuffer(int buffer) {
   gridPageGeneration[buffer]++;
-  for (int slot = 0; slot < GRID_PAGE_SIZE; slot++) {
+  for (int slot = 0; slot < GRID_CACHE_PAGE_SIZE; slot++) {
     releaseGridTexture(gridCoverTextures[buffer][slot]);
     gridCoverLoaded[buffer][slot] = 0;
     gridCoverAttempted[buffer][slot] = 0;
@@ -1559,23 +1521,24 @@ static void resetGridPageBuffer(int buffer) {
 
 int gridPageSlotReady(int buffer, int slot) {
   return buffer >= 0 && buffer < GRID_PAGE_BUFFERS &&
-         slot >= 0 && slot < GRID_PAGE_SIZE && gridCoverResolved[buffer][slot];
+         slot >= 0 && slot < GRID_CACHE_PAGE_SIZE && gridCoverResolved[buffer][slot];
 }
 
 // Queue one requested tile first, then resume the remaining slots in order.
 // A missing PNG still resolves its slot so the page can show a placeholder.
 int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot,
                      int prioritySlot, int *didLoadArtwork) {
+  const int pageSize = gridCaseArtwork ? CASE_GRID_PAGE_SIZE : GRID_PAGE_SIZE;
   *didLoadArtwork = 0;
   if (gridArtThreadId >= 0) {
     while (1) {
-      int slot = prioritySlot >= 0 && prioritySlot < GRID_PAGE_SIZE &&
+      int slot = prioritySlot >= 0 && prioritySlot < pageSize &&
                  !gridCoverAttempted[buffer][prioritySlot]
           ? prioritySlot : -1;
       if (slot < 0) {
-        while (*nextSlot < GRID_PAGE_SIZE && gridCoverAttempted[buffer][*nextSlot])
+        while (*nextSlot < pageSize && gridCoverAttempted[buffer][*nextSlot])
           (*nextSlot)++;
-        if (*nextSlot >= GRID_PAGE_SIZE)
+        if (*nextSlot >= pageSize)
           break;
         slot = *nextSlot;
       }
@@ -1600,7 +1563,7 @@ int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot
         gridCoverResolved[buffer][slot] = 1;
         *didLoadArtwork = 1;
       } else if (gridArtJob.state == 0) {
-        gridArtJob.thumbnail = 1;
+        gridArtJob.thumbnail = gridCaseArtwork ? 3 : 1;
         gridArtJob.buffer = buffer;
         gridArtJob.slot = slot;
         gridArtJob.generation = gridPageGeneration[buffer];
@@ -1612,13 +1575,13 @@ int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot
       }
       break;
     }
-    for (int slot = 0; slot < GRID_PAGE_SIZE; slot++) {
+    for (int slot = 0; slot < pageSize; slot++) {
       if (!gridCoverResolved[buffer][slot])
         return 0;
     }
     return 1;
   }
-  if (prioritySlot >= 0 && prioritySlot < GRID_PAGE_SIZE &&
+  if (prioritySlot >= 0 && prioritySlot < pageSize &&
       !gridCoverAttempted[buffer][prioritySlot]) {
     int targetIdx = pageBase + prioritySlot;
     gridCoverAttempted[buffer][prioritySlot] = 1;
@@ -1632,7 +1595,7 @@ int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot
     }
     return 0;
   }
-  while (*nextSlot < GRID_PAGE_SIZE) {
+  while (*nextSlot < pageSize) {
     int slot = (*nextSlot)++;
     int targetIdx = pageBase + slot;
 
@@ -1649,13 +1612,14 @@ int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot
       break;
     }
   }
-  return *nextSlot >= GRID_PAGE_SIZE;
+  return *nextSlot >= pageSize;
 }
 
 int refreshGridSelectedCover(Target *target, int buffer) {
   if (gridArtThreadId >= 0) {
     char path[255];
-    if (gridArtworkPath(target, path, sizeof(path)) < 0)
+    int pathResult = gridArtworkPath(target, path, sizeof(path));
+    if (pathResult < 0)
       return 0;
     if (strcmp(gridSelectedPath[buffer], path) != 0) {
       releaseGridTexture(gridSelectedTextures[buffer]);
@@ -2239,13 +2203,6 @@ void artCacheShutdown(void) {
   memset(collectionCoverKeys, 0, sizeof(collectionCoverKeys));
   memset(&collectionArtStats, 0, sizeof(collectionArtStats));
   collectionNavigationDirection = 0;
-  if (saveIconSpinTexture != NULL) {
-    free(saveIconSpinTexture->Mem);
-    free(saveIconSpinTexture->Clut);
-    free(saveIconSpinTexture);
-    saveIconSpinTexture = NULL;
-  }
-  saveIconSpinLoaded = 0;
   if (orbsBackgroundTexture != NULL) {
     free(orbsBackgroundTexture->Mem);
     free(orbsBackgroundTexture->Clut);
@@ -2304,7 +2261,7 @@ void artCacheShutdown(void) {
     psbbnCoverFullResolution[i] = 0;
   }
   for (int buffer = 0; buffer < GRID_PAGE_BUFFERS; buffer++) {
-    for (int i = 0; i < GRID_PAGE_SIZE; i++) {
+    for (int i = 0; i < GRID_CACHE_PAGE_SIZE; i++) {
       if (gridCoverTextures[buffer][i] != NULL) {
         free(gridCoverTextures[buffer][i]->Mem);
         free(gridCoverTextures[buffer][i]->Clut);

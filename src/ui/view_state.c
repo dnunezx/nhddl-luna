@@ -30,8 +30,10 @@ static const char uiFontPath[] = "/uiFont.txt";
 static const char uiFontTempPath[] = "/uiFont.txt.tmp";
 static const char ambientSoundPath[] = "/ambientSound.txt";
 static const char ambientSoundTempPath[] = "/ambientSound.txt.tmp";
-static const char *const viewNames[] = {
-    "classic", "collection", "grid", "orbit", "orbs", "save-icons"};
+static const char *const viewNames[UI_VIEW_ID_LIMIT] = {
+    [UI_VIEW_CLASSIC] = "classic", [UI_VIEW_PSBBN] = "collection",
+    [UI_VIEW_GRID] = "grid", [UI_VIEW_ORBIT] = "orbit",
+    [UI_VIEW_ORBS] = "orbs", [UI_VIEW_3D] = "3d"};
 static const char *const glassColorNames[GLASS_COLOR_COUNT] = {
     "original", "white-gray", "black"};
 static const char *const uiFontNames[UI_FONT_COUNT] = {
@@ -59,9 +61,9 @@ static int readViewFile(const char *path, UILibraryView *view) {
   if (name[nameLength] == '\0')
     return -EINVAL;
   name[nameLength] = '\0';
-  for (int i = UI_VIEW_CLASSIC; i <= UI_VIEW_SAVE_ICONS; i++) {
-    if (!strcmp(name, viewNames[i])) {
-      *view = (UILibraryView)i;
+  for (int i = UI_VIEW_CLASSIC; i < UI_VIEW_ID_LIMIT; i++) {
+    if (viewNames[i] && !strcmp(name, viewNames[i])) {
+      *view = i == UI_VIEW_GRID ? UI_VIEW_3D : (UILibraryView)i;
       return 0;
     }
   }
@@ -99,7 +101,8 @@ int saveLastLibraryView(Target *target, UILibraryView view) {
   FILE *file;
 
   if (device == NULL || device->mountpoint == NULL ||
-      view < UI_VIEW_CLASSIC || view > UI_VIEW_SAVE_ICONS)
+      view < UI_VIEW_CLASSIC || view >= UI_VIEW_ID_LIMIT || !viewNames[view] ||
+      !(UI_VIEW_ALL_MASK & (1U << view)))
     return -EINVAL;
   if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
       buildConfigFilePath(path, sizeof(path), device->mountpoint, lastViewPath) ||
@@ -461,8 +464,10 @@ uint32_t loadEnabledLibraryViews(Target *target) {
     char *end;
     unsigned long mask = strtoul(value, &end, 10);
     if ((*end == '\0' || *end == '\r' || *end == '\n') &&
-        mask != 0 && (mask & ~UI_VIEW_ALL_MASK) == 0)
-      return (uint32_t)mask;
+        mask != 0 && (mask & ~((1UL << UI_VIEW_ID_LIMIT) - 1UL)) == 0) {
+      mask &= UI_VIEW_ALL_MASK;
+      return mask != 0 ? (uint32_t)mask : UI_VIEW_DEFAULT_MASK;
+    }
   }
   return UI_VIEW_DEFAULT_MASK;
 }

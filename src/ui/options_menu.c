@@ -148,8 +148,8 @@ static LunaGameRow gameSectionRow(GameSection section, int row) {
   return gameSectionRows[section][row];
 }
 
-#define OPTIONS_VIEW_ART_LAYOUT_ROW (UI_VIEW_SAVE_ICONS + 1)
-#define OPTIONS_VIEW_ROW_COUNT (UI_VIEW_SAVE_ICONS + 2)
+#define OPTIONS_VIEW_ART_LAYOUT_ROW UI_VIEW_COUNT
+#define OPTIONS_VIEW_ROW_COUNT (UI_VIEW_COUNT + 1)
 
 // Give Options its own scene without carrying library text into the menu.
 static void drawOptionsSheet(void) {
@@ -515,14 +515,15 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                    HeaderTextColor, ALIGN_LEFT, descriptions[state->selectedGlobal]);
   } else if (state->page == OPTIONS_VIEWS) {
     const int firstY = menuTop + lineHeight + 4;
+    // Keep all view rows and the List layout control above the footer.
+    const int rowStep = (menuBottom - firstY - 3 * lineHeight) / UI_VIEW_COUNT;
     int selectorY = optionsSelectorY(&state->selector, state->page, state->selectedView,
                                      optionsViewRowY(state->selectedView,
                                                      firstY, rowStep, lineHeight));
     drawOptionsSection(menuTop, "Enabled views", 0);
-    for (int row = 0; row <= UI_VIEW_SAVE_ICONS; row++) {
+    for (int row = 0; row < UI_VIEW_COUNT; row++) {
       const UILibraryView view = lunaViewCycleOrder[row];
       const char *label = view == UI_VIEW_ORBS ? "Scroll (Experimental)" :
-                          view == UI_VIEW_SAVE_ICONS ? "Save Icons (Experimental)" :
                           lunaNavViewLabel(view);
       drawOptionsTextRow(baseX, firstY + row * rowStep,
                          gsGlobal->Width - baseX, state->selectedView == row,

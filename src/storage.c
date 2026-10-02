@@ -1,5 +1,6 @@
 // LUNA 2026: all supported storage sources share one refresh lifecycle.
 #include "storage.h"
+#include "genres.h"
 #include "devices/devices.h"
 #include "devices/init.h"
 #include "options.h"
@@ -279,6 +280,9 @@ TargetList *storageRefresh(TargetList *previous) {
   }
   int index = 0;
   for (Target *t = next->first; t; t = t->next) t->idx = index++;
+  // Read once per refresh, including retained sources whose CFG changed on PC.
+  // Metadata failure must never prevent games from being launched.
+  lunaLoadLibraryGenres(next);
   STORAGE_SETTINGS = desired;
   requestPending = 0;
   if (previous) freeTargetList(previous);

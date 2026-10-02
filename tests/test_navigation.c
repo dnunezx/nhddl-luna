@@ -14,25 +14,6 @@ static void testWrapping(void) {
   assert(lunaNavDirection(10, 3, 3) == 0);
 }
 
-static void testGridNavigation(void) {
-  assert(lunaNavGridVertical(18, 1, -1) == 17);
-  assert(lunaNavGridVertical(18, 17, 1) == 1);
-  assert(lunaNavGridVertical(18, 3, 1) == 7);
-  assert(lunaNavGridPage(34, 2, 1) == 18);
-  assert(lunaNavGridPage(34, 18, 1) == 33);
-  assert(lunaNavGridPage(34, 33, 1) == 1);
-  assert(lunaNavPageBase(34, 32, 1) == 0);
-  assert(lunaNavPageBase(34, 0, -1) == 32);
-}
-
-static void testBufferSelection(void) {
-  const int pages[GRID_PAGE_BUFFERS] = {0, 16, -1};
-  assert(lunaNavFindBuffer(pages, GRID_PAGE_BUFFERS, 16) == 1);
-  assert(lunaNavFindBuffer(pages, GRID_PAGE_BUFFERS, 32) == -1);
-  assert(lunaNavChooseBuffer(pages, GRID_PAGE_BUFFERS, 0, 1, -1) == 2);
-  assert(lunaNavChooseBuffer(pages, GRID_PAGE_BUFFERS, 0, 1, 2) == -1);
-}
-
 static void testTiming(void) {
   LunaNavRepeatState repeat = {0};
   assert(lunaNavRepeatStep(&repeat, 1, 100, 260, 105) == 1);
@@ -57,9 +38,6 @@ static void testTiming(void) {
   assert(lunaNavCubicGlideFrameOffset(1000, 10, 20) == 125);
   assert(lunaNavCubicGlideFrameOffset(-1000, 10, 20) == -125);
   assert(lunaNavCubicGlideFrameOffset(1000, 20, 20) == 0);
-  assert(lunaNavGridCascadeProgress(89, 1, 0) == 0);
-  assert(lunaNavGridCascadeProgress(415, 1, 0) == 500);
-  assert(lunaNavGridCascadeProgress(1000, 3, 1) == 1000);
 }
 
 static void testCollectionLayering(void) {
@@ -159,32 +137,59 @@ static void testRouting(void) {
   }
   assert(lunaNavNextView(UI_VIEW_CLASSIC, UI_VIEW_ALL_MASK) == UI_VIEW_PSBBN);
   assert(lunaNavNextView(UI_VIEW_PSBBN, UI_VIEW_ALL_MASK) == UI_VIEW_ORBIT);
-  assert(lunaNavNextView(UI_VIEW_ORBIT, UI_VIEW_ALL_MASK) == UI_VIEW_ORBS);
-  assert(lunaNavNextView(UI_VIEW_ORBS, UI_VIEW_ALL_MASK) == UI_VIEW_GRID);
-  assert(lunaNavNextView(UI_VIEW_GRID, UI_VIEW_ALL_MASK) == UI_VIEW_SAVE_ICONS);
-  assert(lunaNavNextView(UI_VIEW_SAVE_ICONS, UI_VIEW_ALL_MASK) == UI_VIEW_CLASSIC);
+  assert(lunaNavNextView(UI_VIEW_ORBIT, UI_VIEW_ALL_MASK) == UI_VIEW_3D);
+  assert(lunaNavNextView(UI_VIEW_3D, UI_VIEW_ALL_MASK) == UI_VIEW_ORBS);
+  assert(lunaNavNextView(UI_VIEW_ORBS, UI_VIEW_ALL_MASK) == UI_VIEW_CLASSIC);
+  assert(lunaNavNextView(UI_VIEW_GRID, UI_VIEW_ALL_MASK) == UI_VIEW_CLASSIC);
   assert(lunaNavNextView(UI_VIEW_CLASSIC, UI_VIEW_DEFAULT_MASK) == UI_VIEW_PSBBN);
   assert(lunaNavNextView(UI_VIEW_PSBBN, UI_VIEW_DEFAULT_MASK) == UI_VIEW_ORBIT);
-  assert(lunaNavNextView(UI_VIEW_ORBIT, UI_VIEW_DEFAULT_MASK) == UI_VIEW_CLASSIC);
+  assert(lunaNavNextView(UI_VIEW_ORBIT, UI_VIEW_DEFAULT_MASK) == UI_VIEW_3D);
+  assert(lunaNavNextView(UI_VIEW_3D, UI_VIEW_DEFAULT_MASK) == UI_VIEW_CLASSIC);
   assert(lunaNavNextView(UI_VIEW_CLASSIC, (1U << UI_VIEW_GRID) | (1U << UI_VIEW_ORBS)) == UI_VIEW_ORBS);
   assert(lunaNavNextView(UI_VIEW_GRID, (1U << UI_VIEW_GRID) | (1U << UI_VIEW_ORBS)) == UI_VIEW_ORBS);
-  assert(lunaNavNextView(UI_VIEW_ORBS, (1U << UI_VIEW_GRID) | (1U << UI_VIEW_ORBS)) == UI_VIEW_GRID);
+  assert(lunaNavNextView(UI_VIEW_ORBS, (1U << UI_VIEW_GRID) | (1U << UI_VIEW_ORBS)) == UI_VIEW_ORBS);
   assert(lunaNavNextView(UI_VIEW_PSBBN, (1U << UI_VIEW_ORBIT) | (1U << UI_VIEW_GRID)) == UI_VIEW_ORBIT);
-  assert(lunaNavNextView(UI_VIEW_ORBIT, (1U << UI_VIEW_ORBS) | (1U << UI_VIEW_SAVE_ICONS)) == UI_VIEW_ORBS);
-  assert(lunaNavNextView(UI_VIEW_SAVE_ICONS, (1U << UI_VIEW_ORBIT) | (1U << UI_VIEW_GRID)) == UI_VIEW_ORBIT);
-  assert(lunaNavNextView(UI_VIEW_ORBIT, 1U << UI_VIEW_GRID) == UI_VIEW_GRID);
-  assert(lunaNavNextView(UI_VIEW_GRID, 1U << UI_VIEW_GRID) == UI_VIEW_GRID);
-  for (int current = UI_VIEW_CLASSIC; current <= UI_VIEW_SAVE_ICONS; current++)
-    for (int enabled = UI_VIEW_CLASSIC; enabled <= UI_VIEW_SAVE_ICONS; enabled++)
-      assert(lunaNavNextView((UILibraryView)current, 1U << enabled) ==
-             (UILibraryView)enabled);
+  assert(lunaNavNextView(UI_VIEW_ORBIT, (1U << UI_VIEW_ORBS) | (1U << UI_VIEW_GRID)) == UI_VIEW_ORBS);
+  assert(lunaNavNextView(UI_VIEW_ORBIT, 1U << UI_VIEW_GRID) == UI_VIEW_CLASSIC);
+  assert(lunaNavNextView(UI_VIEW_GRID, 1U << UI_VIEW_GRID) == UI_VIEW_CLASSIC);
+  for (int current = UI_VIEW_CLASSIC; current < UI_VIEW_COUNT; current++)
+    for (int enabled = UI_VIEW_CLASSIC; enabled < UI_VIEW_COUNT; enabled++)
+      assert(lunaNavNextView(lunaViewCycleOrder[current], 1U << lunaViewCycleOrder[enabled]) ==
+             lunaViewCycleOrder[enabled]);
+  assert((UI_VIEW_ALL_MASK & (1U << UI_VIEW_GRID)) == 0);
+  assert((UI_VIEW_ALL_MASK & (1U << 5)) == 0);
+  assert(lunaNavNextView((UILibraryView)5, UI_VIEW_ALL_MASK) == UI_VIEW_CLASSIC);
+  assert(strcmp(lunaNavViewLabel((UILibraryView)5), "View") == 0);
+  assert((UI_VIEW_ALL_MASK & (1U << 6)) == 0);
+  assert(lunaNavNextView((UILibraryView)6, UI_VIEW_ALL_MASK) == UI_VIEW_CLASSIC);
+  assert(strcmp(lunaNavViewLabel((UILibraryView)6), "View") == 0);
+  assert(lunaNavNextView(UI_VIEW_ORBIT, (1U << 6) | (1U << UI_VIEW_3D)) == UI_VIEW_3D);
   assert(lunaNavNextView(UI_VIEW_ORBS, 0) == UI_VIEW_CLASSIC);
   assert(strcmp(lunaNavViewLabel(UI_VIEW_CLASSIC), "List") == 0);
   assert(strcmp(lunaNavViewLabel(UI_VIEW_PSBBN), "Collections") == 0);
   assert(strcmp(lunaNavViewLabel(UI_VIEW_ORBIT), "Orbit") == 0);
   assert(strcmp(lunaNavViewLabel(UI_VIEW_ORBS), "Scroll") == 0);
-  assert(strcmp(lunaNavViewLabel(UI_VIEW_GRID), "Grid") == 0);
-  assert(strcmp(lunaNavViewLabel(UI_VIEW_SAVE_ICONS), "Save Icons") == 0);
+  assert(strcmp(lunaNavViewLabel(UI_VIEW_GRID), "View") == 0);
+  assert(strcmp(lunaNavViewLabel(UI_VIEW_3D), "3D") == 0);
+}
+
+static void testCaseGridNavigation(void) {
+  assert(CASE_GRID_COLUMNS == 6);
+  assert(CASE_GRID_PAGE_SIZE == 24);
+  assert(lunaNavCaseGridVertical(84, 0, 1) == 6);
+  assert(lunaNavCaseGridVertical(84, 19, 1) == 25);
+  assert(lunaNavCaseGridVertical(84, 0, -1) == 78);
+  assert(lunaNavCaseGridVertical(84, 79, 1) == 1);
+  assert(lunaNavCaseGridVertical(3, 2, -1) == 2);
+  assert(lunaNavCaseGridVertical(0, 0, 1) == 0);
+  assert(lunaNavCaseGridPage(84, 0, 1) == 24);
+  assert(lunaNavCaseGridPage(84, 19, 1) == 43);
+  assert(lunaNavCaseGridPage(84, 63, 1) == 83);
+  assert(lunaNavCaseGridPage(84, 79, 1) == 7);
+  assert(lunaNavCaseGridPage(84, 83, 1) == 11);
+  assert(lunaNavCaseGridPage(84, 0, -1) == 72);
+  assert(lunaNavCaseGridPage(3, 2, 1) == 2);
+  assert(lunaNavCaseGridPage(0, 0, 1) == 0);
 }
 
 static void testMarkedNavigation(void) {
@@ -237,8 +242,7 @@ static void testQuickMenu(void) {
 int main(void) {
   testQuickMenu();
   testWrapping();
-  testGridNavigation();
-  testBufferSelection();
+  testCaseGridNavigation();
   testTiming();
   testCollectionLayering();
   testCollectionFastScan();

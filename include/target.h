@@ -6,6 +6,7 @@
 
 // Defined in devices.h
 struct DeviceMapEntry;
+struct LunaGenreIndex;
 
 // An entry in TargetList
 typedef struct Target {
@@ -13,6 +14,7 @@ typedef struct Target {
   char *fullPath;         // Full path to ISO
   char *name;             // Target name (extracted from file name)
   char *id;               // Title ID
+  char genre[48];         // Primary genre from CFG/<TitleID>.cfg; empty means Uncategorized.
   struct DeviceMapEntry *device; // Device entry
 
   struct Target *prev; // Previous target in the list
@@ -24,6 +26,7 @@ typedef struct {
   int total;     // Total number of targets
   Target *first; // First target
   Target *last;  // Last target
+  struct LunaGenreIndex *genres; // Owned index; its target pointers are borrowed.
 } TargetList;
 
 // Completely frees TargetList. Passed pointer will not be valid after this function executes

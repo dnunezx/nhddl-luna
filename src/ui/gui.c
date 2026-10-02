@@ -34,7 +34,6 @@
 #define PSBBN_TIMER_TICKS_PER_MS 576ULL
 #define GRID_LEFT_SHOULDERS PAD_L2
 #define GRID_RIGHT_SHOULDERS PAD_R2
-#define IS_GRID_VIEW(v) ((v) == UI_VIEW_GRID || (v) == UI_VIEW_SAVE_ICONS)
 #define SPLASH_MIN_VISIBLE_MS 3400
 #define LIBRARY_RETURN_FADE_MS 180
 #define CLASSIC_LIST_ENTRY_SLIDE_MS 360
@@ -295,40 +294,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   int collectionVisualTitleIdx = -1;
   int collectionVisualCoverIdx = PSBBN_COVER_CACHE_FOCUS;
   int collectionActionCoverIdx = PSBBN_COVER_CACHE_FOCUS;
-  int gridActivePageBuffer = 0;
-  int gridIncomingPageBuffer = -1;
-  int gridPreviousPageBuffer = -1;
-  int gridActivePageBase = -1;
-  int gridIncomingPageBase = -1;
-  int gridPageBases[GRID_PAGE_BUFFERS] = {-1, -1, -1};
-  int gridPageComplete[GRID_PAGE_BUFFERS] = {0, 0, 0};
-  int gridPageNextSlot[GRID_PAGE_BUFFERS] = {0, 0, 0};
-  int gridSelectedActiveBuffer = 0;
-  int gridSelectedIncomingBuffer = 1;
-  int gridSelectedActiveIdx = -1;
-  int gridSelectedRequestedIdx = -1;
-  int gridSelectedAttemptedIdx = -1;
-  int gridPendingSelectedIdx = -1;
-  int gridPendingSelectedCoverIdx = -1;
-  int gridPageDirection = 0;
-  int gridPrefetchDirection = 1;
-  int saveIconDetailIdx = -1;
-  int saveIconSpinFrame = 0;
-  int saveIconSpinUnavailable = 0;
-  uint32_t saveIconNextSpinMs = 0;
-  int gridCascadeActive = 0;
-  int gridCascadeDirection = 0;
-  uint32_t gridCascadeStart = 0;
-  int gridShoulderDirection = 0;
-  uint32_t gridShoulderHoldStart = 0;
-  int gridFastTrackActive = 0;
-  int gridFastTrackSettling = 0;
-  int gridFastTrackDirection = 0;
-  int gridFastTrackSelectedIdx = -1;
-  int gridFastTrackPreviousPageBase = -1;
-  int gridFastTrackPageBase = -1;
-  uint32_t gridFastTrackSlideStart = 0;
-  uint32_t gridFastTrackNextStep = 0;
   int orbitRandomActive = 0;
   int orbitRandomTargetIdx = -1;
   int orbitRandomDirection = 1;
@@ -400,6 +365,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   }
   if (view == UI_VIEW_ORBIT)
     resetAmbientOrbsOrbit(uiNowMs());
+  if (view == UI_VIEW_3D)
+    resetCaseGrid();
   libraryBackground = loadLibraryBackground(curTarget);
   if (setLibraryBackground((LibraryBackground)libraryBackground))
     libraryBackground = LIBRARY_BACKGROUND_STARS;
@@ -470,6 +437,10 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   while (1) {
     gsKit_clear(gsGlobal, BGColor);
     gsKit_TexManager_nextFrame(gsGlobal);
+    // A decode may finish after 3D releases its slots. Drain the
+    // invalidated result even while another view is active.
+    if (view != UI_VIEW_3D)
+      serviceGridArt();
     const UILibraryView nextView = lunaNavNextView(view, enabledViews);
     const char *nextViewLabel = nextView == view ? "Only view" :
                                 lunaNavViewLabel(nextView);
@@ -562,7 +533,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       }
     }
 
-    if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT || view == UI_VIEW_ORBS) {
+    if (view == UI_VIEW_3D) {
+      drawCaseGrid(titles, selectedTitleIdx, uiNowMs());
+    } else if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT || view == UI_VIEW_ORBS) {
       TargetList *flowTitles = titles;
       int flowSelectedTitleIdx = selectedTitleIdx;
       uint32_t now = uiNowMs();
@@ -680,259 +653,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                      scrollFast.active, libraryViewEntryProgress(entryView, view, entryStartMs, now),
                      now, nextViewLabel);
       }
-    } else if (IS_GRID_VIEW(view)) {
-      setGridSaveIconArtwork(view == UI_VIEW_SAVE_ICONS);
-      int didLoadArtwork = 0;
-      int gridCascadeProgress = 0;
-      int pendingPageBuffer = -1;
-      int pendingPageBase = -1;
-      int loadPageBuffer = -1;
-      int loadPrioritySlot = -1;
-      uint32_t now = uiNowMs();
-      if (!gridFastTrackActive && gridShoulderDirection == 0)
-        didLoadArtwork = serviceGridArt();
-
-      if (gridActivePageBase < 0) {
-        gridActivePageBase = (selectedTitleIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
-        prepareGridPageBuffer(gridActivePageBuffer, gridActivePageBase, gridPageBases,
-                              gridPageComplete, gridPageNextSlot);
-      }
-      const int activeSelectedSlot = selectedTitleIdx - gridActivePageBase;
-      const int selectorMoving = gridSelectorIsMoving(selectedTitleIdx, gridActivePageBase, now);
-
-      // A held shoulder pauses new artwork jobs and texture adoption. An
-      // already running decode may finish while fast-track moves page shells.
-      if (!gridFastTrackActive && gridShoulderDirection == 0) {
-        if (!gridCascadeActive && gridPendingSelectedIdx >= 0) {
-          pendingPageBase = (gridPendingSelectedIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
-          pendingPageBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, pendingPageBase);
-          if (pendingPageBuffer < 0) {
-            pendingPageBuffer = lunaNavChooseBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridActivePageBuffer,
-                                                    gridPreviousPageBuffer, gridIncomingPageBuffer);
-            if (pendingPageBuffer >= 0)
-              prepareGridPageBuffer(pendingPageBuffer, pendingPageBase, gridPageBases,
-                                    gridPageComplete, gridPageNextSlot);
-          }
-          int pendingSlot = gridPendingSelectedIdx - pendingPageBase;
-          if (pendingPageBuffer >= 0 && !gridPageSlotReady(pendingPageBuffer, pendingSlot)) {
-            loadPageBuffer = pendingPageBuffer;
-            loadPrioritySlot = pendingSlot;
-          }
-        }
-
-        // Finish visible placeholders only while the selector is at rest. A
-        // newly selected tile still gets priority over the rest of its page.
-        if (loadPageBuffer < 0 && gridPendingSelectedIdx < 0 && !gridCascadeActive &&
-            !gridPageComplete[gridActivePageBuffer] &&
-            (!selectorMoving || !gridPageSlotReady(gridActivePageBuffer, activeSelectedSlot))) {
-          loadPageBuffer = gridActivePageBuffer;
-          if (!gridPageSlotReady(gridActivePageBuffer, activeSelectedSlot))
-            loadPrioritySlot = activeSelectedSlot;
-        }
-
-        if (loadPageBuffer >= 0 && !didLoadArtwork &&
-            !(gridPendingSelectedIdx < 0 && gridSelectedActiveIdx != selectedTitleIdx) &&
-            !(pendingPageBuffer >= 0 &&
-              gridPageSlotReady(pendingPageBuffer,
-                                    gridPendingSelectedIdx - pendingPageBase))) {
-          gridPageComplete[loadPageBuffer] =
-              loadGridPageStep(titles, gridPageBases[loadPageBuffer], loadPageBuffer,
-                               &gridPageNextSlot[loadPageBuffer], loadPrioritySlot,
-                               &didLoadArtwork);
-        }
-
-        if (!gridCascadeActive && pendingPageBuffer >= 0 &&
-            gridPageSlotReady(pendingPageBuffer, gridPendingSelectedIdx - pendingPageBase)) {
-          if (!didLoadArtwork && gridPendingSelectedCoverIdx != gridPendingSelectedIdx) {
-            Target *pendingTarget = getTargetByIdx(titles, gridPendingSelectedIdx);
-            if (refreshGridSelectedCover(pendingTarget, gridSelectedIncomingBuffer) >= 0)
-              gridPendingSelectedCoverIdx = gridPendingSelectedIdx;
-            didLoadArtwork = 1;
-          }
-
-          if (gridPendingSelectedCoverIdx == gridPendingSelectedIdx) {
-            int previousSelectedBuffer = gridSelectedActiveBuffer;
-            gridSelectedActiveBuffer = gridSelectedIncomingBuffer;
-            gridSelectedIncomingBuffer = previousSelectedBuffer;
-            gridSelectedActiveIdx = gridPendingSelectedIdx;
-            gridSelectedRequestedIdx = gridPendingSelectedIdx;
-            gridSelectedAttemptedIdx = gridPendingSelectedIdx;
-            releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
-            gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
-
-            selectedTitleIdx = gridPendingSelectedIdx;
-            curTarget = getTargetByIdx(titles, selectedTitleIdx);
-            if (gridFastTrackSettling) {
-              // Fast-track already animated the lightweight destination shell.
-              // Promote its completed artwork in place instead of replaying the
-              // normal page cascade after the last PNG finishes loading.
-              int previousActiveBuffer = gridActivePageBuffer;
-              gridActivePageBuffer = pendingPageBuffer;
-              gridActivePageBase = pendingPageBase;
-              gridPreviousPageBuffer = previousActiveBuffer;
-              gridIncomingPageBuffer = -1;
-              gridIncomingPageBase = -1;
-              gridPrefetchDirection = (gridFastTrackDirection != 0) ? gridFastTrackDirection : gridPageDirection;
-              gridPendingSelectedIdx = -1;
-              gridPendingSelectedCoverIdx = -1;
-              gridPageDirection = 0;
-              gridCascadeActive = 0;
-              gridCascadeDirection = 0;
-              gridCascadeProgress = 0;
-              gridFastTrackSettling = 0;
-            } else {
-              gridIncomingPageBuffer = pendingPageBuffer;
-              gridIncomingPageBase = pendingPageBase;
-              gridCascadeDirection = gridPageDirection;
-              if (gridCascadeDirection == 0)
-                gridCascadeDirection = (gridIncomingPageBase > gridActivePageBase) ? 1 : -1;
-              gridCascadeStart = uiNowMs();
-              gridCascadeActive = 1;
-            }
-          }
-        }
-
-      now = uiNowMs();
-      if (gridCascadeActive) {
-        uint32_t elapsed = now - gridCascadeStart;
-        gridCascadeProgress = (elapsed >= GRID_CASCADE_DURATION_MS)
-                                  ? 1000
-                                  : (int)((elapsed * 1000ULL) / GRID_CASCADE_DURATION_MS);
-        if (gridCascadeProgress >= 1000) {
-          int previousActiveBuffer = gridActivePageBuffer;
-          gridActivePageBuffer = gridIncomingPageBuffer;
-          gridActivePageBase = gridIncomingPageBase;
-          gridPreviousPageBuffer = previousActiveBuffer;
-          gridIncomingPageBuffer = -1;
-          gridIncomingPageBase = -1;
-          gridPrefetchDirection = gridCascadeDirection;
-          gridPendingSelectedIdx = -1;
-          gridPendingSelectedCoverIdx = -1;
-          gridPageDirection = 0;
-          gridCascadeActive = 0;
-          gridCascadeDirection = 0;
-          gridCascadeProgress = 0;
-        }
-      }
-
-      if (gridSelectedRequestedIdx != selectedTitleIdx) {
-        gridSelectedRequestedIdx = selectedTitleIdx;
-        gridSelectedAttemptedIdx = -1;
-      }
-
-      if (!gridFastTrackActive && gridShoulderDirection == 0 && !didLoadArtwork &&
-          gridSelectedActiveIdx != gridSelectedRequestedIdx &&
-          gridSelectedAttemptedIdx != gridSelectedRequestedIdx) {
-        Target *selectedTarget = getTargetByIdx(titles, gridSelectedRequestedIdx);
-        int coverResult = refreshGridSelectedCover(selectedTarget, gridSelectedIncomingBuffer);
-        if (coverResult >= 0)
-          gridSelectedAttemptedIdx = gridSelectedRequestedIdx;
-        if (coverResult > 0) {
-          int previousActiveBuffer = gridSelectedActiveBuffer;
-          gridSelectedActiveBuffer = gridSelectedIncomingBuffer;
-          gridSelectedActiveIdx = gridSelectedRequestedIdx;
-          gridSelectedIncomingBuffer = previousActiveBuffer;
-          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
-          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
-        } else if (coverResult == 0) {
-          releaseGridTexture(gridSelectedTextures[gridSelectedActiveBuffer]);
-          gridSelectedLoaded[gridSelectedActiveBuffer] = 0;
-          gridSelectedActiveIdx = gridSelectedRequestedIdx;
-        }
-        didLoadArtwork = 1;
-      }
-
-      if (view == UI_VIEW_SAVE_ICONS) {
-        if (saveIconDetailIdx != selectedTitleIdx) {
-          releaseSaveIconDetails();
-          saveIconDetailIdx = selectedTitleIdx;
-          saveIconSpinFrame = 0;
-          saveIconSpinUnavailable = 0;
-          saveIconNextSpinMs = 0;
-        }
-      }
-      if (view == UI_VIEW_SAVE_ICONS && !gridFastTrackActive && !gridCascadeActive &&
-          gridPendingSelectedIdx < 0) {
-        Target *detailTarget = getTargetByIdx(titles, selectedTitleIdx);
-        if (!didLoadArtwork && !saveIconSpinUnavailable &&
-            uiNowMs() >= saveIconNextSpinMs) {
-          if (refreshSaveIconSpin(detailTarget, saveIconSpinFrame) == 0)
-            saveIconSpinFrame = (saveIconSpinFrame + 1) % 12;
-          else
-            saveIconSpinUnavailable = 1;
-          saveIconNextSpinMs = uiNowMs() + 180;
-          didLoadArtwork = 1;
-        }
-      }
-
-        if (!didLoadArtwork && !selectorMoving && !gridCascadeActive && gridPendingSelectedIdx < 0 &&
-            gridPageComplete[gridActivePageBuffer] && gridSelectedActiveIdx == gridSelectedRequestedIdx) {
-          for (int prefetchPass = 0; prefetchPass < 2; prefetchPass++) {
-            int direction = (prefetchPass == 0) ? gridPrefetchDirection : -gridPrefetchDirection;
-            int prefetchPageBase = lunaNavPageBase(titles->total, gridActivePageBase, direction);
-            int prefetchBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, prefetchPageBase);
-
-            if (prefetchBuffer < 0) {
-              prefetchBuffer = lunaNavChooseBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridActivePageBuffer,
-                                                   gridPreviousPageBuffer, gridIncomingPageBuffer);
-              if (prefetchBuffer >= 0)
-                prepareGridPageBuffer(prefetchBuffer, prefetchPageBase, gridPageBases,
-                                      gridPageComplete, gridPageNextSlot);
-            }
-            if (prefetchBuffer >= 0 && !gridPageComplete[prefetchBuffer]) {
-              gridPageComplete[prefetchBuffer] =
-                  loadGridPageStep(titles, gridPageBases[prefetchBuffer], prefetchBuffer,
-                                   &gridPageNextSlot[prefetchBuffer], -1, &didLoadArtwork);
-              break;
-            }
-          }
-        }
-      }
-
-      // All artwork work for this frame is complete. From here onward every
-      // moving element uses this one timestamp.
-      now = uiNowMs();
-      if (entryPending) {
-        entryStartMs = now;
-        entryPending = 0;
-      }
-      int gridEntryProgress = libraryViewEntryProgress(entryView, view, entryStartMs, now);
-      if (gridCascadeActive) {
-        uint32_t elapsed = now - gridCascadeStart;
-        gridCascadeProgress = (elapsed >= GRID_CASCADE_DURATION_MS)
-                                  ? 1000
-                                  : (int)((elapsed * 1000ULL) / GRID_CASCADE_DURATION_MS);
-      }
-
-      if (gridFastTrackActive) {
-        uint32_t elapsed = now - gridFastTrackSlideStart;
-        int fastTrackProgress = (elapsed >= GRID_FAST_TRACK_STEP_MS)
-                                    ? 1000
-                                    : (int)((elapsed * 1000ULL) / GRID_FAST_TRACK_STEP_MS);
-        int previousBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridFastTrackPreviousPageBase);
-        int destinationBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridFastTrackPageBase);
-
-        if (previousBuffer < 0 || !gridPageComplete[previousBuffer])
-          previousBuffer = -1;
-        if (destinationBuffer < 0 || !gridPageComplete[destinationBuffer])
-          destinationBuffer = -1;
-        drawPSBBNGrid(titles, gridFastTrackSelectedIdx, gridFastTrackPreviousPageBase, previousBuffer,
-                      gridFastTrackPageBase, destinationBuffer, -1,
-                      gridFastTrackDirection, fastTrackProgress, gridEntryProgress, now,
-                      nextViewLabel);
-      } else if (gridFastTrackSettling && !gridCascadeActive) {
-        int destinationBuffer = lunaNavFindBuffer(gridPageBases, GRID_PAGE_BUFFERS, gridFastTrackPageBase);
-        if (destinationBuffer < 0)
-          destinationBuffer = -1;
-        drawPSBBNGrid(titles, gridFastTrackSelectedIdx, gridFastTrackPageBase, destinationBuffer,
-                      -1, -1, -1, gridFastTrackDirection, 0, gridEntryProgress, now,
-                      nextViewLabel);
-      } else {
-        drawPSBBNGrid(titles, selectedTitleIdx, gridActivePageBase, gridActivePageBuffer,
-                      gridIncomingPageBase, gridIncomingPageBuffer, gridSelectedActiveBuffer,
-                      gridCascadeDirection, gridCascadeProgress, gridEntryProgress, now,
-                      nextViewLabel);
-      }
     } else {
       int favoritesEmpty = favoritesOnly && lunaNavMarkedCount(favoriteFlags, titles->total) == 0;
       const uint32_t frameNowMs = uiNowMs();
@@ -987,9 +707,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     // Orbit owns the shared PSBBN slots, so it cannot prewarm Collection.
     if (titles->total > 0 &&
         ((view == UI_VIEW_CLASSIC && !classicNavHeld && classicArtRequestedIdx < 0) ||
-         (view == UI_VIEW_ORBS && !scrollFast.active) ||
-         (IS_GRID_VIEW(view) && !gridCascadeActive && !gridFastTrackActive &&
-          gridPageComplete[gridActivePageBuffer]))) {
+         (view == UI_VIEW_ORBS && !scrollFast.active))) {
       if (psbbnCoverBaseIdx != selectedTitleIdx)
         refreshCollectionCovers(titles, selectedTitleIdx, psbbnCoverBaseIdx);
       psbbnCoverBaseIdx = selectedTitleIdx;
@@ -1046,36 +764,11 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         selectedTitleIdx = orbitVisibleTitleIndex();
       else if (titles->total > 0 && view == UI_VIEW_ORBS && orbsVisualTitleIdx >= 0)
         selectedTitleIdx = orbsVisualTitleIdx;
-      else if (IS_GRID_VIEW(view) && (gridFastTrackActive || gridFastTrackSettling))
-        selectedTitleIdx = gridFastTrackSelectedIdx;
-      if (IS_GRID_VIEW(view)) {
-        releaseGridCovers();
-        gridActivePageBase = -1;
-        gridIncomingPageBase = -1;
-        gridIncomingPageBuffer = -1;
-        gridPreviousPageBuffer = -1;
-        gridSelectedActiveIdx = -1;
-        gridSelectedRequestedIdx = -1;
-        gridSelectedAttemptedIdx = -1;
-        saveIconDetailIdx = -1;
-        for (int buffer = 0; buffer < GRID_PAGE_BUFFERS; buffer++) {
-          gridPageBases[buffer] = -1;
-          gridPageComplete[buffer] = 0;
-          gridPageNextSlot[buffer] = 0;
-        }
-      }
       if (titles->total > 0)
         curTarget = getTargetByIdx(titles, selectedTitleIdx);
       psbbnAnimationTargetIdx = -1;
       psbbnAnimationStartOffset = 0;
       psbbnOutgoingTitleIdx = -1;
-      gridFastTrackActive = 0;
-      gridFastTrackSettling = 0;
-      gridShoulderDirection = 0;
-      gridShoulderHoldStart = 0;
-      gridPendingSelectedIdx = -1;
-      gridPendingSelectedCoverIdx = -1;
-      gridCascadeActive = 0;
       collectionScan = (LunaCollectionScan){0};
       scrollFast = (LunaScrollFast){0};
       orbitRandomActive = 0;
@@ -1136,116 +829,11 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       scrollFastStep = lunaScrollFastUpdate(&scrollFast, direction, uiNowMs());
     }
 
-    if (IS_GRID_VIEW(view)) {
-      uint32_t now = uiNowMs();
-      int leftHeld = (input & GRID_LEFT_SHOULDERS) != 0;
-      int rightHeld = (input & GRID_RIGHT_SHOULDERS) != 0;
-      int shoulderDirection = (rightHeld && !leftHeld) ? 1 : ((leftHeld && !rightHeld) ? -1 : 0);
-
-      if (shoulderDirection == 0) {
-        if (gridFastTrackActive) {
-          int destinationPageBase = (gridFastTrackSelectedIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
-
-          gridFastTrackActive = 0;
-          gridPageDirection = gridFastTrackDirection;
-          if (destinationPageBase == gridActivePageBase) {
-            gridPendingSelectedIdx = -1;
-            gridPendingSelectedCoverIdx = -1;
-            selectedTitleIdx = gridFastTrackSelectedIdx;
-            curTarget = getTargetByIdx(titles, selectedTitleIdx);
-            gridFastTrackSettling = 0;
-          } else {
-            gridPendingSelectedIdx = gridFastTrackSelectedIdx;
-            gridPendingSelectedCoverIdx = -1;
-            gridFastTrackSettling = 1;
-          }
-          input = 0;
-        } else if (gridShoulderDirection != 0) {
-          // A shoulder released before the hold threshold is a normal
-          // one-page tap. Deferring this decision prevents any art decode
-          // from starting while the user may still enter fast-track.
-          int navigationIdx = (gridPendingSelectedIdx >= 0) ? gridPendingSelectedIdx : selectedTitleIdx;
-          int candidate = lunaNavGridPage(titles->total, navigationIdx, gridShoulderDirection);
-
-          if ((candidate / GRID_PAGE_SIZE) * GRID_PAGE_SIZE == gridActivePageBase) {
-            gridPendingSelectedIdx = -1;
-            selectedTitleIdx = candidate;
-          } else {
-            gridPendingSelectedIdx = candidate;
-          }
-          if (gridPendingSelectedCoverIdx >= 0 && gridPendingSelectedCoverIdx != gridPendingSelectedIdx) {
-            releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
-            gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
-            gridPendingSelectedCoverIdx = -1;
-          }
-          gridPageDirection = gridShoulderDirection;
-          input = 0;
-        }
-        gridShoulderDirection = 0;
-        gridShoulderHoldStart = 0;
-      } else if (shoulderDirection != gridShoulderDirection) {
-        gridShoulderDirection = shoulderDirection;
-        gridShoulderHoldStart = now;
-
-        // Once fast-track is active, reversing direction remains immediate;
-        // the user has already satisfied the hold threshold.
-        if (gridFastTrackActive) {
-          gridFastTrackDirection = shoulderDirection;
-          gridFastTrackPreviousPageBase = gridFastTrackPageBase;
-          gridFastTrackSelectedIdx = lunaNavGridPage(titles->total, gridFastTrackSelectedIdx, shoulderDirection);
-          gridFastTrackPageBase = (gridFastTrackSelectedIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
-          gridFastTrackSlideStart = now;
-          gridFastTrackNextStep = now + GRID_FAST_TRACK_STEP_MS;
-        }
-      } else if (!gridFastTrackActive && now - gridShoulderHoldStart >= GRID_FAST_TRACK_HOLD_MS) {
-        int navigationIdx = (gridPendingSelectedIdx >= 0) ? gridPendingSelectedIdx : selectedTitleIdx;
-
-        // If the normal first page change already reached its cascade, accept
-        // that prepared page immediately before entering lightweight tracking.
-        if (gridCascadeActive && gridIncomingPageBuffer >= 0) {
-          int previousActiveBuffer = gridActivePageBuffer;
-          gridActivePageBuffer = gridIncomingPageBuffer;
-          gridActivePageBase = gridIncomingPageBase;
-          gridPreviousPageBuffer = previousActiveBuffer;
-          gridIncomingPageBuffer = -1;
-          gridIncomingPageBase = -1;
-          gridPrefetchDirection = gridCascadeDirection;
-          gridCascadeActive = 0;
-          gridCascadeDirection = 0;
-          gridCascadeStart = 0;
-          navigationIdx = selectedTitleIdx;
-        } else if (gridPendingSelectedCoverIdx >= 0) {
-          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
-          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
-        }
-
-        gridPendingSelectedIdx = -1;
-        gridPendingSelectedCoverIdx = -1;
-        gridFastTrackActive = 1;
-        gridFastTrackSettling = 0;
-        gridFastTrackDirection = shoulderDirection;
-        gridFastTrackPreviousPageBase = (navigationIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
-        gridFastTrackSelectedIdx = lunaNavGridPage(titles->total, navigationIdx, shoulderDirection);
-        gridFastTrackPageBase = (gridFastTrackSelectedIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
-        gridFastTrackSlideStart = now;
-        gridFastTrackNextStep = now + GRID_FAST_TRACK_STEP_MS;
-      } else if (gridFastTrackActive && now >= gridFastTrackNextStep) {
-        gridFastTrackPreviousPageBase = gridFastTrackPageBase;
-        gridFastTrackSelectedIdx = lunaNavGridPage(titles->total, gridFastTrackSelectedIdx, shoulderDirection);
-        gridFastTrackPageBase = (gridFastTrackSelectedIdx / GRID_PAGE_SIZE) * GRID_PAGE_SIZE;
-        gridFastTrackSlideStart = now;
-        gridFastTrackNextStep = now + GRID_FAST_TRACK_STEP_MS;
-      }
-    }
-
     if (forceViewSwitch) {
       // Reuse the normal view transition after disabling the active view.
       input = PAD_CIRCLE;
       prevInput = 0;
       frameCount = 0;
-      gridCascadeActive = 0;
-      gridFastTrackActive = 0;
-      gridShoulderDirection = 0;
       forceViewSwitch = 0;
     }
 
@@ -1320,17 +908,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       frameCount = 0;
       prevInput = input;
     }
-
-    // Grid shoulders are handled by the tap/hold state machine above.
-    if (IS_GRID_VIEW(view) && (input & (GRID_LEFT_SHOULDERS | GRID_RIGHT_SHOULDERS)))
-      continue;
-
-    // Page preparation is background work. Only the visible cascade gates
-    // interaction so page loading never feels like a frozen UI.
-    if (IS_GRID_VIEW(view) && gridCascadeActive)
-      continue;
-    if (IS_GRID_VIEW(view) && gridFastTrackActive)
-      continue;
 
     // Actions use the logo at the fixed Orbs marker even when the next
     // queued selection has not finished gliding into place.
@@ -1445,9 +1022,12 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
           suspendCollectionCovers();
       } else if (previousView == UI_VIEW_ORBS) {
         releaseOrbsArt();
-      } else if (IS_GRID_VIEW(previousView)) {
+      } else if (previousView == UI_VIEW_3D) {
         releaseGridCovers();
+        setGridCaseArtwork(0);
       }
+      if (view == UI_VIEW_3D)
+        resetCaseGrid();
 
       if (view == UI_VIEW_ORBIT && previousView != UI_VIEW_PSBBN &&
           previousView != UI_VIEW_ORBIT)
@@ -1461,42 +1041,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       psbbnOutgoingTitleIdx = -1;
       psbbnAnimationStartOffset = 0;
       psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
-      gridActivePageBuffer = 0;
-      gridIncomingPageBuffer = -1;
-      gridPreviousPageBuffer = -1;
-      gridActivePageBase = -1;
-      gridIncomingPageBase = -1;
-      for (int buffer = 0; buffer < GRID_PAGE_BUFFERS; buffer++) {
-        gridPageBases[buffer] = -1;
-        gridPageComplete[buffer] = 0;
-        gridPageNextSlot[buffer] = 0;
-      }
-      gridSelectedActiveBuffer = 0;
-      gridSelectedIncomingBuffer = 1;
-      gridSelectedActiveIdx = -1;
-      gridSelectedRequestedIdx = -1;
-      gridSelectedAttemptedIdx = -1;
-      gridPendingSelectedIdx = -1;
-      gridPendingSelectedCoverIdx = -1;
-      gridPageDirection = 0;
-      gridPrefetchDirection = 1;
-      saveIconDetailIdx = -1;
-      saveIconSpinFrame = 0;
-      saveIconSpinUnavailable = 0;
-      saveIconNextSpinMs = 0;
-      gridCascadeActive = 0;
-      gridCascadeDirection = 0;
-      gridCascadeStart = 0;
-      gridShoulderDirection = 0;
-      gridShoulderHoldStart = 0;
-      gridFastTrackActive = 0;
-      gridFastTrackSettling = 0;
-      gridFastTrackDirection = 0;
-      gridFastTrackSelectedIdx = -1;
-      gridFastTrackPreviousPageBase = -1;
-      gridFastTrackPageBase = -1;
-      gridFastTrackSlideStart = 0;
-      gridFastTrackNextStep = 0;
       orbitRandomActive = 0;
       orbitRandomTargetIdx = -1;
       orbitRandomButtonHeld = 0;
@@ -1555,38 +1099,14 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         orbitRandomNextStep = uiNowMs();
       }
       orbitRandomButtonHeld = 1;
-    } else if (IS_GRID_VIEW(view) && (input & (PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN))) {
-      int navigationIdx = (gridPendingSelectedIdx >= 0) ? gridPendingSelectedIdx : selectedTitleIdx;
-      int candidate = navigationIdx;
-      int direction;
-
+    } else if (view == UI_VIEW_3D && (input & (PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN))) {
       if (input & PAD_LEFT)
-        candidate = ((navigationIdx - 1) + titles->total) % titles->total;
+        selectedTitleIdx = lunaNavWrap(titles->total, selectedTitleIdx - 1);
       else if (input & PAD_RIGHT)
-        candidate = (navigationIdx + 1) % titles->total;
-      else if (input & PAD_UP)
-        candidate = lunaNavGridVertical(titles->total, navigationIdx, -1);
-      else if (input & PAD_DOWN)
-        candidate = lunaNavGridVertical(titles->total, navigationIdx, 1);
-
-      direction = lunaNavDirection(titles->total, navigationIdx, candidate);
-      if ((candidate / GRID_PAGE_SIZE) * GRID_PAGE_SIZE == gridActivePageBase) {
-        if (gridPendingSelectedCoverIdx >= 0) {
-          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
-          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
-        }
-        gridPendingSelectedIdx = -1;
-        gridPendingSelectedCoverIdx = -1;
-        selectedTitleIdx = candidate;
-      } else {
-        if (gridPendingSelectedCoverIdx >= 0 && gridPendingSelectedCoverIdx != candidate) {
-          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
-          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
-          gridPendingSelectedCoverIdx = -1;
-        }
-        gridPendingSelectedIdx = candidate;
-      }
-      gridPageDirection = direction;
+        selectedTitleIdx = lunaNavWrap(titles->total, selectedTitleIdx + 1);
+      else
+        selectedTitleIdx = lunaNavCaseGridVertical(titles->total, selectedTitleIdx,
+                                                  input & PAD_UP ? -1 : 1);
     } else if (input & (PAD_LEFT | PAD_UP)) {
       // Point to the previous title
       if (favoritesOnly) {
@@ -1607,21 +1127,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       }
     } else if (input & GRID_RIGHT_SHOULDERS) {
       // Switch to the next page.
-      if (IS_GRID_VIEW(view)) {
-        int navigationIdx = (gridPendingSelectedIdx >= 0) ? gridPendingSelectedIdx : selectedTitleIdx;
-        int candidate = lunaNavGridPage(titles->total, navigationIdx, 1);
-        if ((candidate / GRID_PAGE_SIZE) * GRID_PAGE_SIZE == gridActivePageBase) {
-          gridPendingSelectedIdx = -1;
-          selectedTitleIdx = candidate;
-        } else {
-          gridPendingSelectedIdx = candidate;
-        }
-        if (gridPendingSelectedCoverIdx >= 0 && gridPendingSelectedCoverIdx != gridPendingSelectedIdx) {
-          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
-          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
-          gridPendingSelectedCoverIdx = -1;
-        }
-        gridPageDirection = 1;
+      if (view == UI_VIEW_3D) {
+        selectedTitleIdx = lunaNavCaseGridPage(titles->total, selectedTitleIdx, 1);
       } else if (favoritesOnly) {
         int favoriteIdx = lunaNavMarkedPage(favoriteFlags, titles->total, selectedTitleIdx,
                                             maxTitlesPerPage, 1);
@@ -1636,21 +1143,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       }
     } else if (input & GRID_LEFT_SHOULDERS) {
       // Switch to the previous page.
-      if (IS_GRID_VIEW(view)) {
-        int navigationIdx = (gridPendingSelectedIdx >= 0) ? gridPendingSelectedIdx : selectedTitleIdx;
-        int candidate = lunaNavGridPage(titles->total, navigationIdx, -1);
-        if ((candidate / GRID_PAGE_SIZE) * GRID_PAGE_SIZE == gridActivePageBase) {
-          gridPendingSelectedIdx = -1;
-          selectedTitleIdx = candidate;
-        } else {
-          gridPendingSelectedIdx = candidate;
-        }
-        if (gridPendingSelectedCoverIdx >= 0 && gridPendingSelectedCoverIdx != gridPendingSelectedIdx) {
-          releaseGridTexture(gridSelectedTextures[gridSelectedIncomingBuffer]);
-          gridSelectedLoaded[gridSelectedIncomingBuffer] = 0;
-          gridPendingSelectedCoverIdx = -1;
-        }
-        gridPageDirection = -1;
+      if (view == UI_VIEW_3D) {
+        selectedTitleIdx = lunaNavCaseGridPage(titles->total, selectedTitleIdx, -1);
       } else if (favoritesOnly) {
         int favoriteIdx = lunaNavMarkedPage(favoriteFlags, titles->total, selectedTitleIdx,
                                             maxTitlesPerPage, -1);

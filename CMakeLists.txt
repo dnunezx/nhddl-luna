@@ -20,6 +20,7 @@ set(SOURCES
     src/favorites.c
     src/neutrino.c
     src/target.c
+    src/genres.c
     src/storage.c
     src/forwarder.c
 
@@ -38,8 +39,8 @@ set(SOURCES
   src/ui/collection_art.c
     src/ui/view_classic.c
     src/ui/view_collection.c
-  src/ui/view_grid.c
   src/ui/view_orbit.c
+  src/ui/view_3d.c
   src/ui/view_scroll.c
   src/ui/ambient_orbs.c
     src/ui/pad.c

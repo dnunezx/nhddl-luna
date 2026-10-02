@@ -18,13 +18,10 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
                          int flowOffset, int outgoingTitleIdx, int favoritesOnly, int fastScrolling,
                          int entryProgress, uint32_t frameNowMs,
                          const char *nextViewLabel);
-void drawPSBBNGrid(TargetList *titles, int selectedTitleIdx, int activeWindowBase,
-                   int activeWindowBuffer, int incomingWindowBase, int incomingWindowBuffer,
-                   int selectedCoverBuffer, int cascadeDirection, int cascadeProgress,
-                   int entryProgress, uint32_t frameNowMs,
-                   const char *nextViewLabel);
 void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers,
                int flowOffset, int randomActive, int entryProgress,
                uint32_t frameNowMs, const char *nextViewLabel);
+void resetCaseGrid(void);
+void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs);
 
 #endif

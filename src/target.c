@@ -1,4 +1,5 @@
 #include "target.h"
+#include "genres.h"
 #include "common.h"
 #include "devices/devices.h"
 #include <errno.h>
@@ -11,6 +12,8 @@
 
 // Completely frees TargetList. Passed pointer will not be valid after this function executes
 void freeTargetList(TargetList *result) {
+  lunaFreeGenreIndex(result->genres);
+  result->genres = NULL;
   Target *target = result->first;
   while (target != NULL) {
     target = freeTarget(result, target);
@@ -42,6 +45,7 @@ Target *copyTarget(Target *src) {
   Target *copy = calloc(1, sizeof(Target));
   if (!copy) return NULL;
   copy->idx = src->idx;
+  memcpy(copy->genre, src->genre, sizeof(copy->genre));
 
   copy->fullPath = strdup(src->fullPath);
   copy->name = strdup(src->name);
@@ -119,6 +123,8 @@ void insertIntoTargetList(TargetList *result, Target *title) {
 
 // Completely frees Target and returns pointer to the next target in the list
 Target *freeTarget(TargetList *targetList, Target *target) {
+  lunaFreeGenreIndex(targetList->genres);
+  targetList->genres = NULL;
   // Update target list if target is the first or the last element
   if (targetList->first == target) {
     targetList->first = target->next;
