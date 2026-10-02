@@ -44,11 +44,11 @@ static void testCollectionLayering(void) {
   int positions[PSBBN_COVER_CACHE_COUNT];
   uint8_t drawable[PSBBN_COVER_CACHE_COUNT];
   memset(drawable, 1, sizeof(drawable));
-  uint32_t duration = lunaNavDurationFrames(PSBBN_ANIMATION_DURATION_MS, 60);
+  uint32_t duration = PSBBN_ANIMATION_DURATION_MS;
 
   // The second held step starts before the first jacket has cleared focus.
-  int remaining = lunaNavClassicGlideFrameOffset(1000,
-                                               PSBBN_REPEAT_FRAMES_NTSC, duration);
+  int remaining = lunaNavAnimatedOffset(1000, 0, duration,
+                                        PSBBN_REPEAT_FRAMES_NTSC * 1000U / 60);
   assert(remaining > 0 && remaining < 1000);
   for (int direction = -1; direction <= 1; direction += 2) {
     int offset = direction * (1000 + remaining);
@@ -66,8 +66,8 @@ static void testCollectionLayering(void) {
   }
 
   // Preserve a single forward tap's outgoing jacket throughout its glide.
-  for (uint32_t frame = 0; frame <= duration; frame++) {
-    int offset = lunaNavClassicGlideFrameOffset(1000, frame, duration);
+  for (uint32_t elapsedMs = 0; elapsedMs <= duration; elapsedMs++) {
+    int offset = lunaNavAnimatedOffset(1000, 0, duration, elapsedMs);
     for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++)
       positions[i] = (i - PSBBN_COVER_CACHE_FOCUS) * 1000 + offset;
     assert(lunaNavCollectionForeground(positions, drawable,

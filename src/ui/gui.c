@@ -289,7 +289,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   int psbbnAnimationStartOffset = 0;
   uint32_t psbbnAnimationStart = 0;
   uint32_t psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
-  uint32_t psbbnAnimationElapsedFrames = 0;
   LunaCollectionScan collectionScan = {0};
   int collectionVisualTitleIdx = -1;
   int collectionVisualCoverIdx = PSBBN_COVER_CACHE_FOCUS;
@@ -540,7 +539,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       int flowSelectedTitleIdx = selectedTitleIdx;
       uint32_t now = uiNowMs();
       int flowOffset;
-      int collectionFps = (gsGlobal->Mode == GS_MODE_PAL) ? 50 : 60;
 
       // Both cover workers return finished thumbnails without making the
       // glide clock wait for file I/O or decoding.
@@ -562,14 +560,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         psbbnAnimationStartOffset = 0;
         psbbnAnimationStart = now;
         psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
-        psbbnAnimationElapsedFrames = 0;
       } else if (psbbnAnimationTargetIdx != flowSelectedTitleIdx) {
-        int currentOffset = view == UI_VIEW_PSBBN
-            ? lunaNavClassicGlideFrameOffset(psbbnAnimationStartOffset,
-                psbbnAnimationElapsedFrames,
-                lunaNavDurationFrames(psbbnAnimationDuration, collectionFps))
-            : lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart,
-                                    psbbnAnimationDuration, now);
+        int currentOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset,
+            psbbnAnimationStart, psbbnAnimationDuration, now);
         int direction = lunaNavDirection(flowTitles->total, psbbnAnimationTargetIdx, flowSelectedTitleIdx);
         psbbnOutgoingTitleIdx = psbbnAnimationTargetIdx;
         psbbnAnimationStartOffset = currentOffset + direction * 1000;
@@ -590,15 +583,12 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         }
         psbbnAnimationTargetIdx = flowSelectedTitleIdx;
         psbbnAnimationStart = now;
-        psbbnAnimationElapsedFrames = 0;
       }
 
-      flowOffset = view == UI_VIEW_PSBBN
-          ? lunaNavClassicGlideFrameOffset(psbbnAnimationStartOffset,
-              psbbnAnimationElapsedFrames,
-              lunaNavDurationFrames(psbbnAnimationDuration, collectionFps))
-          : lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart,
-                                  psbbnAnimationDuration, now);
+      // Use elapsed time for the cover glide, matching the held-scan clock
+      // even when artwork processing makes a rendered frame take longer.
+      flowOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset,
+          psbbnAnimationStart, psbbnAnimationDuration, now);
       if (view == UI_VIEW_PSBBN) {
         serviceCollectionCoversNavigating(flowTitles, flowSelectedTitleIdx,
             collectionScan.active ? collectionScan.heldDirection : 0,
@@ -613,9 +603,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         entryStartMs = now;
         entryPending = 0;
       }
-      if (view != UI_VIEW_PSBBN)
-        flowOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart,
-                                          psbbnAnimationDuration, now);
+      flowOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset, psbbnAnimationStart,
+                                        psbbnAnimationDuration, now);
       if (view == UI_VIEW_PSBBN) {
         collectionVisualCoverIdx = PSBBN_COVER_CACHE_FOCUS;
         if (flowOffset >= 500)
@@ -733,11 +722,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     gsKit_sync_flip(gsGlobal);
     if (view == UI_VIEW_CLASSIC)
       classicEntryFirstFramePending = 0;
-    if (view == UI_VIEW_PSBBN && psbbnAnimationTargetIdx >= 0 &&
-        psbbnAnimationElapsedFrames <
-            lunaNavDurationFrames(psbbnAnimationDuration,
-                                  gsGlobal->Mode == GS_MODE_PAL ? 50 : 60))
-      psbbnAnimationElapsedFrames++;
     usleep(view == UI_VIEW_CLASSIC && classicArtSubmittedIdx >= 0 ? 3000 : 1000);
 
     // Keep rendering after options close, while ignoring the Triangle press
