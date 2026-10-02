@@ -48,7 +48,7 @@ static void testCollectionLayering(void) {
 
   // The second held step starts before the first jacket has cleared focus.
   int remaining = lunaNavAnimatedOffset(1000, 0, duration,
-                                        PSBBN_REPEAT_FRAMES_NTSC * 1000U / 60);
+                                        PSBBN_REPEAT_INTERVAL_MS);
   assert(remaining > 0 && remaining < 1000);
   for (int direction = -1; direction <= 1; direction += 2) {
     int offset = direction * (1000 + remaining);
@@ -77,6 +77,24 @@ static void testCollectionLayering(void) {
   memset(drawable, 0, sizeof(drawable));
   assert(lunaNavCollectionForeground(positions, drawable,
                                     PSBBN_COVER_CACHE_COUNT) == -1);
+}
+
+static void testCoverRepeatTiming(void) {
+  LunaNavRepeatState repeat = {0};
+  const uint32_t interval = PSBBN_REPEAT_INTERVAL_MS;
+  // Collections and Orbit share one millisecond cadence in PAL and NTSC.
+  assert(lunaNavRepeatStep(&repeat, 1, 100, interval, interval) == 1);
+  assert(lunaNavRepeatStep(&repeat, 1, 100 + interval - 1, interval, interval) == 0);
+  assert(lunaNavRepeatStep(&repeat, 1, 100 + interval, interval, interval) == 1);
+  // A slow frame emits one step and schedules the next from the current time.
+  assert(lunaNavRepeatStep(&repeat, 1, 1000, interval, interval) == 1);
+  assert(lunaNavRepeatStep(&repeat, 1, 1001, interval, interval) == 0);
+  assert(lunaNavRepeatStep(&repeat, 1, 1000 + interval, interval, interval) == 1);
+  assert(lunaNavRepeatStep(&repeat, -1, 1001 + interval, interval, interval) == 1);
+  assert(lunaNavRepeatStep(&repeat, 0, 1002 + interval, interval, interval) == 0);
+  assert(lunaNavRepeatStep(&repeat, -1, UINT32_MAX - 100, interval, interval) == 1);
+  assert(lunaNavRepeatStep(&repeat, -1, 78, interval, interval) == 0);
+  assert(lunaNavRepeatStep(&repeat, -1, 79, interval, interval) == 1);
 }
 
 static void testCollectionFastScan(void) {
@@ -245,6 +263,7 @@ int main(void) {
   testCaseGridNavigation();
   testTiming();
   testCollectionLayering();
+  testCoverRepeatTiming();
   testCollectionFastScan();
   testOrbitFastScan();
   testScrollFast();

@@ -318,6 +318,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   uint32_t enabledViews = UI_VIEW_DEFAULT_MASK;
   uint32_t classicArtDueMs = 0;
   LunaNavRepeatState classicRepeat = {0};
+  LunaNavRepeatState psbbnRepeat = {0};
   LunaScrollFast scrollFast = {0};
   UILibraryView view = UI_VIEW_CLASSIC;
   int entryView = -1;
@@ -757,6 +758,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       orbitRandomActive = 0;
       classicNavHeld = 0;
       classicRepeat = (LunaNavRepeatState){0};
+      psbbnRepeat = (LunaNavRepeatState){0};
     }
     if (quickMenu.captured || quickWasCaptured) {
       prevInput = 0;
@@ -820,11 +822,12 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       forceViewSwitch = 0;
     }
 
-    if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT || view == UI_VIEW_ORBS) {
-      // Held navigation starts a new step roughly every 180 ms while each
-      // glide lasts 420 ms. The accumulated fractional offset keeps the whole
-      // stream continuous while several cover transitions overlap.
-      frameCount = (frameCount + 1) % ((gsGlobal->Mode == GS_MODE_PAL) ? PSBBN_REPEAT_FRAMES_PAL : PSBBN_REPEAT_FRAMES_NTSC);
+    if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT) {
+      // Cover navigation uses the timer below, independently of frame rate.
+      frameCount = 0;
+    } else if (view == UI_VIEW_ORBS) {
+      // Preserve Scroll's existing frame-based normal repeat cadence.
+      frameCount = (frameCount + 1) % ((gsGlobal->Mode == GS_MODE_PAL) ? SCROLL_REPEAT_FRAMES_PAL : SCROLL_REPEAT_FRAMES_NTSC);
     } else if (gsGlobal->Mode == GS_MODE_PAL) {
       frameCount = (frameCount + 1) % 8; // Preserve Classic's established repeat cadence.
     } else {
@@ -855,7 +858,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       }
     }
 
-    if (view == UI_VIEW_CLASSIC) {
+    if (view == UI_VIEW_CLASSIC || view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT) {
       const int rawInput = input;
       const int navButtons = PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN;
       int direction = 0;
@@ -867,10 +870,16 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         direction = 1;
         navInput = (rawInput & PAD_DOWN) ? PAD_DOWN : PAD_RIGHT;
       }
-      classicNavHeld = direction != 0;
+      if (view == UI_VIEW_CLASSIC)
+        classicNavHeld = direction != 0;
       input = rawInput & ~prevInput & ~navButtons;
-      if (lunaNavRepeatStep(&classicRepeat, direction, uiNowMs(),
-                            CLASSIC_REPEAT_DELAY_MS, CLASSIC_REPEAT_INTERVAL_MS))
+      LunaNavRepeatState *repeat = view == UI_VIEW_CLASSIC
+          ? &classicRepeat : &psbbnRepeat;
+      uint32_t delayMs = view == UI_VIEW_CLASSIC
+          ? CLASSIC_REPEAT_DELAY_MS : PSBBN_REPEAT_INTERVAL_MS;
+      uint32_t intervalMs = view == UI_VIEW_CLASSIC
+          ? CLASSIC_REPEAT_INTERVAL_MS : PSBBN_REPEAT_INTERVAL_MS;
+      if (lunaNavRepeatStep(repeat, direction, uiNowMs(), delayMs, intervalMs))
         input |= navInput;
       prevInput = rawInput;
       if (!input && quickAction < 0)
@@ -992,6 +1001,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         resetAmbientOrbsScroll();
       scrollFast = (LunaScrollFast){0};
       collectionScan = (LunaCollectionScan){0};
+      psbbnRepeat = (LunaNavRepeatState){0};
 
       if (previousView == UI_VIEW_CLASSIC) {
         releaseClassicArtVRAM();
@@ -1173,6 +1183,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       if (!(enabledViews & (1U << view)))
         forceViewSwitch = 1;
       optionsTriangleHeld = (pollInput() & PAD_TRIANGLE) != 0;
+      psbbnRepeat = (LunaNavRepeatState){0};
       input = 0;
     } else if (input & PAD_START) {
       int menuResult = uiMainMenuLoop(1);
@@ -1188,6 +1199,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         usleep(1000);
       prevInput = 0;
       frameCount = 0;
+      psbbnRepeat = (LunaNavRepeatState){0};
       input = 0;
     }
   }
