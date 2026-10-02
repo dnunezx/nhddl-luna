@@ -3,6 +3,43 @@
 #include <stdlib.h>
 #include <string.h>
 
+size_t collectionArtSourceBudget(size_t capacity) {
+  const size_t headroom = 64U * 1024U;
+  // gsKit can evict and re-upload the moving partner and distant covers.
+  // Dividing this pool across both focal covers would reduce selected detail.
+  return capacity > headroom ? capacity - headroom : capacity;
+}
+
+int collectionArtFitResolution(int *width, int *height, size_t budget,
+                               size_t (*textureBytes)(int, int)) {
+  int originalWidth = *width, originalHeight = *height;
+  if (originalWidth <= 0 || originalHeight <= 0)
+    return -1;
+  if (textureBytes(originalWidth, originalHeight) <= budget)
+    return 0;
+  int longest = originalWidth > originalHeight ? originalWidth : originalHeight;
+  int low = 1, high = longest - 1, bestWidth = 0, bestHeight = 0;
+  while (low <= high) {
+    int size = low + (high - low) / 2;
+    int w = (int)((int64_t)originalWidth * size / longest);
+    int h = (int)((int64_t)originalHeight * size / longest);
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    if (textureBytes(w, h) <= budget) {
+      bestWidth = w;
+      bestHeight = h;
+      low = size + 1;
+    } else {
+      high = size - 1;
+    }
+  }
+  if (bestWidth == 0)
+    return -1;
+  *width = bestWidth;
+  *height = bestHeight;
+  return 1;
+}
+
 static void discardEntry(CollectionArtReuseCache *cache, int index) {
   CollectionArtReuseEntry *entry = &cache->entries[index];
   cache->bytes -= entry->pixels.bytes;

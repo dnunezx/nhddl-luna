@@ -56,6 +56,8 @@ void stopCollectionFarArtWorker(TargetList *titles, int selectedTitleIdx);
 void serviceOrbitCovers(TargetList *titles, int selectedTitleIdx);
 int collectionCoversReady(TargetList *titles, int selectedTitleIdx);
 int collectionCoverMissing(int cacheIdx);
+// Returns zero when no cover size can safely be bound to the texture pool.
+int prepareCollectionCoverTexture(int cacheIdx);
 void suspendCollectionCovers(void);
 void adoptOrbitCoversForCollection(void);
 void adoptCollectionCoversForOrbit(void);

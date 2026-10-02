@@ -138,12 +138,82 @@ static void testChurn(void) {
   assert(cache.bytes == 0);
 }
 
+// Deliberate allocation padding: pixel bytes alone must not decide a fit.
+static size_t paddedTextureBytes(int width, int height) {
+  return (size_t)((width + 63) / 64) * 64 *
+         ((height + 31) / 32) * 32 * 4;
+}
+
+static void testResolutionBudget(void) {
+  const size_t preview = 128U * 128U * 4U;
+  const size_t thumbnail = 64U * 64U * 4U;
+  assert(collectionArtSourceBudget(64U * 1024U + 512U * 512U * 4U) ==
+         512U * 512U * 4U);
+  assert(collectionArtSourceBudget(0) == 0);
+  assert(collectionArtSourceBudget(preview) == preview);
+  assert(collectionArtSourceBudget(thumbnail) == thumbnail);
+  assert(collectionArtSourceBudget(320U * 1024U) == 256U * 1024U);
+  int width = 512, height = 512;
+  assert(collectionArtFitResolution(&width, &height, 512U * 512U * 4U,
+                                    paddedTextureBytes) == 0);
+  assert(width == 512 && height == 512); // Preserve detail when it fits.
+  width = height = 256;
+  assert(collectionArtFitResolution(&width, &height, 512U * 512U * 4U,
+                                    paddedTextureBytes) == 0);
+  assert(width == 256 && height == 256); // Never upscale.
+  width = height = 1024;
+  assert(collectionArtFitResolution(&width, &height, 256U * 256U * 4U,
+                                    paddedTextureBytes) == 1);
+  assert(width == 256 && height == 256);
+  width = 1024; height = 512;
+  assert(collectionArtFitResolution(&width, &height, 256U * 128U * 4U,
+                                    paddedTextureBytes) == 1);
+  assert(width == 256 && height == 128);
+  width = 512; height = 1024;
+  assert(collectionArtFitResolution(&width, &height, 128U * 256U * 4U,
+                                    paddedTextureBytes) == 1);
+  assert(width == 128 && height == 256);
+  width = height = 1024;
+  assert(collectionArtFitResolution(&width, &height, 0,
+                                    paddedTextureBytes) == -1);
+  assert(width == 1024 && height == 1024); // Failure leaves ownership intact.
+  width = 0; height = 256;
+  assert(collectionArtFitResolution(&width, &height, preview,
+                                    paddedTextureBytes) == -1);
+  // Check capacity boundaries and the largest fitting size across aspect ratios.
+  const int dimensions[][2] = {{1024, 1024}, {1024, 513}, {513, 1024},
+                               {1, 1024}, {1024, 1}, {257, 129}};
+  for (unsigned i = 0; i < sizeof(dimensions) / sizeof(dimensions[0]); i++) {
+    int longest = dimensions[i][0] > dimensions[i][1] ? dimensions[i][0] : dimensions[i][1];
+    for (size_t budget = 0; budget <= 512U * 1024U; budget += 4093) {
+      width = dimensions[i][0]; height = dimensions[i][1];
+      int result = collectionArtFitResolution(&width, &height, budget, paddedTextureBytes);
+      if (result < 0) {
+        assert(paddedTextureBytes(1, 1) > budget);
+        continue;
+      }
+      assert(width >= 1 && height >= 1);
+      assert(width <= dimensions[i][0] && height <= dimensions[i][1]);
+      assert(paddedTextureBytes(width, height) <= budget);
+      if (result == 0) continue;
+      int next = (width > height ? width : height) + 1;
+      assert(next <= longest);
+      int nextWidth = (int)((int64_t)dimensions[i][0] * next / longest);
+      int nextHeight = (int)((int64_t)dimensions[i][1] * next / longest);
+      if (nextWidth < 1) nextWidth = 1;
+      if (nextHeight < 1) nextHeight = 1;
+      assert(paddedTextureBytes(nextWidth, nextHeight) > budget);
+    }
+  }
+}
+
 int main(void) {
   testOwnershipAndIdentity();
   testBudgetAndReplacement();
   testEntryLimitAndReversal();
   testPriority();
   testChurn();
+  testResolutionBudget();
   puts("Collection artwork tests passed");
   return 0;
 }

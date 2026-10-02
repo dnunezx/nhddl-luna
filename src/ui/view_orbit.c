@@ -252,7 +252,8 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
                                     : glassCoverAccentColor((backplateAlpha * item->visibility) / 1000);
       drawOrbitQuadSolid(item->quad, z - 1, backplateColor);
     }
-    if (covers[item->cacheIdx] != NULL && psbbnCoverLoaded[item->cacheIdx]) {
+    if (covers[item->cacheIdx] != NULL && psbbnCoverLoaded[item->cacheIdx] &&
+        prepareCollectionCoverTexture(item->cacheIdx)) {
       drawOrbitQuadTexture(covers[item->cacheIdx], item->quad, z,
                            GS_SETREG_RGBA(brightness, brightness, brightness, alpha));
     } else {

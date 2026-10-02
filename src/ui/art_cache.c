@@ -678,9 +678,11 @@ static void featherPSBBNCoverEdges(GSTEXTURE *texture) {
 
 static PSBBNPixel *createArtThumbnail(const PSBBNPixel *source, int width, int height,
                                       int thumbWidth, int thumbHeight) {
-  PSBBNPixel *thumbnail = memalign(128, thumbWidth * thumbHeight * sizeof(*thumbnail));
+  size_t bytes = gsKit_texture_size(thumbWidth, thumbHeight, GS_PSM_CT32);
+  PSBBNPixel *thumbnail = memalign(128, bytes);
   if (thumbnail == NULL)
     return NULL;
+  memset(thumbnail, 0, bytes);
   for (int y = 0; y < thumbHeight; y++) {
     int sourceY1 = y * height / thumbHeight;
     int sourceY2 = (y + 1) * height / thumbHeight;
@@ -756,6 +758,36 @@ static PSBBNPixel *createPSBBNThumbnail(const PSBBNPixel *source, int width, int
   return createArtThumbnail(source, width, height, size, size);
 }
 
+static size_t collectionTextureBytes(int width, int height) {
+  return gsKit_texture_size(width, height, GS_PSM_CT32);
+}
+
+static size_t collectionTexturePoolCapacity(void) {
+  const size_t vramBytes = 4U * 1024U * 1024U;
+  return gsGlobal->CurrentPointer < vramBytes ?
+      vramBytes - gsGlobal->CurrentPointer : 0;
+}
+
+static int fitPSBBNCoverToBudget(GSTEXTURE *texture) {
+  int width = texture->Width, height = texture->Height;
+  size_t budget = collectionArtSourceBudget(collectionTexturePoolCapacity());
+  int result = collectionArtFitResolution(&width, &height, budget,
+                                          collectionTextureBytes);
+  if (result <= 0)
+    return result;
+  PSBBNPixel *pixels = createArtThumbnail((const PSBBNPixel *)texture->Mem,
+      texture->Width, texture->Height, width, height);
+  if (pixels == NULL)
+    return -1;
+  DPRINTF("Collection art resized: %dx%d -> %dx%d (budget=%uKiB)\n",
+          texture->Width, texture->Height, width, height, (unsigned)(budget / 1024));
+  free(texture->Mem);
+  texture->Mem = (u32 *)pixels;
+  texture->Width = width;
+  texture->Height = height;
+  return 0;
+}
+
 // Orbit keeps the decoded source and both smaller sizes in EE RAM, so a cover
 // can change resolution without resampling it on the drawing thread.
 static int loadPSBBNCoverArt(struct DeviceMapEntry *device, char *titleID, int cacheIdx, int selected) {
@@ -767,7 +799,8 @@ static int loadPSBBNCoverArt(struct DeviceMapEntry *device, char *titleID, int c
   releasePSBBNCoverCacheEntry(cacheIdx);
   snprintf(artPathBuffer, 255, "%s%s/%s.png", device->mountpoint, psbbnArtPath, titleID);
   if (decodePNGTextureRGBA(gsGlobal, texture, artPathBuffer) ||
-      texture->Mem == NULL || texture->Width <= 0 || texture->Height <= 0) {
+      texture->Mem == NULL || texture->Width <= 0 || texture->Height <= 0 ||
+      fitPSBBNCoverToBudget(texture) < 0) {
     releasePSBBNCoverCacheEntry(cacheIdx);
     return -1;
   }
@@ -800,7 +833,8 @@ static int loadPSBBNCoverArt(struct DeviceMapEntry *device, char *titleID, int c
   collectionCoverResidentLevel[cacheIdx] = selected ? 2 : 0;
   snprintf(collectionCoverKeys[cacheIdx], sizeof(collectionCoverKeys[cacheIdx]), "%s", artPathBuffer);
   psbbnCoverFullResolution[cacheIdx] = selected != 0;
-  gsKit_TexManager_bind(gsGlobal, texture);
+  if (prepareCollectionCoverTexture(cacheIdx))
+    gsKit_TexManager_bind(gsGlobal, texture);
   return 0;
 }
 
@@ -823,6 +857,10 @@ static void decodePSBBNArtJob(PSBBNArtJob *job) {
   GSTEXTURE decoded = {0};
   job->result = decodePNGTextureRGBATimed(gsGlobal, &decoded, job->path,
                                          &job->readMs, &job->decodeMs);
+  uint32_t fitStartMs = uiNowMs();
+  if (job->result == 0)
+    job->result = fitPSBBNCoverToBudget(&decoded);
+  job->resizeMs = uiNowMs() - fitStartMs;
   if (job->result == 0 && decoded.Mem != NULL &&
       decoded.Width > 0 && decoded.Height > 0) {
     uint32_t stageMs = uiNowMs();
@@ -835,7 +873,7 @@ static void decodePSBBNArtJob(PSBBNArtJob *job) {
     PSBBNPixel *thumbnail = preview != NULL ?
         createPSBBNThumbnail(preview, PSBBN_PREVIEW_SIZE, PSBBN_PREVIEW_SIZE,
                              PSBBN_THUMBNAIL_SIZE) : NULL;
-    job->resizeMs = uiNowMs() - stageMs;
+    job->resizeMs += uiNowMs() - stageMs;
     if (thumbnail != NULL && preview != NULL) {
       job->sourcePixels = decoded.Mem;
       job->previewPixels = preview;
@@ -2141,6 +2179,29 @@ static void setCollectionCoverResidentSize(int cacheIdx, int level) {
                     level == 1 ? PSBBN_PREVIEW_SIZE : PSBBN_THUMBNAIL_SIZE;
   collectionCoverResidentLevel[cacheIdx] = level;
   psbbnCoverFullResolution[cacheIdx] = level == 2;
+}
+
+int prepareCollectionCoverTexture(int cacheIdx) {
+  if (cacheIdx < 0 || cacheIdx >= PSBBN_COVER_CACHE_COUNT ||
+      !psbbnCoverLoaded[cacheIdx])
+    return 0;
+  GSTEXTURE *texture = psbbnCoverTextures[cacheIdx];
+  size_t capacity = collectionTexturePoolCapacity();
+  if (texture == NULL || texture->Mem == NULL ||
+      texture->Width <= 0 || texture->Height <= 0 || texture->Clut != NULL)
+    return 0;
+  // These cover textures are RGBA, with no CLUT. Check GS allocation size,
+  // including block padding, rather than just width * height * four.
+  if (gsKit_texture_size(texture->Width, texture->Height, texture->PSM) <= capacity)
+    return 1;
+  if (collectionTextureBytes(PSBBN_PREVIEW_SIZE, PSBBN_PREVIEW_SIZE) <= capacity &&
+      collectionCoverPreviewPixels[cacheIdx] != NULL) {
+    setCollectionCoverResidentSize(cacheIdx, 1);
+  } else if (collectionTextureBytes(PSBBN_THUMBNAIL_SIZE, PSBBN_THUMBNAIL_SIZE) <= capacity &&
+      collectionCoverThumbnailPixels[cacheIdx] != NULL) {
+    setCollectionCoverResidentSize(cacheIdx, 0);
+  }
+  return gsKit_texture_size(texture->Width, texture->Height, texture->PSM) <= capacity;
 }
 
 void updateCollectionCoverResidency(int flowOffset) {

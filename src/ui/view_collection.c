@@ -25,7 +25,8 @@ void drawPSBBNCover(GSTEXTURE *cover, float x1, float y1, float size, int cacheI
   int blue = (0x70 + (emphasis * 0x10) / 1000) * visibility / 1000;
   int alpha = (0x40 + (emphasis * 0x40) / 1000) * visibility / 1000;
 
-  if (cover != NULL && psbbnCoverLoaded[cacheIdx]) {
+  if (cover != NULL && psbbnCoverLoaded[cacheIdx] &&
+      prepareCollectionCoverTexture(cacheIdx)) {
     int previousAlphaTest = gsGlobal->Test->ATST;
     int previousAlphaReference = gsGlobal->Test->AREF;
     int previousAlphaFail = gsGlobal->Test->AFAIL;
