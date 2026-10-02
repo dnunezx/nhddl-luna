@@ -640,7 +640,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         orbsVisualTitleIdx = lunaNavWrap(titles->total,
             selectedTitleIdx + visualFocus - ORBS_LOGO_CACHE_FOCUS);
         if (!scrollFast.active) {
-          refreshOrbsBackground(getTargetByIdx(titles, orbsVisualTitleIdx));
           refreshOrbsLogos(flowTitles, flowSelectedTitleIdx);
           serviceScrollArt();
         }

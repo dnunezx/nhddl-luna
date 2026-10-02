@@ -18,8 +18,6 @@ extern GSTEXTURE *gridSelectedTextures[GRID_SELECTED_BUFFERS];
 extern uint8_t gridSelectedLoaded[GRID_SELECTED_BUFFERS];
 extern GSTEXTURE *orbsLogoTextures[ORBS_LOGO_CACHE_COUNT];
 extern uint8_t orbsLogoLoaded[ORBS_LOGO_CACHE_COUNT];
-extern GSTEXTURE *orbsBackgroundTexture;
-extern uint8_t orbsBackgroundLoaded;
 
 int artCacheInit(void);
 void artCacheShutdown(void);
@@ -64,7 +62,6 @@ void adoptCollectionCoversForOrbit(void);
 void updateCollectionCoverResidency(int flowOffset);
 void updatePSBBNCoverResidency(int flowOffset);
 void refreshOrbsLogos(TargetList *titles, int selectedTitleIdx);
-void refreshOrbsBackground(Target *target);
 void serviceScrollArt(void);
 void releaseOrbsArt(void);
 

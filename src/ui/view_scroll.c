@@ -1911,18 +1911,7 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
 
   drawSharedLibraryBackground(now);
 
-  if (orbsBackgroundLoaded && !fastScroll) {
-    GSTEXTURE *background = orbsBackgroundTexture;
-    gsKit_TexManager_bind(gsGlobal, background);
-    gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-    gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
-    gsKit_prim_sprite_texture(gsGlobal, background, 0.0f, 0.0f,
-                              0.0f, 0.0f, (float)width, (float)height,
-                              background->Width - 1, background->Height - 1, 0,
-                              GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x50));
-  }
-
-  // Keep the orbit visible over the art and make a quiet area for the logos.
+  // Keep the orbit visible and make a quiet area for the logos.
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
   gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 1,
                     glassPresetColor(0x00, 0x02, 0x0C, 0x20));
