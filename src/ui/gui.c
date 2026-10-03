@@ -40,6 +40,7 @@
 #define LIBRARY_VIEW_ENTRY_MS 320
 #define CASE_VIEW_HANDOFF_MS 180
 #define QUICK_MENU_SLIDE_MS 200
+#define COLLECTION_PRELOAD_IDLE_MS 250
 
 void closeUI();
 int uiLoop(TargetList *titles, int preparedCollectionIdx);
@@ -363,6 +364,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   enabledViews = loadEnabledLibraryViews(curTarget);
   if (!(enabledViews & (1U << view)))
     view = lunaNavNextView(view, enabledViews);
+  DPRINTF("Library startup: restored=%d active=%d enabled=0x%x\n",
+          restoredView, view, (unsigned)enabledViews);
+  setCollectionArtForeground(view == UI_VIEW_PSBBN);
   if (view == UI_VIEW_PSBBN) {
     entryView = UI_VIEW_PSBBN;
     entryPending = 1;
@@ -429,6 +433,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   int prevInput = 0;
   int input = 0;
   int circleButtonHeld = 0;
+  int startupInputPending = view == UI_VIEW_PSBBN;
+  int collectionCirclePending = 0;
   int optionsTriangleHeld = 0;
   int forceViewSwitch = 0;
   LunaQuickMenu quickMenu = {0};
@@ -436,6 +442,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   int quickDeferredAction = -1;
   int quickMenuProgress = 0;
   uint32_t quickMenuFrameMs = uiNowMs();
+  uint32_t collectionPreloadIdleSinceMs = quickMenuFrameMs;
   const char *quickMenuMessage = NULL;
   uint32_t quickMenuMessageUntil = 0;
   while (1) {
@@ -470,6 +477,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     // Reload target if index has changed
     if (curTarget->idx != selectedTitleIdx) {
       curTarget = getTargetByIdx(titles, selectedTitleIdx);
+      collectionPreloadIdleSinceMs = uiNowMs();
       if (view == UI_VIEW_CLASSIC) {
         classicEntryListSlideActive = 0;
         // Keep input polling light while moving through the list. The old art
@@ -591,7 +599,10 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       flowOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset,
           psbbnAnimationStart, psbbnAnimationDuration, now);
       if (view == UI_VIEW_PSBBN) {
-        serviceCollectionCoversNavigating(flowTitles, flowSelectedTitleIdx,
+        if (entryPending)
+          serviceCollectionEntryCovers(flowTitles, flowSelectedTitleIdx);
+        else
+          serviceCollectionCoversNavigating(flowTitles, flowSelectedTitleIdx,
             collectionScan.active ? collectionScan.heldDirection : 0,
             collectionScan.active, flowOffset);
         updateCollectionCoverResidency(flowOffset);
@@ -692,9 +703,10 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                      ErrorTextColor, ALIGN_HCENTER, quickMenuMessage);
       gsKit_set_test(gsGlobal, GS_ZTEST_ON);
     }
-    // Fill the active Collection or Favorites cover window while another view is idle.
+    // Fill Collection's cached window after navigation has been quiet briefly.
     // Orbit owns the shared PSBBN slots, so it cannot prewarm Collection.
     if (titles->total > 0 &&
+        (uint32_t)(uiNowMs() - collectionPreloadIdleSinceMs) >= COLLECTION_PRELOAD_IDLE_MS &&
         ((view == UI_VIEW_CLASSIC && !classicNavHeld && classicArtRequestedIdx < 0) ||
          (view == UI_VIEW_ORBS && !scrollFast.active))) {
       if (psbbnCoverBaseIdx != selectedTitleIdx)
@@ -728,6 +740,18 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     // Keep rendering after options close, while ignoring the Triangle press
     // that closed them until the button is released.
     input = pollInput();
+    // A control held during boot is not a fresh library action. Keep consuming
+    // it through the restored Collection reveal, then wait for neutral input.
+    int libraryEntryReady = !entryPending &&
+        libraryViewEntryProgress(entryView, view, entryStartMs, entryDurationMs, uiNowMs()) == 1000;
+    if (lunaNavEntryInputBlocked(&startupInputPending, libraryEntryReady, input != 0)) {
+      circleButtonHeld = (input & PAD_CIRCLE) != 0;
+      quickPreviousInput = input;
+      prevInput = 0;
+      continue;
+    }
+    if (input & (PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN | PAD_L2 | PAD_R2))
+      collectionPreloadIdleSinceMs = uiNowMs();
     int transitionCircleHeld = (input & PAD_CIRCLE) != 0;
     int finishCaseViewSwitch = caseViewSwitchPending && caseGridExitFinished(uiNowMs());
     if (caseViewSwitchPending) {
@@ -800,7 +824,11 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     }
     if (titles->total == 0)
       input &= PAD_SELECT | PAD_CIRCLE | PAD_START;
-    int circlePressed = (input & PAD_CIRCLE) && !circleButtonHeld;
+    // Manual Collection entry must finish loading and revealing before Circle
+    // can advance again. Presses during entry are consumed, never deferred.
+    int circleEntryBlocked = lunaNavEntryInputBlocked(&collectionCirclePending,
+        libraryEntryReady, (input & PAD_CIRCLE) != 0);
+    int circlePressed = (input & PAD_CIRCLE) && !circleButtonHeld && !circleEntryBlocked;
     circleButtonHeld = (input & PAD_CIRCLE) != 0;
     if (finishCaseViewSwitch)
       circleButtonHeld = transitionCircleHeld;
@@ -1002,8 +1030,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       if (view == previousView)
         continue;
     restart_library_view:
-      if (previousView == UI_VIEW_PSBBN && view != UI_VIEW_PSBBN)
-        stopCollectionFarArtWorker(titles, selectedTitleIdx);
+      setCollectionArtForeground(view == UI_VIEW_PSBBN);
+      collectionPreloadIdleSinceMs = uiNowMs();
       // PSBBN and Orbit release their cache in the view cleanup below.
       // Releasing it here as well tears down the same texture window twice
       // when switching Collection between All and Favorites.
@@ -1014,6 +1042,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       entryDurationMs = previousView == UI_VIEW_3D && view != previousView
           ? CASE_VIEW_HANDOFF_MS : LIBRARY_VIEW_ENTRY_MS;
       entryPending = view != UI_VIEW_CLASSIC;
+      collectionCirclePending = view == UI_VIEW_PSBBN;
       classicEntryFirstFramePending = view == UI_VIEW_CLASSIC &&
                                       previousView != UI_VIEW_CLASSIC;
       classicEntryListSlideActive = view == UI_VIEW_CLASSIC &&

@@ -48,12 +48,16 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
 void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx);
 void refreshOrbitCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx);
 int collectionArtBackgroundAvailable(void);
+// Applies to running decodes as well as future requests; retains cached pixels.
+void setCollectionArtForeground(int foreground);
 void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx);
+void serviceCollectionEntryCovers(TargetList *titles, int selectedTitleIdx);
 void serviceCollectionCoversNavigating(TargetList *titles, int selectedTitleIdx,
                                       int direction, int fastScrolling, int flowOffset);
 void recordCollectionCoverBind(uint32_t elapsedMs);
 void stopCollectionFarArtWorker(TargetList *titles, int selectedTitleIdx);
 void serviceOrbitCovers(TargetList *titles, int selectedTitleIdx);
+// Entry requires current + six upcoming games; previous-only games do not block.
 int collectionCoversReady(TargetList *titles, int selectedTitleIdx);
 int collectionCoverMissing(int cacheIdx);
 // Returns zero when no cover size can safely be bound to the texture pool.

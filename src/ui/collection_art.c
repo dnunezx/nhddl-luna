@@ -105,6 +105,39 @@ void collectionArtReuseClear(CollectionArtReuseCache *cache) {
   cache->clock = 0;
 }
 
+int collectionArtEntryPriority(uint8_t *priority, int total, int selectedTitleIdx) {
+  uint16_t used = 0;
+  int count = 0;
+  for (int ahead = 0; total > 0 && ahead < COLLECTION_ENTRY_COVER_COUNT; ahead++) {
+    int target = lunaNavWrap(total, selectedTitleIdx + ahead);
+    int closest = -1, closestDistance = PSBBN_COVER_CACHE_COUNT;
+    for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
+      int offset = i - PSBBN_COVER_CACHE_FOCUS;
+      int distance = offset < 0 ? -offset : offset;
+      if (lunaNavWrap(total, selectedTitleIdx + offset) == target && distance < closestDistance) {
+        closest = i;
+        closestDistance = distance;
+      }
+    }
+    if (closest >= 0 && !(used & (1U << closest))) {
+      priority[count++] = (uint8_t)closest;
+      used |= 1U << closest;
+    }
+  }
+  int required = count;
+  for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++)
+    if (!(used & (1U << i))) priority[count++] = (uint8_t)i;
+  return required;
+}
+
+int collectionArtEntryReady(int total, int selectedTitleIdx, uint16_t resolvedMask) {
+  uint8_t priority[PSBBN_COVER_CACHE_COUNT];
+  int required = collectionArtEntryPriority(priority, total, selectedTitleIdx);
+  for (int p = 0; p < required; p++)
+    if (!(resolvedMask & (1U << priority[p]))) return 0;
+  return 1;
+}
+
 void collectionArtPriority(uint8_t *priority, int direction, int fastScrolling,
                            int flowOffset) {
   int focus = PSBBN_COVER_CACHE_FOCUS;

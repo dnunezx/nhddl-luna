@@ -207,7 +207,53 @@ static void testResolutionBudget(void) {
   }
 }
 
+static void testEntryWindow(void) {
+  uint8_t priority[PSBBN_COVER_CACHE_COUNT];
+  const uint16_t upcoming = 0x3f8; // Slots 3..9; previous-only slots stay unresolved.
+  assert(collectionArtEntryPriority(priority, 84, 20) == 7);
+  for (int p = 0; p < 7; p++) assert(priority[p] == p + 3);
+  assert(collectionArtEntryReady(84, 20, upcoming));
+  assert(!collectionArtEntryReady(84, 20, 0));
+  for (int slot = 3; slot < 10; slot++)
+    assert(!collectionArtEntryReady(84, 20, upcoming & ~(1U << slot)));
+  // Resolved missing artwork permits entry even without successful pixel data.
+  assert(collectionArtEntryReady(84, 20, upcoming));
+  assert(collectionArtEntryReady(84, 83, upcoming)); // End-of-library wrapping.
+
+  // Four games use their nearest visible representatives: current, next,
+  // the tied game two places away, and previous (also the third upcoming).
+  const uint8_t fourGameOrder[] = {3, 4, 1, 2};
+  assert(collectionArtEntryPriority(priority, 4, 3) == 4);
+  for (int p = 0; p < 4; p++) assert(priority[p] == fourGameOrder[p]);
+  assert(collectionArtEntryReady(4, 3, 0x1e));
+  assert(!collectionArtEntryReady(4, 3, upcoming)); // Hidden duplicates aren't the displayed slots.
+  assert(collectionArtEntryPriority(priority, 1, 0) == 1);
+  assert(priority[0] == PSBBN_COVER_CACHE_FOCUS);
+  assert(collectionArtEntryReady(1, 0, 1U << PSBBN_COVER_CACHE_FOCUS));
+  assert(collectionArtEntryReady(0, 0, 0));
+
+  // Every size chooses distinct, visible games and still fills a valid cache order.
+  for (int total = 1; total <= 12; total++) {
+    for (int selected = 0; selected < total; selected++) {
+      int required = collectionArtEntryPriority(priority, total, selected);
+      assert(required == (total < 7 ? total : 7));
+      uint16_t slots = 0, ready = 0;
+      for (int p = 0; p < PSBBN_COVER_CACHE_COUNT; p++) {
+        assert(priority[p] < PSBBN_COVER_CACHE_COUNT);
+        assert(!(slots & (1U << priority[p])));
+        slots |= 1U << priority[p];
+        if (p < required) ready |= 1U << priority[p];
+      }
+      assert(slots == 0x3ff);
+      assert(collectionArtEntryReady(total, selected, ready));
+      for (int p = 0; p < required; p++)
+        assert(!collectionArtEntryReady(total, selected, ready & ~(1U << priority[p])));
+    }
+  }
+}
+
 int main(void) {
+  testEntryWindow();
   testOwnershipAndIdentity();
   testBudgetAndReplacement();
   testEntryLimitAndReversal();

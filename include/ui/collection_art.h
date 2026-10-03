@@ -7,6 +7,7 @@
 
 #define COLLECTION_REUSE_COUNT 12
 #define COLLECTION_REUSE_BYTES (2U * 1024U * 1024U)
+#define COLLECTION_ENTRY_COVER_COUNT (PSBBN_COVER_CACHE_COUNT - PSBBN_COVER_CACHE_FOCUS)
 
 typedef struct {
   void *source;
@@ -43,5 +44,9 @@ int collectionArtFitResolution(int *width, int *height, size_t budget,
 // Both workers use this order when visible/upcoming artwork needs attention.
 void collectionArtPriority(uint8_t *priority, int direction, int fastScrolling,
                            int flowOffset);
+// Required distinct games first, using the same nearest slots as the renderer.
+// Fills all cache slots; returns the number required for current + six upcoming.
+int collectionArtEntryPriority(uint8_t *priority, int total, int selectedTitleIdx);
+int collectionArtEntryReady(int total, int selectedTitleIdx, uint16_t resolvedMask);
 
 #endif

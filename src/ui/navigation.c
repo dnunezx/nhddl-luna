@@ -2,6 +2,13 @@
 #include "ui/navigation.h"
 #include <stddef.h>
 
+int lunaNavEntryInputBlocked(int *pending, int viewReady, int controlsHeld) {
+  if (!*pending)
+    return 0;
+  if (viewReady && !controlsHeld)
+    *pending = 0;
+  return 1;
+}
 int lunaQuickMenuUpdate(LunaQuickMenu *menu, int held, int controlsHeld,
                         int count, int shortcut) {
   if (!held) {

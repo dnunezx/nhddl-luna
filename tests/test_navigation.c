@@ -257,7 +257,54 @@ static void testQuickMenu(void) {
   assert(!menu.open && !menu.captured);
 }
 
+static void testRestoredCollectionInput(void) {
+  int pending = 1;
+  // Neutral input while covers are loading must not arm the view switch.
+  assert(lunaNavEntryInputBlocked(&pending, 0, 0));
+  assert(pending);
+  // Circle pressed while loading and held through the reveal is consumed.
+  assert(lunaNavEntryInputBlocked(&pending, 0, 1));
+  assert(lunaNavEntryInputBlocked(&pending, 1, 1));
+  assert(pending);
+  // Only a release after the reveal allows a later, fresh Circle press.
+  assert(lunaNavEntryInputBlocked(&pending, 1, 0));
+  assert(!pending);
+  assert(!lunaNavEntryInputBlocked(&pending, 1, 1));
+
+  // A press and release entirely during loading must not skip the entry gate.
+  pending = 1;
+  assert(lunaNavEntryInputBlocked(&pending, 0, 1));
+  assert(lunaNavEntryInputBlocked(&pending, 0, 0));
+  assert(pending);
+  assert(lunaNavEntryInputBlocked(&pending, 1, 0));
+  assert(!lunaNavEntryInputBlocked(&pending, 1, 0));
+}
+
+static void testManualCollectionCircle(void) {
+  int pending = 1;
+  // Releasing the Circle that entered Collection cannot arm it while loading.
+  assert(lunaNavEntryInputBlocked(&pending, 0, 0));
+  for (int press = 0; press < 3; press++) {
+    assert(lunaNavEntryInputBlocked(&pending, 0, 1));
+    assert(lunaNavEntryInputBlocked(&pending, 0, 0));
+    assert(pending);
+  }
+  // A press during the fade remains blocked if held past its completion.
+  assert(lunaNavEntryInputBlocked(&pending, 0, 1));
+  assert(lunaNavEntryInputBlocked(&pending, 1, 1));
+  assert(pending);
+  assert(lunaNavEntryInputBlocked(&pending, 1, 0));
+  assert(!lunaNavEntryInputBlocked(&pending, 1, 1));
+  // Returning to Collection starts a new gate, even with covers already cached.
+  pending = 1;
+  assert(lunaNavEntryInputBlocked(&pending, 0, 0));
+  assert(lunaNavEntryInputBlocked(&pending, 1, 0));
+  assert(!lunaNavEntryInputBlocked(&pending, 1, 1));
+}
+
 int main(void) {
+  testManualCollectionCircle();
+  testRestoredCollectionInput();
   testQuickMenu();
   testWrapping();
   testCaseGridNavigation();

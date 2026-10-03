@@ -42,7 +42,6 @@ static const char legacyRootFallbackPath[] = "/nhddl/nhddl.yaml";
 // require an explicit mode entry in the options file.
 #define LUNA_LIBRARY_DEFAULT_MODES (MODE_ATA | MODE_HDL)
 #define LUNA_LIBRARY_OPT_IN_MODES (MODE_USB | MODE_MX4SIO | MODE_MMCE | MODE_ILINK | MODE_UDPFS)
-#define COLLECTION_BOOT_PREPARE_MAX_MS 5000
 static ModeType configuredLibraryModes = MODE_NONE;
 
 #ifndef GIT_VERSION
@@ -145,18 +144,20 @@ int main(int argc, char *argv[]) {
     uint32_t enabledViews = loadEnabledLibraryViews(audioTarget);
     if (!(enabledViews & (1U << startupView)))
       startupView = lunaNavNextView(startupView, enabledViews);
-    if (startupView == UI_VIEW_PSBBN && collectionArtBackgroundAvailable()) {
-      // Decode the opening jacket window while the existing splash animation
-      // continues. The UI loop adopts these exact cache slots after splash.
+    if (startupView == UI_VIEW_PSBBN) {
+      // Keep the splash until current + six upcoming games are resolved.
+      // Previous-only covers can finish after Collection is revealed.
+      setCollectionArtForeground(1);
       preparedCollectionIdx = audioTarget->idx;
-      refreshCollectionCovers(titles, preparedCollectionIdx, -1);
       uint32_t prepareStartMs = uiNowMs();
-      while (!collectionCoversReady(titles, preparedCollectionIdx) &&
-             (uint32_t)(uiNowMs() - prepareStartMs) < COLLECTION_BOOT_PREPARE_MAX_MS) {
-        serviceCollectionCovers(titles, preparedCollectionIdx);
+      DPRINTF("Collection boot: preparing current + six upcoming covers\n");
+      refreshCollectionCovers(titles, preparedCollectionIdx, -1);
+      while (!collectionCoversReady(titles, preparedCollectionIdx)) {
+        serviceCollectionEntryCovers(titles, preparedCollectionIdx);
         usleep(16000);
       }
-      serviceCollectionCovers(titles, preparedCollectionIdx);
+      DPRINTF("Collection boot: entry covers ready after %u ms\n",
+              (unsigned)(uiNowMs() - prepareStartMs));
     }
   }
 

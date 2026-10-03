@@ -66,6 +66,9 @@ typedef struct {
 int lunaQuickMenuUpdate(LunaQuickMenu *menu, int held, int controlsHeld,
                         int count, int shortcut);
 
+// Consume entry controls until the view is ready and those controls are released.
+int lunaNavEntryInputBlocked(int *pending, int viewReady, int controlsHeld);
+
 typedef enum {
   UI_VIEW_CLASSIC = 0,
   UI_VIEW_PSBBN = 1,

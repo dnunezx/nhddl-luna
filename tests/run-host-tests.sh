@@ -13,7 +13,7 @@ mkdir -p "$build_dir"
   -o "$build_dir/test_case_page"
 "$build_dir/test_case_page"
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Iinclude \
-  src/ui/collection_art.c tests/test_collection_art.c \
+  src/ui/navigation.c src/ui/collection_art.c tests/test_collection_art.c \
   -o "$build_dir/test_collection_art"
 "$build_dir/test_collection_art"
 "${CC:-cc}" -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror \
