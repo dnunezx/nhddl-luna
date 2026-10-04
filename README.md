@@ -12,8 +12,7 @@ This designation does not replace the physical-console safety gates documented i
 
 It displays visual Game ID to trigger per-title settings on the Pixel FX line of products and triggers per-title memory cards on SD2PSX and MemCard PRO2.
 
-Note that this not an attempt at making a Neutrino-based Open PS2 Loader replacement.  
-Since NHDDL only launches Neutrino, PADEMU, IGR, IGS, cheats and other features supported by OPL are _out-of-scope_ unless they are implemented in Neutrino.
+Neutrino provides the game-launch runtime and its supported compatibility features.
 
 ## Usage
 

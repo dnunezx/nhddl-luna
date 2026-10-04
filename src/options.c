@@ -548,9 +548,10 @@ int parseOptionsFile(ArgumentList *result, FILE *file, struct DeviceMapEntry *de
       tempPtr--;
     }
 
-    // Ignore retired core metadata from existing global and per-game files.
+    // Only supported LUNA launch metadata may enter the Neutrino argument list.
     const char *name = argPtr[0] == '$' ? argPtr + 1 : argPtr;
-    if (!strcmp(name, "luna_core") || !strncmp(name, "luna_opl_", 9))
+    if (!strncmp(name, "luna_", 5) &&
+        strcmp(name, "luna_neutrino_disable_igr"))
       continue;
 
     char *newValue = NULL;

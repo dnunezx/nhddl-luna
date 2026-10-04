@@ -109,6 +109,10 @@ local/
 /examples/luna-usb.yaml
 /iop/udpfs/ministack/include/udptty.h
 /iop/udpfs/ministack/src/udptty.c
+
+# Unused upstream icon sources are retained locally only.
+/res/gfx/icons/icons.h
+/res/gfx/icons/icons.psd
 *.log
 *.bin
 *.img
