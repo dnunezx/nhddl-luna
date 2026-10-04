@@ -177,7 +177,7 @@ int initGraphics() {
                             SIZE_GRID_SELECTOR_PNG, 0, 0) == 0) {
     prepareGridSelector(gridSelector);
     gridSelector->Filter = GS_FILTER_LINEAR;
-    gsKit_TexManager_bind(gsGlobal, gridSelector);
+    bindTextureSafe(gsGlobal, gridSelector);
   } else {
     DPRINTF("WARNING: Failed to load Grid selector texture\n");
     if (gridSelector != NULL) {
@@ -224,7 +224,8 @@ void drawIcon(float x, float y, int z, uint64_t color, IconType iconType) {
   if (iconType != ICON_ENABLED)
     color = GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80);
 
-  gsKit_TexManager_bind(gsGlobal, icons);
+  if (!bindTextureSafe(gsGlobal, icons))
+    return;
   gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
   gsKit_set_test(gsGlobal, GS_ATEST_OFF);
   gsKit_prim_sprite_texture(gsGlobal, icons,          // font page
@@ -284,7 +285,7 @@ void drawCardArt(CardArtType card, float x, float y, float size) {
         texture->Height = height;
       }
       texture->Filter = GS_FILTER_LINEAR;
-      gsKit_TexManager_bind(gsGlobal, texture);
+      bindTextureSafe(gsGlobal, texture);
       cardArtLoaded[card] = 1;
     } else {
       free(texture->Mem);
@@ -294,7 +295,8 @@ void drawCardArt(CardArtType card, float x, float y, float size) {
   if (!cardArtLoaded[card])
     return;
 
-  gsKit_TexManager_bind(gsGlobal, texture);
+  if (!bindTextureSafe(gsGlobal, texture))
+    return;
   gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
   gsKit_set_test(gsGlobal, GS_ATEST_OFF);
   gsKit_prim_sprite_texture(gsGlobal, texture, x, y, 0, 0, x + size,
@@ -786,8 +788,11 @@ static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *b
   texture->Filter = GS_FILTER_NEAREST;
   texture->Mem = (u32 *)pixelBuffer;
 
-  if (upload)
-    gsKit_TexManager_bind(gsGlobal, texture);
+  if (upload && !bindTextureSafe(gsGlobal, texture)) {
+    free(texture->Mem);
+    texture->Mem = NULL;
+    return -1;
+  }
 
   return 0;
 }
@@ -826,7 +831,14 @@ static int loadPNGTextureRGBAInternal(GSGLOBAL *gsGlobal, GSTEXTURE *texture, co
 
   if (readMs != NULL) *readMs = uiNowMs() - startMs;
   startMs = decodeMs != NULL ? uiNowMs() : 0;
-  result = gsKit_texture_png_mem(gsGlobal, texture, buffer, fileSize, 0, upload);
+  result = gsKit_texture_png_mem(gsGlobal, texture, buffer, fileSize, 0, 0);
+  if (result == 0 &&
+      (fitTextureToVram(gsGlobal, texture) < 0 ||
+       (upload && !bindTextureSafe(gsGlobal, texture)))) {
+    free(texture->Mem);
+    texture->Mem = NULL;
+    result = -1;
+  }
   if (decodeMs != NULL) *decodeMs = uiNowMs() - startMs;
   free(buffer);
   return result;
@@ -838,7 +850,14 @@ int loadPNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path)
 
 int loadPNGTextureRGBAMemory(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
                              const unsigned char *data, size_t size) {
-  return gsKit_texture_png_mem(gsGlobal, texture, (void *)data, size, 0, 1);
+  int result = gsKit_texture_png_mem(gsGlobal, texture, (void *)data, size, 0, 0);
+  if (result == 0 &&
+      (fitTextureToVram(gsGlobal, texture) < 0 || !bindTextureSafe(gsGlobal, texture))) {
+    free(texture->Mem);
+    texture->Mem = NULL;
+    result = -1;
+  }
+  return result;
 }
 
 int decodePNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path) {

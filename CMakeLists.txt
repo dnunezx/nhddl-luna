@@ -16,6 +16,7 @@ option(LUNA_EMULATOR_BUILD "Enable behavior used only by emulator test builds" O
 set(SOURCES
     src/main.c
     src/common.c
+    src/runtime_locks.c
     src/options.c
     src/favorites.c
     src/neutrino.c
@@ -31,8 +32,10 @@ set(SOURCES
     src/ui/options_menu.c
     src/ui/game_options.c
     src/ui/graphics.c
+    src/ui/texture_budget.c
     src/ui/handoff.c
     src/ui/ambient.c
+    src/ui/worker_lifecycle.c
   src/ui/navigation.c
   src/ui/case_page.c
   src/ui/view_state.c

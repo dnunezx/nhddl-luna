@@ -82,7 +82,8 @@ static void drawOrbitQuadTexture(GSTEXTURE *texture, OrbitQuad quad, int z, uint
   int previousAlphaTest = gsGlobal->Test->ATST;
   int previousAlphaReference = gsGlobal->Test->AREF;
   int previousAlphaFail = gsGlobal->Test->AFAIL;
-  gsKit_TexManager_bind(gsGlobal, texture);
+  if (!bindTextureSafe(gsGlobal, texture))
+    return;
   gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
   gsGlobal->Test->ATST = 2;
   gsGlobal->Test->AREF = 0x80;

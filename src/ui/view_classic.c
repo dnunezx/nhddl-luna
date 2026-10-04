@@ -275,7 +275,8 @@ static void drawClassicDisc(GSTEXTURE *disc, uint32_t frameNowMs) {
   const int previousAlphaTest = gsGlobal->Test->ATST;
   const int previousAlphaReference = gsGlobal->Test->AREF;
   const int previousAlphaFail = gsGlobal->Test->AFAIL;
-  gsKit_TexManager_bind(gsGlobal, disc);
+  if (!bindTextureSafe(gsGlobal, disc))
+    return;
   gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
   gsGlobal->Test->ATST = 2;
   gsGlobal->Test->AREF = 0x80;
@@ -293,7 +294,8 @@ static void drawClassicDisc(GSTEXTURE *disc, uint32_t frameNowMs) {
 }
 
 static void drawClassicCoverTexture(GSTEXTURE *cover, int z) {
-  gsKit_TexManager_bind(gsGlobal, cover);
+  if (!bindTextureSafe(gsGlobal, cover))
+    return;
   gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
   gsKit_prim_sprite_texture(gsGlobal, cover, coverArtX1, coverArtY1, 0.0f, 0.0f,
                             coverArtX2, coverArtY2, cover->Width, cover->Height,

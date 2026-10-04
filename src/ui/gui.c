@@ -275,10 +275,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
 
   if (titles->total == 0) {
     res = uiMainMenuLoop(0);
-    ambientStop();
-    closePad();
-    closeUI();
-    return res == STORAGE_UI_REFRESH ? res : 0;
+    if (res != STORAGE_UI_REFRESH) res = 0;
+    goto exit;
   }
 
   int isCoverUninitialized = 1;
@@ -425,7 +423,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     classicDisplayedCoverAvailable = !isCoverUninitialized;
     classicDisplayedDiscAvailable = !isDiscUninitialized;
     if (classicDisplayedDiscAvailable)
-      gsKit_TexManager_bind(gsGlobal, discTexture);
+      bindTextureSafe(gsGlobal, discTexture);
   }
 
   // Main UI loop
@@ -518,9 +516,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         classicArtRequestedIdx = -1;
         // Upload artwork before text is queued so VRAM reuse cannot replace glyphs.
         if (classicDisplayedCoverAvailable)
-          gsKit_TexManager_bind(gsGlobal, coverTexture);
+          bindTextureSafe(gsGlobal, coverTexture);
         if (classicDisplayedDiscAvailable)
-          gsKit_TexManager_bind(gsGlobal, discTexture);
+          bindTextureSafe(gsGlobal, discTexture);
       }
     }
     if (view == UI_VIEW_CLASSIC && classicArtSubmittedIdx == selectedTitleIdx) {
@@ -535,9 +533,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         classicArtSubmittedIdx = -1;
         // Adopted textures must be resident before the frame draws its text.
         if (coverAvailable)
-          gsKit_TexManager_bind(gsGlobal, coverTexture);
+          bindTextureSafe(gsGlobal, coverTexture);
         if (discAvailable)
-          gsKit_TexManager_bind(gsGlobal, discTexture);
+          bindTextureSafe(gsGlobal, discTexture);
       }
     }
 
@@ -1273,12 +1271,31 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
 
 exit:
   ambientStop();
+  closePad();
+  if (res == STORAGE_UI_REFRESH) {
+    // A scan changes the library and may restart IOP drivers, not the GS.
+    // Finish transfers before freeing their source pixels or draw queues.
+    gsKit_queue_exec(gsGlobal);
+    gsKit_finish();
+    dmaKit_wait_fast();
+    gsKit_queue_reset(gsGlobal->Os_Queue);
+    gsKit_queue_reset(gsGlobal->Per_Queue);
+    artCacheShutdown();
+    // Drop manager references to released artwork while retaining framebuffers,
+    // reserved font VRAM and the menu's decoded resources.
+    gsKit_TexManager_init(gsGlobal);
+    if (artCacheInit()) {
+      closeUI();
+      res = -1;
+    }
+    DPRINTF("Storage refresh: display retained, artwork reset\n");
+  } else {
+    closeUI();
+  }
   if (favoriteTitles != NULL)
     freeTargetList(favoriteTitles);
   free(allFavoriteFlags);
   free(visibleFavoriteFlags);
-  closePad();
-  closeUI();
   return res;
 }
 // Displays Game ID and launches the title

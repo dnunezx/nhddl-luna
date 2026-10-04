@@ -659,7 +659,7 @@ void initGlassStarAtlas(void) {
   glassStarAtlas.Filter = GS_FILTER_LINEAR;
   glassStarAtlas.ClutStorageMode = 0;
   glassStarAtlas.Delayed = GS_SETTING_ON;
-  gsKit_TexManager_bind(gsGlobal, &glassStarAtlas);
+  bindTextureSafe(gsGlobal, &glassStarAtlas);
 }
 
 static void drawGlassStarDisc(int x, int y, int size, int red, int green, int blue, int alpha, int brightness) {
@@ -789,7 +789,7 @@ static void drawGlassCube(float centerX, float centerY, int size, uint32_t yawPh
   }
 
   if (surface != NULL)
-    gsKit_TexManager_bind(gsGlobal, surface);
+    bindTextureSafe(gsGlobal, surface);
 
   // The low-alpha shell remains visible behind the central smoked volume.
   for (int order = 0; order < 6; order++) {
@@ -1024,7 +1024,7 @@ static void drawOpeningGlassCube(uint32_t elapsedMs, int width, int height) {
       &openingBlprTexture, &openingBlpTexture, &openingRefTexture};
   for (int layer = 0; layer < 3; layer++) {
     GSTEXTURE *texture = layers[layer];
-    gsKit_TexManager_bind(gsGlobal, texture);
+    bindTextureSafe(gsGlobal, texture);
     gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 2, 0, 1, 0), 0);
     for (int order = 0; order < 6; order++) {
       const int faceIndex = faceOrder[order];
@@ -1101,7 +1101,7 @@ static void drawOrbitalStars(int width, int height, uint32_t elapsedMs) {
     scroll[layer] = (float)(((uint64_t)elapsedMs * speedPixelsPerSecond[layer]) %
                             ((uint64_t)width * 1000)) / 1000.0f;
 
-  gsKit_TexManager_bind(gsGlobal, &glassStarAtlas);
+  bindTextureSafe(gsGlobal, &glassStarAtlas);
   for (int i = 0; i < 58; i++) {
     int layer = i % 3;
     int baseX = (i * 97 + i * i * 13 + 31) % width;
@@ -1209,7 +1209,7 @@ static void drawRedClouds(uint32_t frameNowMs) {
                   GS_SETREG_RGBA(0x62, 0x10, 0x19, 0x24),
                   GS_SETREG_RGBA(0x18, 0x03, 0x08, 0));
 
-  gsKit_TexManager_bind(gsGlobal, &fogTexture);
+  bindTextureSafe(gsGlobal, &fogTexture);
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 2, 0, 1, 0), 0);
   for (int i = 0; i < 36; i++) {
     const int radius = 72 + (i % 6) * 18;
@@ -1320,7 +1320,7 @@ static float configRodDepth(int slot, uint32_t tilt, uint32_t orbit,
 static void drawBiosTunnel(uint32_t elapsedMs, int centerX, int centerY) {
   // The ROM emits 16 ribbons with 33 axial rings on a radius-6000 wall.
   // Every second ring is sufficient for gsKit's independent quads.
-  gsKit_TexManager_bind(gsGlobal, &configWallTexture);
+  bindTextureSafe(gsGlobal, &configWallTexture);
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
   const uint32_t frame = elapsedMs * 60U / 1000U;
   for (int ring = 4; ring < 32; ring += 2) {
@@ -1414,7 +1414,7 @@ static void configSetTest(int gequal) {
 
 static void configBindTexture(GSTEXTURE *texture, int repeat, int resident) {
   if (!resident)
-    gsKit_TexManager_bind(gsGlobal, texture);
+    bindTextureSafe(gsGlobal, texture);
   int tw = 0, th = 0;
   while ((1 << tw) < texture->Width) tw++;
   while ((1 << th) < texture->Height) th++;
@@ -1860,7 +1860,8 @@ static void drawOrbsLogo(GSTEXTURE *texture, float x, float y,
   int previousAlphaTest = gsGlobal->Test->ATST;
   int previousAlphaReference = gsGlobal->Test->AREF;
   int previousAlphaFail = gsGlobal->Test->AFAIL;
-  gsKit_TexManager_bind(gsGlobal, texture);
+  if (!bindTextureSafe(gsGlobal, texture))
+    return;
   gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
   gsGlobal->Test->ATST = 2;
   gsGlobal->Test->AREF = 0x80;

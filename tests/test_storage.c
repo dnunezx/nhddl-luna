@@ -178,6 +178,35 @@ int main(void) {
   fputs("LUNA_STORAGE_1\nenabled=34\nip=192.168.1.10\n", file); fclose(file);
   storageConfigure(directory, MODE_ATA, MODE_BASIC, 1);
   assert(STORAGE_SETTINGS.enabled == MODE_ATA); // Conflicting saved mask rejected.
+  // Recover an empty boot by enabling USB, including an absent drive and
+  // repeated rescans before and after games become available.
+  storageConfigure(directory, MODE_NONE, MODE_BASIC, 0);
+  list = storageRefresh(NULL);
+  assert(list && list->total == 0);
+  settings = STORAGE_SETTINGS;
+  settings.enabled = MODE_USB;
+  usbPresent = 0;
+  assert(storageSave(&settings) == 0);
+  assert(storageRequest(&settings, settings.enabled) == 0);
+  list = storageRefresh(list);
+  assert(list && list->total == 0 && STORAGE_STATUS[2].devices == 0);
+  usbPresent = 1;
+  for (int i = 0; i < 3; i++) {
+    assert(storageRequest(&settings, settings.enabled) == 0);
+    list = storageRefresh(list);
+    assert(list && list->total == 1 && list->first->device->mode == MODE_USB);
+    assert(STORAGE_STATUS[2].devices == 1 && STORAGE_STATUS[2].games == 1);
+  }
+  settings.enabled = MODE_NONE;
+  assert(storageRequest(&settings, MODE_NONE) == 0);
+  list = storageRefresh(list);
+  assert(list && list->total == 0);
+  settings.enabled = MODE_USB;
+  assert(storageRequest(&settings, MODE_USB) == 0);
+  list = storageRefresh(list);
+  assert(list && list->total == 1);
+  freeTargetList(list);
+  freeDeviceMapEntries(deviceModeMap);
   remove(path);
   rmdir(directory);
   puts("storage lifecycle and persistence tests passed");

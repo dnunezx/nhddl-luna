@@ -194,7 +194,8 @@ static void drawCaseTexture(const CaseGeometry *g, GSTEXTURE *cover, float x, fl
   int test = gsGlobal->Test->ATST;
   int ref = gsGlobal->Test->AREF;
   int fail = gsGlobal->Test->AFAIL;
-  gsKit_TexManager_bind(gsGlobal, cover);
+  if (!bindTextureSafe(gsGlobal, cover))
+    return;
   gsGlobal->Test->ATST = 2;
   gsGlobal->Test->AREF = 0x80;
   gsGlobal->Test->AFAIL = 0;

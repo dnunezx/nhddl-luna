@@ -163,11 +163,18 @@ int main(int argc, char *argv[]) {
 
   stopUISplashThread();
   while ((res = uiLoop(titles, preparedCollectionIdx)) == STORAGE_UI_REFRESH) {
-    // uiLoop has stopped audio/art workers and closed input before this point.
-    if (uiInit() || startSplashScreen() < 0) goto fail;
+    // uiLoop retained the display, stopped audio/art workers and closed input.
+    if ((res = startSplashScreen()) < 0) {
+      init_scr();
+      logString("ERROR: Could not start storage scan screen: %d\n", res);
+      goto fail;
+    }
+    DPRINTF("Storage refresh: discovering games\n");
     TargetList *updated = storageRefresh(titles);
     if (updated) titles = updated;
+    else uiSplashLogString(LEVEL_ERROR, "Scan could not finish. Previous library kept.\n");
     stopUISplashThread();
+    DPRINTF("Storage refresh: finished with %d games\n", titles->total);
     preparedCollectionIdx = -1;
     if (titles->total) ambientStart(loadAmbientSoundEnabled(titles->first));
   }

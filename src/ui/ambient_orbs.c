@@ -1346,7 +1346,8 @@ static void drawOriginalMask(GSTEXTURE *texture, float x, float y,
     return;
   if (alpha > 0x80)
     alpha = 0x80;
-  gsKit_TexManager_bind(gsGlobal, texture);
+  if (!bindTextureSafe(gsGlobal, texture))
+    return;
   gsKit_prim_sprite_texture(gsGlobal, texture,
                             x - radiusX, y - radiusY, 0.0f, 0.0f,
                             x + radiusX, y + radiusY, 63.0f, 63.0f, z,

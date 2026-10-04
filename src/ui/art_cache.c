@@ -1,6 +1,7 @@
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "devices/devices.h"
 #include "ui/art_cache.h"
+#include "ui/worker_lifecycle.h"
 #include "ui/graphics.h"
 #include "ui/navigation.h"
 #include "ui/collection_art.h"
@@ -372,10 +373,10 @@ static int loadCoverArtInto(struct DeviceMapEntry *device, char *titleID,
   texture->Mem = NULL;
   free(texture->Clut);
   texture->Clut = NULL;
-  if (gsKit_texture_png(gsGlobal, texture, artPathBuffer)) {
+  if (decodePNGTextureRGBA(gsGlobal, texture, artPathBuffer)) {
     return -1;
   }
-  gsKit_TexManager_bind(gsGlobal, texture);
+  bindTextureSafe(gsGlobal, texture);
   // Retain the decoded source in EE RAM. If the texture manager evicts the
   // cover while binding fonts or disc art, a later bind can safely re-upload it.
   return 0;
@@ -473,7 +474,7 @@ static void stopClassicArtWorker(void) {
     classicArtStopping = 1;
     SignalSema(classicArtWakeSema);
     WaitSema(classicArtDoneSema);
-    DeleteThread(classicArtThreadId);
+    deleteFinishedWorker(classicArtThreadId);
     classicArtThreadId = -1;
   }
   if (classicArtWakeSema >= 0)
@@ -924,7 +925,7 @@ static void stopCollectionArtWorker(void) {
     collectionArtStopping = 1;
     SignalSema(collectionArtWakeSema);
     WaitSema(collectionArtDoneSema);
-    DeleteThread(collectionArtThreadId);
+    deleteFinishedWorker(collectionArtThreadId);
     collectionArtThreadId = -1;
   }
   if (collectionArtWakeSema >= 0)
@@ -940,7 +941,7 @@ void stopCollectionFarArtWorker(TargetList *titles, int selectedTitleIdx) {
     collectionFarArtStopping = 1;
     SignalSema(collectionFarArtWakeSema);
     WaitSema(collectionFarArtDoneSema);
-    DeleteThread(collectionFarArtThreadId);
+    deleteFinishedWorker(collectionFarArtThreadId);
     collectionFarArtThreadId = -1;
   }
   if (collectionFarArtWakeSema >= 0)
@@ -1019,7 +1020,7 @@ static void stopOrbitArtWorker(void) {
     orbitArtStopping = 1;
     SignalSema(orbitArtWakeSema);
     WaitSema(orbitArtDoneSema);
-    DeleteThread(orbitArtThreadId);
+    deleteFinishedWorker(orbitArtThreadId);
     orbitArtThreadId = -1;
   }
   if (orbitArtWakeSema >= 0)
@@ -1231,7 +1232,7 @@ static void stopScrollArtWorker(void) {
     scrollArtStopping = 1;
     SignalSema(scrollArtWakeSema);
     WaitSema(scrollArtDoneSema);
-    DeleteThread(scrollArtThreadId);
+    deleteFinishedWorker(scrollArtThreadId);
     scrollArtThreadId = -1;
   }
   if (scrollArtWakeSema >= 0)
@@ -1259,7 +1260,7 @@ void serviceScrollArt(void) {
         *orbsLogoTextures[i] = scrollArtJob.texture;
         memset(&scrollArtJob.texture, 0, sizeof(scrollArtJob.texture));
         orbsLogoLoaded[i] = 1;
-        gsKit_TexManager_bind(gsGlobal, orbsLogoTextures[i]);
+        bindTextureSafe(gsGlobal, orbsLogoTextures[i]);
       }
       orbsLogoResolved[i] = 1;
       break;
@@ -1350,7 +1351,7 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
       texture->Clut = NULL;
       texture->PSM = GS_PSM_CT32;
       texture->Filter = GS_FILTER_LINEAR;
-      gsKit_TexManager_bind(gsGlobal, texture);
+      bindTextureSafe(gsGlobal, texture);
       return 0;
     }
   }
@@ -1386,7 +1387,7 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
     texture->Clut = NULL;
     texture->PSM = GS_PSM_CT32;
     texture->Filter = GS_FILTER_LINEAR;
-    gsKit_TexManager_bind(gsGlobal, texture);
+    bindTextureSafe(gsGlobal, texture);
     rememberGridThumbnail(artPathBuffer, pixels, width, height);
   }
   return 0;
@@ -1489,7 +1490,7 @@ static void stopGridArtWorker(void) {
     gridArtStopping = 1;
     SignalSema(gridArtWakeSema);
     WaitSema(gridArtDoneSema);
-    DeleteThread(gridArtThreadId);
+    deleteFinishedWorker(gridArtThreadId);
     gridArtThreadId = -1;
     DPRINTF("3D art worker stopped before cache release\n");
   }
@@ -1521,7 +1522,7 @@ int serviceGridArt(void) {
         if (gridArtJob.thumbnail == 1 || gridArtJob.thumbnail == 3)
           rememberGridThumbnail(gridArtJob.path, (const PSBBNPixel *)texture->Mem,
                                  texture->Width, texture->Height);
-        gsKit_TexManager_bind(gsGlobal, texture);
+        bindTextureSafe(gsGlobal, texture);
       } else if (gridArtJob.missingFile &&
                  (gridArtJob.thumbnail == 1 || gridArtJob.thumbnail == 3)) {
         rememberGridThumbnail(gridArtJob.path, NULL, 0, 0);
@@ -1542,7 +1543,7 @@ int serviceGridArt(void) {
         memset(&gridArtJob.texture, 0, sizeof(gridArtJob.texture));
         gridSelectedLoaded[buffer] = 1;
         gridSelectedStatus[buffer] = 2;
-        gsKit_TexManager_bind(gsGlobal, texture);
+        bindTextureSafe(gsGlobal, texture);
       } else {
         gridSelectedStatus[buffer] = 3;
       }

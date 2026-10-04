@@ -5,6 +5,7 @@
 #include <gsKit.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "ui/texture_budget.h"
 
 // Predefined colors
 // static const uint64_t ColorWhite = GS_SETREG_RGBA(0xFF, 0xFF, 0xFF, 0x80);

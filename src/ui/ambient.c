@@ -1,4 +1,5 @@
 #include "ui/ambient.h"
+#include "ui/worker_lifecycle.h"
 #include "common.h"
 #include "dprintf.h"
 #include <audsrv.h>
@@ -356,7 +357,7 @@ void ambientStop(void) {
     stopping = 1;
     SignalSema(controlSema);
     WaitSema(doneSema);
-    DeleteThread(threadId);
+    deleteFinishedWorker(threadId);
     threadId = -1;
   }
   if (audioInitialized) {

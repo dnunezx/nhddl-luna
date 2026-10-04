@@ -4,6 +4,18 @@ set -eu
 
 build_dir="${TMPDIR:-/tmp}/luna-host-tests"
 mkdir -p "$build_dir"
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Itests/runtime-lock-stubs \
+  src/runtime_locks.c tests/test_runtime_locks.c \
+  -o "$build_dir/test_runtime_locks"
+"$build_dir/test_runtime_locks"
+"${CC:-cc}" -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -Werror \
+  -Itests/worker-stubs -Iinclude src/ui/worker_lifecycle.c \
+  tests/test_worker_lifecycle.c -o "$build_dir/test_worker_lifecycle"
+"$build_dir/test_worker_lifecycle"
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Itests/texture-stubs -Iinclude \
+  src/ui/texture_budget.c src/ui/collection_art.c src/ui/navigation.c \
+  tests/test_texture_budget.c -o "$build_dir/test_texture_budget"
+"$build_dir/test_texture_budget"
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Iinclude \
   src/ui/navigation.c tests/test_navigation.c \
   -o "$build_dir/test_navigation"
