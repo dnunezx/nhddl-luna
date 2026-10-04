@@ -63,7 +63,7 @@ ModeType parseFilename(const char *path);
 int parseIPConfig(void);
 
 int main(int argc, char *argv[]) {
-  DPRINTF("*************\nLUNA %s\nLayered Unified Neutrino Architecture\nBased on NHDDL by pcm720\n*************\n", GIT_VERSION);
+  DPRINTF("*************\nLUNA %s\nLightweight Unified Neutrino Access\nBased on NHDDL by pcm720\n*************\n", GIT_VERSION);
 
   for (int i = 0; i < argc; i++)
     DPRINTF("argv[%d] = %s\n", i, argv[i]);

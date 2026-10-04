@@ -1,6 +1,0 @@
-#ifndef STORAGE_TEST_GSKIT_H
-#define STORAGE_TEST_GSKIT_H
-#define GS_MODE_NTSC 2
-#define GS_MODE_PAL 3
-#define GS_MODE_DTV_480P 4
-#endif
