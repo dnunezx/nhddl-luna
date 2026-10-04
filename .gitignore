@@ -85,3 +85,23 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,windows,linux
+
+# Tests, diagnostics, and captures are local only.
+local/
+tests/
+test-data/
+fixtures/
+lab/
+diagnostics/
+captures/
+emulation/
+*.raw
+*.iso
+*.img
+*.bin
+*.log
+*.trace
+*.dmp
+*.bak
+/iop/udpfs/ministack/include/udptty.h
+/iop/udpfs/ministack/src/udptty.c
