@@ -85,6 +85,15 @@ static void drawLibraryFooter(int canLaunch) {
                 (PromptBar){NULL, prompts, 4});
 }
 
+static void drawQuickMenuText(int x1, int y1, int x2, int y2,
+                              uint64_t color, uint8_t alignment,
+                              const char *text) {
+  // Keep labels distinct from any artwork visible through the glass.
+  drawTextWindow(x1 + 1, y1 + 2, x2 + 1, y2 + 2, 0, ColorBlack,
+                 alignment, text);
+  drawTextWindow(x1, y1, x2, y2, 0, color, alignment, text);
+}
+
 static void drawLibraryQuickMenu(int progress, int closing, UILibraryView view,
                                  int favoritesOnly, int isFavorite,
                                  int total, const char *title) {
@@ -115,21 +124,23 @@ static void drawLibraryQuickMenu(int progress, int closing, UILibraryView view,
                       top + height - 22, 0,
                       glassPresetColor(0x50, 0x92, 0xB8, (0x13 * wake) / 1000));
   }
-  drawGlassPanelWithFillAlpha(left, top, right, top + height, 0, 0x44);
+  drawGlassPanelWithFillAlpha(left, top, right, top + height, 0, 0x78);
   if (wake > 0)
     gsKit_prim_sprite(gsGlobal, left, top + 8, left + 3,
                       top + height - 8, 1,
                       glassPresetColor(0xA0, 0xE0, 0xF8, (0x30 * wake) / 1000));
-  drawTextWindow(left + 16, top + 10, right - 16,
-                 top + rowHeight + 10, 0, HeaderTextColor,
+  drawQuickMenuText(left + 16, top + 10, right - 16,
+                 top + rowHeight + 10, FontMainColor,
                  ALIGN_CENTER, total > 0 ? title : "No favorites yet");
   for (int i = 0; i < count; i++) {
     int y = top + (i + 1) * rowHeight + 8;
     int enabled = i == 0 || (total > 0 && (i != 3 || total > 1));
+    drawIconWindow(left + 17, y + 2, 0, y + rowHeight + 2, 0,
+                   ColorBlack, ALIGN_VCENTER, icons[i]);
     drawIconWindow(left + 16, y, 0, y + rowHeight, 0,
                    enabled ? FontMainColor : HeaderTextColor, ALIGN_VCENTER, icons[i]);
-    drawTextWindow(left + 16 + getIconWidth(icons[i]) + 10, y,
-                   right - 16, y + rowHeight, 0,
+    drawQuickMenuText(left + 16 + getIconWidth(icons[i]) + 10, y,
+                   right - 16, y + rowHeight,
                    enabled ? FontMainColor : HeaderTextColor, ALIGN_VCENTER, labels[i]);
   }
   gsKit_set_test(gsGlobal, GS_ZTEST_ON);
