@@ -6,7 +6,6 @@
 
 // Defined in devices.h
 struct DeviceMapEntry;
-struct LunaGenreIndex;
 
 // An entry in TargetList
 typedef struct Target {
@@ -14,7 +13,6 @@ typedef struct Target {
   char *fullPath;         // Full path to ISO
   char *name;             // Target name (extracted from file name)
   char *id;               // Title ID
-  char genre[48];         // Primary genre from CFG/<TitleID>.cfg; empty means Uncategorized.
   struct DeviceMapEntry *device; // Device entry
 
   struct Target *prev; // Previous target in the list
@@ -26,7 +24,9 @@ typedef struct {
   int total;     // Total number of targets
   Target *first; // First target
   Target *last;  // Last target
-  struct LunaGenreIndex *genres; // Owned index; its target pointers are borrowed.
+  Target **byIndex; // Owned pointer array; entries remain owned by the linked list.
+  int indexCapacity;
+  int borrowed; // Filtered views borrow targets and must never free or relink them.
 } TargetList;
 
 // Completely frees TargetList. Passed pointer will not be valid after this function executes
@@ -38,10 +38,14 @@ Target *getTargetByIdx(TargetList *targets, int idx);
 // Makes and returns a deep copy of src without prev/next pointers.
 Target *copyTarget(Target *src);
 
-// Inserts title in the list while keeping the alphabetical order
-void insertIntoTargetList(TargetList *result, Target *title);
+// Collect titles without sorting; mutation discards any existing index.
+void appendTarget(TargetList *result, Target *title);
+// Build constant-time lookups in current order, assigning canonical indexes.
+int buildTargetIndex(TargetList *result);
+// Sort once, preserving discovery order for equal case-insensitive names.
+int sortTargetList(TargetList *result);
 
-// Completely frees Target and returns pointer to the next target in the list
+// Removes and frees Target, decrements total and invalidates the index.
 Target *freeTarget(TargetList *targetList, Target *target);
 
 #endif

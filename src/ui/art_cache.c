@@ -1111,12 +1111,12 @@ static int orbsLogoPath(Target *target, char *path, size_t capacity) {
   return length >= 0 && length < (int)capacity ? 0 : -1;
 }
 
-static int queueScrollArt(Target *target) {
+static int queueScrollArt(Target *target, int targetIdx) {
   if (scrollArtJob.state != 0)
     return 0;
   if (orbsLogoPath(target, scrollArtJob.path, sizeof(scrollArtJob.path)) < 0)
     return -1;
-  scrollArtJob.targetIdx = target->idx;
+  scrollArtJob.targetIdx = targetIdx;
   scrollArtJob.generation = scrollArtGeneration;
   scrollArtJob.state = 1;
   SignalSema(scrollArtWakeSema);
@@ -1184,7 +1184,7 @@ void refreshOrbsLogos(TargetList *titles, int selectedTitleIdx) {
       int i = priority[p];
       if (orbsLogoResolved[i])
         continue;
-      int queued = queueScrollArt(getTargetByIdx(titles, orbsLogoTargets[i]));
+      int queued = queueScrollArt(getTargetByIdx(titles, orbsLogoTargets[i]), orbsLogoTargets[i]);
       if (queued < 0)
         orbsLogoResolved[i] = 1;
       else

@@ -292,30 +292,13 @@ int findHDLTargets(TargetList *result, struct DeviceMapEntry *device) {
 
       title->device = device;
 
-      // Increment title counter and update target list
-      result->total++;
-      if (result->first == NULL) {
-        // If this is the first entry, update both pointers
-        result->first = title;
-        result->last = title;
-      } else {
-        insertIntoTargetList(result, title);
-      }
+      appendTarget(result, title);
     }
   }
   fileXioDclose(fd);
 
   if (result->total == 0)
     return -ENOENT;
-
-  // Set indexes for each title
-  int idx = 0;
-  Target *curTitle = result->first;
-  while (curTitle != NULL) {
-    curTitle->idx = idx;
-    idx++;
-    curTitle = curTitle->next;
-  }
 
   return 0;
 }

@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static const char favoritesPath[] = "/favorites.txt";
 static const char favoritesTempPath[] = "/favorites.txt.tmp";
@@ -122,34 +123,58 @@ int saveFavoriteFlags(TargetList *titles, const uint8_t *flags, size_t flagCount
   return 0;
 }
 
+// The source library owns games; a filtered view owns only its pointer array.
 TargetList *buildFavoriteTargetList(TargetList *titles, const uint8_t *flags,
                                     size_t flagCount) {
-  TargetList *favorites;
-  Target *source;
-
-  if (titles == NULL || flags == NULL || flagCount < (size_t)titles->total)
-    return NULL;
-  favorites = calloc(1, sizeof(*favorites));
-  if (favorites == NULL)
-    return NULL;
-
-  for (source = titles->first; source != NULL; source = source->next) {
-    Target *copy;
-    if (!flags[source->idx])
-      continue;
-    copy = copyTarget(source);
-    if (copy == NULL) {
-      freeTargetList(favorites);
-      return NULL;
-    }
-    copy->idx = favorites->total++;
-    copy->prev = favorites->last;
-    copy->next = NULL;
-    if (favorites->last != NULL)
-      favorites->last->next = copy;
-    else
-      favorites->first = copy;
-    favorites->last = copy;
+  if (!titles || !flags || flagCount < (size_t)titles->total) return NULL;
+  TargetList *favorites = calloc(1, sizeof(*favorites));
+  if (!favorites) return NULL;
+  favorites->borrowed = 1;
+  favorites->indexCapacity = titles->total;
+  if (titles->total) {
+    favorites->byIndex = malloc((size_t)titles->total * sizeof(*favorites->byIndex));
+    if (!favorites->byIndex) { freeTargetList(favorites); return NULL; }
   }
+  for (Target *source = titles->first; source; source = source->next)
+    if (flags[source->idx]) favorites->byIndex[favorites->total++] = source;
+  favorites->first = favorites->total ? favorites->byIndex[0] : NULL;
+  favorites->last = favorites->total ? favorites->byIndex[favorites->total - 1] : NULL;
   return favorites;
+}
+
+static int favoriteInsertionRank(const TargetList *favorites, int originalIndex) {
+  int low = 0, high = favorites->total;
+  while (low < high) {
+    int middle = low + (high - low) / 2;
+    if (favorites->byIndex[middle]->idx < originalIndex) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+int favoriteTargetIndex(const TargetList *favorites, int originalIndex) {
+  int rank = favoriteInsertionRank(favorites, originalIndex);
+  return rank < favorites->total && favorites->byIndex[rank]->idx == originalIndex
+             ? rank : -1;
+}
+
+int setFavoriteTarget(TargetList *favorites, Target *source, int enabled) {
+  if (!favorites || !favorites->borrowed || !source) return -EINVAL;
+  int rank = favoriteInsertionRank(favorites, source->idx);
+  int present = rank < favorites->total && favorites->byIndex[rank] == source;
+  if (!!enabled == present) return 0;
+  if (enabled) {
+    if (favorites->total >= favorites->indexCapacity) return -ENOMEM;
+    memmove(favorites->byIndex + rank + 1, favorites->byIndex + rank,
+            (size_t)(favorites->total - rank) * sizeof(*favorites->byIndex));
+    favorites->byIndex[rank] = source;
+    favorites->total++;
+  } else {
+    memmove(favorites->byIndex + rank, favorites->byIndex + rank + 1,
+            (size_t)(favorites->total - rank - 1) * sizeof(*favorites->byIndex));
+    favorites->byIndex[--favorites->total] = NULL;
+  }
+  favorites->first = favorites->total ? favorites->byIndex[0] : NULL;
+  favorites->last = favorites->total ? favorites->byIndex[favorites->total - 1] : NULL;
+  return 0;
 }

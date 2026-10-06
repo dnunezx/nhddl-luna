@@ -1,5 +1,4 @@
 #include "target.h"
-#include "genres.h"
 #include "common.h"
 #include "devices/devices.h"
 #include <errno.h>
@@ -12,8 +11,10 @@
 
 // Completely frees TargetList. Passed pointer will not be valid after this function executes
 void freeTargetList(TargetList *result) {
-  lunaFreeGenreIndex(result->genres);
-  result->genres = NULL;
+  if (!result) return;
+  free(result->byIndex);
+  result->byIndex = NULL;
+  if (result->borrowed) { free(result); return; }
   Target *target = result->first;
   while (target != NULL) {
     target = freeTarget(result, target);
@@ -26,8 +27,10 @@ void freeTargetList(TargetList *result) {
 
 // Finds target with given index in the list and returns a pointer to it
 Target *getTargetByIdx(TargetList *targets, int idx) {
+  if (!targets || idx < 0 || idx >= targets->total) return NULL;
+  if (targets->byIndex) return targets->byIndex[idx];
   Target *current = targets->first;
-  while (1) {
+  while (current != NULL) {
     if (current->idx == idx) {
       return current;
     }
@@ -45,7 +48,6 @@ Target *copyTarget(Target *src) {
   Target *copy = calloc(1, sizeof(Target));
   if (!copy) return NULL;
   copy->idx = src->idx;
-  memcpy(copy->genre, src->genre, sizeof(copy->genre));
 
   copy->fullPath = strdup(src->fullPath);
   copy->name = strdup(src->name);
@@ -62,69 +64,77 @@ Target *copyTarget(Target *src) {
   return copy;
 }
 
-// Converts lowercase ASCII string into uppercase
-void toUppercase(char *str) {
-  for (size_t i = 0; str[i]; i++)
-    if (str[i] >= 0x61 && str[i] <= 0x7A) {
-      str[i] -= 32;
-    }
+// Compare unsigned ASCII bytes without allocating uppercase name copies.
+static int compareTargetNames(const void *left, const void *right) {
+  const Target *a = *(Target *const *)left;
+  const Target *b = *(Target *const *)right;
+  const unsigned char *nameA = (const unsigned char *)a->name;
+  const unsigned char *nameB = (const unsigned char *)b->name;
+  while (1) {
+    unsigned char ca = *nameA++, cb = *nameB++;
+    if (ca >= 'a' && ca <= 'z') ca -= 'a' - 'A';
+    if (cb >= 'a' && cb <= 'z') cb -= 'a' - 'A';
+    if (ca != cb) return (int)ca - (int)cb;
+    if (!ca) return (int)a->idx - (int)b->idx;
+  }
 }
 
-// Inserts title in the list while keeping the alphabetical order
-void insertIntoTargetList(TargetList *result, Target *title) {
-  // Traverse the list in reverse
-  Target *curTitle = result->last;
+static void discardTargetIndex(TargetList *result) {
+  free(result->byIndex);
+  result->byIndex = NULL;
+  result->indexCapacity = 0;
+}
 
-  // Covert title name to uppercase
-  char *curUppercase = strdup(title->name);
-  toUppercase(curUppercase);
+void appendTarget(TargetList *result, Target *title) {
+  discardTargetIndex(result);
+  title->prev = result->last;
+  title->next = NULL;
+  if (result->last) result->last->next = title;
+  else result->first = title;
+  result->last = title;
+  result->total++;
+}
 
-  // Overall, title name should not exceed PATH_MAX
-  char lastUppercase[PATH_MAX];
-
-  while (1) {
-    // Reset string buffer
-    lastUppercase[0] = '\0';
-    // Convert name of the last title to uppercase
-    strlcpy(lastUppercase, curTitle->name, PATH_MAX);
-    toUppercase(lastUppercase);
-
-    // Compare new title name and the current title name
-    if (strcmp(curUppercase, lastUppercase) >= 0) {
-      // First letter of the new title is after or the same as the current one
-      // New title must be inserted after the current list element
-      if (curTitle->next != NULL) {
-        // Current title has a next title, update the next element
-        curTitle->next->prev = title;
-        title->next = curTitle->next;
-      } else {
-        // Current title has no next title (it's the last list element)
-        result->last = title;
-      }
-      title->prev = curTitle;
-      curTitle->next = title;
-      break;
-    }
-
-    if (curTitle->prev == NULL) {
-      // Current title is the first in this list
-      // New title must be inserted at the beginning
-      curTitle->prev = title;
-      title->next = curTitle;
-      result->first = title;
-      break;
-    }
-
-    // Keep traversing the list
-    curTitle = curTitle->prev;
+int buildTargetIndex(TargetList *result) {
+  if (!result || result->borrowed || result->total < 0) return -EINVAL;
+  // Target.idx is 16-bit; reject overflow instead of publishing duplicate IDs.
+  if ((unsigned)result->total > (unsigned)UINT16_MAX + 1U) return -EOVERFLOW;
+  Target **index = result->total ? malloc((size_t)result->total * sizeof(*index)) : NULL;
+  if (result->total && !index) return -ENOMEM;
+  int count = 0;
+  for (Target *target = result->first; target; target = target->next) {
+    if (count >= result->total) { free(index); return -EINVAL; }
+    index[count++] = target;
   }
-  free(curUppercase);
+  if (count != result->total) { free(index); return -EINVAL; }
+  discardTargetIndex(result);
+  result->byIndex = index;
+  result->indexCapacity = count;
+  for (int i = 0; i < count; i++) index[i]->idx = (uint16_t)i;
+  return 0;
+}
+
+int sortTargetList(TargetList *result) {
+  int error = buildTargetIndex(result);
+  if (error) return error;
+  if (result->total > 1)
+    qsort(result->byIndex, (size_t)result->total, sizeof(*result->byIndex),
+          compareTargetNames);
+  for (int i = 0; i < result->total; i++) {
+    Target *target = result->byIndex[i];
+    target->idx = (uint16_t)i;
+    target->prev = i ? result->byIndex[i - 1] : NULL;
+    target->next = i + 1 < result->total ? result->byIndex[i + 1] : NULL;
+  }
+  result->first = result->total ? result->byIndex[0] : NULL;
+  result->last = result->total ? result->byIndex[result->total - 1] : NULL;
+  return 0;
 }
 
 // Completely frees Target and returns pointer to the next target in the list
 Target *freeTarget(TargetList *targetList, Target *target) {
-  lunaFreeGenreIndex(targetList->genres);
-  targetList->genres = NULL;
+  discardTargetIndex(targetList);
+  targetList->total--;
   // Update target list if target is the first or the last element
   if (targetList->first == target) {
     targetList->first = target->next;

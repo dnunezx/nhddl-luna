@@ -215,7 +215,7 @@ int uiInit() {
   gsKit_vram_clear(gsGlobal);
   gsKit_init_screen(gsGlobal);
   gsKit_display_buffer(gsGlobal); // Switch display buffer to avoid garbage appearing on screen
-  initOpeningCubeCapture();
+  initSystemConfigCapture();
   if (reserveUIFontVRAM()) {
     DPRINTF("ERROR: Failed to reserve font VRAM\n");
     return -1;
@@ -262,7 +262,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   int res = 0;
   uint8_t *favoriteFlags = NULL;
   uint8_t *allFavoriteFlags = NULL;
-  uint8_t *visibleFavoriteFlags = NULL;
   TargetList *allTitles = titles;
   TargetList *favoriteTitles = NULL;
   if ((gsGlobal == NULL) && (res = uiInit())) {
@@ -403,12 +402,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     goto exit;
   }
   allFavoriteFlags = favoriteFlags;
-  visibleFavoriteFlags = malloc((size_t)titles->total);
-  if (visibleFavoriteFlags == NULL) {
-    res = -ENOMEM;
-    goto exit;
-  }
-  memset(visibleFavoriteFlags, 1, (size_t)titles->total);
   loadFavoriteFlags(titles, favoriteFlags, (size_t)titles->total);
   favoriteTitles = buildFavoriteTargetList(titles, favoriteFlags, (size_t)titles->total);
   if (favoriteTitles == NULL) {
@@ -473,8 +466,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     observeAmbientOrbsSelection(selectedTitleIdx, uiNowMs());
 
     // Reload target if index has changed
-    if (curTarget->idx != selectedTitleIdx) {
-      curTarget = getTargetByIdx(titles, selectedTitleIdx);
+    Target *selectedTarget = getTargetByIdx(titles, selectedTitleIdx);
+    if (curTarget != selectedTarget) {
+      curTarget = selectedTarget;
       collectionPreloadIdleSinceMs = uiNowMs();
       if (view == UI_VIEW_CLASSIC) {
         classicEntryListSlideActive = 0;
@@ -652,7 +646,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                      now, nextViewLabel);
       }
     } else {
-      int favoritesEmpty = favoritesOnly && lunaNavMarkedCount(favoriteFlags, titles->total) == 0;
+      int favoritesEmpty = favoritesOnly && titles->total == 0;
       const uint32_t frameNowMs = uiNowMs();
       const int coverPending = classicArtRequestedIdx == selectedTitleIdx;
       int listEntryProgress = 1000;
@@ -687,9 +681,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     quickMenuProgress += quickMenu.open ? quickStep : -quickStep;
     if (quickMenuProgress < 0) quickMenuProgress = 0;
     if (quickMenuProgress > 1000) quickMenuProgress = 1000;
-    int favoriteIndex = favoritesOnly && titles->total > 0
-        ? lunaNavMarkedByRank(allFavoriteFlags, allTitles->total, selectedTitleIdx)
-        : selectedTitleIdx;
+    int favoriteIndex = curTarget->idx;
     drawLibraryQuickMenu(quickMenuProgress, !quickMenu.open, view,
                          favoritesOnly, titles->total > 0 && allFavoriteFlags[favoriteIndex],
                          titles->total, curTarget->name);
@@ -985,16 +977,13 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     int libraryListChanged = 0;
     if ((input & PAD_SELECT) && (!favoritesTabButtonHeld || quickAction == 0)) {
       favoritesTabButtonHeld = 1;
-      int originalIndex = favoritesOnly && titles->total > 0
-          ? lunaNavMarkedByRank(allFavoriteFlags, allTitles->total, selectedTitleIdx)
-          : curTarget->idx;
+      int originalIndex = curTarget->idx;
       DPRINTF("Library filter switch begin: view=%d favorites=%d total=%d\n",
               view, favoritesOnly, titles->total);
       favoritesOnly = !favoritesOnly;
       titles = favoritesOnly ? favoriteTitles : allTitles;
-      favoriteFlags = favoritesOnly ? visibleFavoriteFlags : allFavoriteFlags;
       selectedTitleIdx = favoritesOnly
-          ? lunaNavMarkedRank(allFavoriteFlags, allTitles->total, originalIndex)
+          ? favoriteTargetIndex(favoriteTitles, originalIndex)
           : originalIndex;
       if (selectedTitleIdx < 0) selectedTitleIdx = 0;
       curTarget = titles->total > 0 ? getTargetByIdx(titles, selectedTitleIdx)
@@ -1008,8 +997,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       favoriteTitles = NULL;
       free(allFavoriteFlags);
       allFavoriteFlags = NULL;
-      free(visibleFavoriteFlags);
-      visibleFavoriteFlags = NULL;
       favoriteFlags = NULL;
       freeTargetList(allTitles);
       uiLaunchTitle(target, NULL);
@@ -1124,24 +1111,20 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                 view, favoritesOnly, titles->total);
     } else if ((quickAction == 1 || (view == UI_VIEW_CLASSIC && (input & PAD_SQUARE))) &&
                !favoriteButtonHeld && titles->total > 0) {
-      int originalIndex = favoritesOnly
-          ? lunaNavMarkedByRank(allFavoriteFlags, allTitles->total, selectedTitleIdx)
-          : selectedTitleIdx;
+      int originalIndex = curTarget->idx;
       int wasFavorite = allFavoriteFlags[originalIndex] != 0;
       Target *originalTarget = getTargetByIdx(allTitles, originalIndex);
       favoriteButtonHeld = 1;
       allFavoriteFlags[originalIndex] = !wasFavorite;
-      TargetList *updated = buildFavoriteTargetList(allTitles, allFavoriteFlags,
-                                                    (size_t)allTitles->total);
-      if (updated == NULL || saveFavoriteFlags(allTitles, allFavoriteFlags,
-                                               (size_t)allTitles->total, originalTarget)) {
+      if (setFavoriteTarget(favoriteTitles, originalTarget, !wasFavorite) ||
+          saveFavoriteFlags(allTitles, allFavoriteFlags,
+                            (size_t)allTitles->total, originalTarget)) {
         allFavoriteFlags[originalIndex] = wasFavorite;
-        if (updated != NULL) freeTargetList(updated);
+        // Capacity is reserved at startup, so rollback cannot allocate or fail.
+        setFavoriteTarget(favoriteTitles, originalTarget, wasFavorite);
         quickMenuMessage = "Could not save favorites";
         quickMenuMessageUntil = uiNowMs() + 2500;
       } else {
-        freeTargetList(favoriteTitles);
-        favoriteTitles = updated;
         if (favoritesOnly) {
           titles = favoriteTitles;
           if (selectedTitleIdx >= titles->total)
@@ -1174,32 +1157,15 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                                                   input & PAD_UP ? -1 : 1);
     } else if (input & (PAD_LEFT | PAD_UP)) {
       // Point to the previous title
-      if (favoritesOnly) {
-        int favoriteIdx = lunaNavMarkedStep(favoriteFlags, titles->total, selectedTitleIdx, -1);
-        if (favoriteIdx >= 0)
-          selectedTitleIdx = favoriteIdx;
-      } else {
-        selectedTitleIdx = ((selectedTitleIdx - 1) + titles->total) % titles->total;
-      }
+      selectedTitleIdx = lunaNavWrap(titles->total, selectedTitleIdx - 1);
     } else if (input & (PAD_RIGHT | PAD_DOWN)) {
       // Advance to the next title
-      if (favoritesOnly) {
-        int favoriteIdx = lunaNavMarkedStep(favoriteFlags, titles->total, selectedTitleIdx, 1);
-        if (favoriteIdx >= 0)
-          selectedTitleIdx = favoriteIdx;
-      } else {
-        selectedTitleIdx = (selectedTitleIdx + 1) % titles->total;
-      }
+      selectedTitleIdx = lunaNavWrap(titles->total, selectedTitleIdx + 1);
     } else if (input & GRID_RIGHT_SHOULDERS) {
       // Switch to the next page.
       if (view == UI_VIEW_3D) {
         setCaseGridPageDirection(1);
         selectedTitleIdx = lunaNavCaseGridPage(titles->total, selectedTitleIdx, 1);
-      } else if (favoritesOnly) {
-        int favoriteIdx = lunaNavMarkedPage(favoriteFlags, titles->total, selectedTitleIdx,
-                                            maxTitlesPerPage, 1);
-        if (favoriteIdx >= 0)
-          selectedTitleIdx = favoriteIdx;
       } else if (selectedTitleIdx == titles->total - 1) {
         selectedTitleIdx = 0; // Wrap around if the last title is selected
       } else {
@@ -1212,11 +1178,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       if (view == UI_VIEW_3D) {
         setCaseGridPageDirection(-1);
         selectedTitleIdx = lunaNavCaseGridPage(titles->total, selectedTitleIdx, -1);
-      } else if (favoritesOnly) {
-        int favoriteIdx = lunaNavMarkedPage(favoriteFlags, titles->total, selectedTitleIdx,
-                                            maxTitlesPerPage, -1);
-        if (favoriteIdx >= 0)
-          selectedTitleIdx = favoriteIdx;
       } else if (selectedTitleIdx == 0) {
         selectedTitleIdx = titles->total - 1; // Wrap around if the first title is selected
       } else {
@@ -1237,7 +1198,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         ambientStop();
         freeTargetList(favoriteTitles);
         free(allFavoriteFlags);
-        free(visibleFavoriteFlags);
         return -1;
       }
       if (view == UI_VIEW_CLASSIC)
@@ -1295,7 +1255,6 @@ exit:
   if (favoriteTitles != NULL)
     freeTargetList(favoriteTitles);
   free(allFavoriteFlags);
-  free(visibleFavoriteFlags);
   return res;
 }
 // Displays Game ID and launches the title

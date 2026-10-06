@@ -312,9 +312,9 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
 
   classicDiscLastFrameMs = frameNowMs;
 
-  int favoriteTotal = lunaNavMarkedCount(favoriteFlags, titles->total);
-  int displayTotal = favoritesOnly ? favoriteTotal : titles->total;
-  int selectedDisplayIdx = favoritesOnly ? lunaNavMarkedRank(favoriteFlags, titles->total, selectedTitleIdx) : selectedTitleIdx;
+  // Favorites already supplies a filtered array and a maintained title count.
+  int displayTotal = titles->total;
+  int selectedDisplayIdx = selectedTitleIdx;
   int curPage = (selectedDisplayIdx >= 0) ? selectedDisplayIdx / maxTitlesPerPage : 0;
   int pageCount = DIV_ROUND(displayTotal, maxTitlesPerPage);
   if (pageCount < 1)
@@ -349,42 +349,30 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
   drawTextWindow(baseX, headerHeight - getFontLineHeight(), gsGlobal->Width - baseX, 0, 3, HeaderTextColor, ALIGN_RIGHT, lineBuffer);
 
   // Draw title list
-  Target *curTitle = titles->first;
-  int displayIdx = 0;
   int listStartY;
   const int listTextX = baseX + (1000 - listEntryProgress) * 64 / 1000;
 
   titleY += getFontLineHeight() / 2;
   listStartY = titleY;
   classicGlowSync(selectedDisplayIdx, maxTitlesPerPage, curPage, frameNowMs);
-  if (favoritesOnly && favoriteTotal == 0) {
+  if (favoritesOnly && titles->total == 0) {
     drawTextWindow(listTextX, titleY + getFontLineHeight() * 3, coverArtX1 - 12,
                    titleY + getFontLineHeight() * 5, 6, HeaderTextColor,
                    ALIGN_CENTER, "NO FAVORITES YET");
   }
-  while (curTitle != NULL) {
-    int rowIdx;
+  int pageStart = maxTitlesPerPage * curPage;
+  int pageEnd = pageStart + maxTitlesPerPage;
+  if (pageEnd > titles->total) pageEnd = titles->total;
+  for (int rowIdx = pageStart; rowIdx < pageEnd; rowIdx++) {
+    Target *curTitle = getTargetByIdx(titles, rowIdx);
     int titleRight;
-    if (favoritesOnly && !favoriteFlags[curTitle->idx]) {
-      curTitle = curTitle->next;
-      continue;
-    }
-    rowIdx = favoritesOnly ? displayIdx++ : curTitle->idx;
-    // Do not display titles before the current page
-    if (rowIdx < maxTitlesPerPage * curPage) {
-      goto next;
-    }
-    // Do not display titles beyond the current page
-    if (rowIdx >= maxTitlesPerPage * (curPage + 1)) {
-      break;
-    }
 
     titleRight = favoriteFlags[curTitle->idx]
                      ? coverArtX1 - 32
                      : coverArtX1 - 5;
 
     // Draw title name
-    if (selectedTitleIdx == curTitle->idx) {
+    if (selectedTitleIdx == rowIdx) {
       const int glowY = classicGlowY(listStartY, getFontLineHeight(), frameNowMs);
       const int selectionRight = coverArtX1 - 12;
       int textRight = listTextX + getLineWidth(curTitle->name);
@@ -393,15 +381,13 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
       drawPSBBNFocusGlow(listTextX, glowY, selectionRight, textRight);
     }
     titleY = drawText(listTextX, titleY, 6, titleRight, 0,
-                      ((selectedTitleIdx == curTitle->idx)
+                      ((selectedTitleIdx == rowIdx)
                            ? GS_SETREG_RGBA(0xF0, 0xFA, 0xFF, 0x80)
                            : HeaderTextColor),
                       curTitle->name);
     if (favoriteFlags[curTitle->idx])
       drawFavoriteMarker(coverArtX1 - 23, titleY - getFontLineHeight() / 2, 7);
 
-  next:
-    curTitle = curTitle->next;
   }
 
   if (classicArtOverlap)

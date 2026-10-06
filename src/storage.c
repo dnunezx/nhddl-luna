@@ -1,6 +1,5 @@
 // LUNA 2026: all supported storage sources share one refresh lifecycle.
 #include "storage.h"
-#include "genres.h"
 #include "devices/devices.h"
 #include "devices/init.h"
 #include "options.h"
@@ -190,21 +189,21 @@ static struct DeviceMapEntry *matchDevice(struct DeviceMapEntry *old) {
 }
 
 static void mergeTitles(TargetList *destination, TargetList *source) {
-  Target *title = source->first;
-  while (title) {
-    Target *next = title->next;
-    title->prev = title->next = NULL;
-    destination->total++;
-    if (!destination->first) destination->first = destination->last = title;
-    else insertIntoTargetList(destination, title);
-    title = next;
+  if (source->first) {
+    source->first->prev = destination->last;
+    if (destination->last) destination->last->next = source->first;
+    else destination->first = source->first;
+    destination->last = source->last;
+    destination->total += source->total;
   }
+  free(source->byIndex);
   free(source);
 }
 
 TargetList *storageRefresh(TargetList *previous) {
   TargetList *next = calloc(1, sizeof(*next));
   if (!next) return NULL;
+  int refreshError = -ENOMEM;
   StorageSettings desired = requestPending ? pending : STORAGE_SETTINGS;
   ModeType scan = requestPending ? pendingScan : desired.enabled;
   int restart = requestPending && storageNeedsRestart(&desired);
@@ -269,20 +268,15 @@ TargetList *storageRefresh(TargetList *previous) {
               freeTargetList(part); goto fail;
             }
           }
-          part->total++;
-          if (!part->first) part->first = part->last = copy;
-          else insertIntoTargetList(part, copy);
+          appendTarget(part, copy);
         }
       }
       STORAGE_STATUS[s].games += part->total;
       mergeTitles(next, part);
     }
   }
-  int index = 0;
-  for (Target *t = next->first; t; t = t->next) t->idx = index++;
-  // Read once per refresh, including retained sources whose CFG changed on PC.
-  // Metadata failure must never prevent games from being launched.
-  lunaLoadLibraryGenres(next);
+  refreshError = sortTargetList(next);
+  if (refreshError) goto fail;
   STORAGE_SETTINGS = desired;
   requestPending = 0;
   if (previous) freeTargetList(previous);
@@ -297,7 +291,7 @@ fail:
   requestPending = 0;
   for (int s = 0; s < STORAGE_SOURCE_COUNT; s++) {
     STORAGE_STATUS[s] = previousStatus[s];
-    if (desired.enabled & modes[s]) STORAGE_STATUS[s].error = -ENOMEM;
+    if (desired.enabled & modes[s]) STORAGE_STATUS[s].error = refreshError;
   }
   return NULL;
 }

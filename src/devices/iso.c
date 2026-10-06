@@ -7,6 +7,7 @@
 #include "options.h"
 #include "devices/title_id.h"
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <ps2sdkapi.h>
 #include <stdio.h>
@@ -21,7 +22,6 @@ typedef struct {
 
 typedef struct TitleIDCache {
   int total;           // Total number of elements in cache
-  int lastMatchedIdx;  // Used to skip ahead to the last matched entry when getting title ID from cache
   CacheEntry *entries; // Pointer to cache entry array
 } TitleIDCache;
 
@@ -74,15 +74,6 @@ int findISO(TargetList *result, struct DeviceMapEntry *device) {
 
   if (result->first == NULL) {
     return -ENOENT;
-  }
-
-  // Set indexes for each title
-  int idx = 0;
-  Target *curTitle = result->first;
-  while (curTitle != NULL) {
-    curTitle->idx = idx;
-    idx++;
-    curTitle = curTitle->next;
   }
 
   return 0;
@@ -168,15 +159,7 @@ int _findISO(DIR *directory, TargetList *result, struct DeviceMapEntry *device) 
         title->name = calloc(sizeof(char), nameLength + 1);
         strncpy(title->name, entry->d_name, nameLength);
 
-        // Increment title counter and update target list
-        result->total++;
-        if (result->first == NULL) {
-          // If this is the first entry, update both pointers
-          result->first = title;
-          result->last = title;
-        } else {
-          insertIntoTargetList(result, title);
-        }
+        appendTarget(result, title);
       }
     }
   }
@@ -229,7 +212,6 @@ void processTitleID(TargetList *result, struct DeviceMapEntry *device) {
       if (curTarget->id == NULL) {
         uiSplashLogString(LEVEL_WARN, "Failed to scan\n%s\n", curTarget->fullPath);
         curTarget = freeTarget(result, curTarget);
-        result->total -= 1;
         continue;
       }
     }
@@ -382,13 +364,17 @@ int storeTitleIDCache(TargetList *list, struct DeviceMapEntry *device) {
 }
 
 // Loads title ID cache from storage into cache
+static int compareCachePaths(const void *left, const void *right) {
+  const CacheEntry *a = left, *b = right;
+  return strcmp(a->fullPath, b->fullPath);
+}
+
 int loadTitleIDCache(TitleIDCache *cache, struct DeviceMapEntry *device) {
   // Make sure path exists
   if (device->mode == MODE_NONE || device->mountpoint == NULL)
     return -ENODEV;
 
   cache->total = 0;
-  cache->lastMatchedIdx = 0;
 
   // Open cache file for reading
   char cachePath[PATH_MAX];
@@ -458,7 +444,7 @@ int loadTitleIDCache(TitleIDCache *cache, struct DeviceMapEntry *device) {
   // Read each entry into cache
   CacheEntryHeader header;
   char pathBuf[PATH_MAX + 1];
-  while (!feof(file)) {
+  while (readIndex < meta.total && !feof(file)) {
     // Read cache entry header
     pathBuf[0] = '\0';
     result = fread(&header, sizeof(CacheEntryHeader), 1, file);
@@ -485,35 +471,46 @@ int loadTitleIDCache(TitleIDCache *cache, struct DeviceMapEntry *device) {
     memcpy(entry.titleID, header.titleID, sizeof(entry.titleID));
     entry.titleID[11] = '\0';
     entry.fullPath = strdup(pathBuf);
+    if (!entry.fullPath) {
+      for (int i = 0; i < readIndex; i++) free(cache->entries[i].fullPath);
+      free(cache->entries);
+      cache->entries = NULL;
+      fclose(file);
+      return -ENOMEM;
+    }
     cache->entries[readIndex] = entry;
     readIndex++;
   }
   fclose(file);
 
   // Free unused memory
-  if (readIndex != meta.total)
-    cache->entries = realloc(cache->entries, sizeof(CacheEntry) * readIndex);
+  if (readIndex != meta.total && readIndex > 0) {
+    CacheEntry *resized = realloc(cache->entries, sizeof(CacheEntry) * readIndex);
+    if (resized) cache->entries = resized;
+  }
 
   cache->total = readIndex;
+  // Directory discovery order may differ from both old and new cache files.
+  if (cache->total > 1)
+    qsort(cache->entries, (size_t)cache->total, sizeof(*cache->entries), compareCachePaths);
   return 0;
 }
 
 // Returns a pointer to title ID or NULL if fullPath is not found in the cache
 char *getCachedTitleID(char *fullPath, TitleIDCache *cache) {
-  // This code takes advantage of all entries in the title list being sorted alphabetically.
-  // By starting from the index of the last matched entry, we can skip comparing fullPath with entries
-  // that have already been matched to a title ID, improving lookup speeds for very large lists.
   int mountpointLen = getRelativePathIdx(fullPath);
   if (mountpointLen == -1) {
     DPRINTF("WARN: Failed to get device mountpoint for %s\n", fullPath);
     return NULL;
   }
 
-  for (int i = cache->lastMatchedIdx; i < cache->total; i++) {
-    if (!strcmp(cache->entries[i].fullPath, fullPath + mountpointLen)) {
-      cache->lastMatchedIdx = i;
-      return cache->entries[i].titleID;
-    }
+  int low = 0, high = cache->total;
+  while (low < high) {
+    int middle = low + (high - low) / 2;
+    int difference = strcmp(cache->entries[middle].fullPath, fullPath + mountpointLen);
+    if (!difference) return cache->entries[middle].titleID;
+    if (difference < 0) low = middle + 1;
+    else high = middle;
   }
   return NULL;
 }

@@ -32,8 +32,6 @@
 #define ORB_SELECTION_PULSE_MS 1100
 #define ORB_SIZE_PULSE_MS 2400
 #define ORB_SELECTION_EVENT_COUNT 12
-#define SCROLL_ORB_EVENT_COUNT 12
-#define SCROLL_ORB_REACTION_MS 1050
 #define SCROLL_LETTER_MORPH_MS 420
 #define SCROLL_GLYPH_MORPH_MS 140
 #define SCROLL_GLYPH_DEPTH_X 9.0f
@@ -82,19 +80,6 @@ static int orbSelectionEventNext;
 static int orbSelectionEventCount;
 static int orbObservedSelection = -1;
 
-typedef struct {
-  uint32_t startMs;
-  int direction;
-} ScrollOrbEvent;
-
-typedef struct {
-  float reach;
-  float direction;
-} ScrollOrbMotion;
-
-static ScrollOrbEvent scrollOrbEvents[SCROLL_ORB_EVENT_COUNT];
-static int scrollOrbEventNext;
-static int scrollOrbEventCount;
 static uint32_t scrollOrbClockMs;
 static uint32_t scrollFormationClockMs;
 static uint32_t scrollOrbLastFrameMs;
@@ -358,8 +343,6 @@ void resetAmbientOrbsSplash(uint32_t now) {
 }
 
 void resetAmbientOrbsScroll(void) {
-  scrollOrbEventNext = 0;
-  scrollOrbEventCount = 0;
   scrollOrbClockInitialized = 0;
   scrollFormationClockMs = 0;
   resetScrollFormation();
@@ -369,16 +352,6 @@ void resetAmbientOrbsScroll(void) {
   orbObservedSelection = -1;
   orbSelectionEventNext = 0;
   orbSelectionEventCount = 0;
-}
-
-void triggerAmbientOrbsScrollReaction(int direction, uint32_t now) {
-  if (!direction)
-    return;
-  scrollOrbEvents[scrollOrbEventNext].startMs = now - glassStartMs;
-  scrollOrbEvents[scrollOrbEventNext].direction = direction;
-  scrollOrbEventNext = (scrollOrbEventNext + 1) % SCROLL_ORB_EVENT_COUNT;
-  if (scrollOrbEventCount < SCROLL_ORB_EVENT_COUNT)
-    scrollOrbEventCount++;
 }
 
 static uint32_t glassElapsedMs(uint32_t now) {
@@ -498,57 +471,6 @@ static void setScrollLetterMode(int fastScroll, char glyph,
     scrollLetterFrom = scrollLetterBlendAt(elapsedMs);
     scrollLetterStartMs = elapsedMs;
     scrollLetterTarget = fastScroll;
-  }
-}
-
-static ScrollOrbMotion scrollOrbMotion(uint32_t elapsedMs) {
-  ScrollOrbMotion motion = {0.0f, 0.0f};
-  for (int i = 0; i < scrollOrbEventCount; i++) {
-    if (elapsedMs < scrollOrbEvents[i].startMs)
-      continue;
-    const uint32_t age = elapsedMs - scrollOrbEvents[i].startMs;
-    if (age >= SCROLL_ORB_REACTION_MS)
-      continue;
-    float weight;
-    if (age < 180)
-      weight = scrollOrbEase(age / 180.0f);
-    else if (age < 340)
-      weight = 1.0f;
-    else if (age < 850)
-      weight = 1.0f - scrollOrbEase((age - 340) / 510.0f);
-    else if (age < 950)
-      weight = -0.10f * scrollOrbEase((age - 850) / 100.0f);
-    else
-      weight = -0.10f * (1.0f - scrollOrbEase((age - 950) / 100.0f));
-    motion.reach += weight;
-    motion.direction += weight * scrollOrbEvents[i].direction;
-  }
-  if (motion.reach > 1.0f)
-    motion.reach = 1.0f;
-  if (motion.reach < -0.10f)
-    motion.reach = -0.10f;
-  if (motion.direction > 1.0f)
-    motion.direction = 1.0f;
-  if (motion.direction < -1.0f)
-    motion.direction = -1.0f;
-  return motion;
-}
-
-static void applyScrollOrbMotion(int index, const ScrollOrbMotion *motion,
-                                 float letterBlend, int focusX, int focusY,
-                                 float *x, float *y) {
-  const float reach = motion->reach * (1.0f - letterBlend);
-  const float direction = motion->direction * (1.0f - letterBlend);
-  if (index == 0 || index == 2 || index == 4) {
-    const int slot = index / 2 - 1;
-    const float targetX = focusX - (slot == 0 ? 0.0f : 23.0f);
-    const float targetY = focusY + slot * 18.0f;
-    *x += (targetX - *x) * reach;
-    *y += (targetY - *y) * reach +
-          direction * (1.0f - reach) * 28.0f;
-  } else {
-    *x += reach * 6.0f;
-    *y += direction * 3.0f;
   }
 }
 
@@ -1503,7 +1425,6 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
       (uint32_t)((ORB_PLAYTIME_TRAIL_STEP_MS - ORB_TRAIL_STEP_MS) *
                  trailWeight);
   OrbMotion motion[ORB_PLAYTIME_TRAIL_SEGMENTS + 1];
-  ScrollOrbMotion scrollMotion[ORB_PLAYTIME_TRAIL_SEGMENTS + 1];
   float letterBlend[ORB_PLAYTIME_TRAIL_SEGMENTS + 1] = {0};
   float glyphBlend[ORB_PLAYTIME_TRAIL_SEGMENTS + 1] = {0};
   uint32_t animationTime[ORB_PLAYTIME_TRAIL_SEGMENTS + 1];
@@ -1518,7 +1439,6 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
     animationTime[sample] = orbAnimationMs(sampleMs, sampleMovementMs);
     motion[sample] = orbMotion(animationTime[sample]);
     if (scrollFocusX) {
-      scrollMotion[sample] = scrollOrbMotion(sampleMs);
       letterBlend[sample] = scrollLetterBlendAt(sampleMs);
       glyphBlend[sample] = scrollGlyphBlendAt(sampleMs);
     }
@@ -1533,9 +1453,6 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
                            centerX, centerY, radiusX, radiusY,
                            &positionsX[i], &positionsY[i],
                            &depths[i], &opacities[i]);
-      applyScrollOrbMotion(i, &scrollMotion[0], letterBlend[0],
-                           scrollFocusX, centerY,
-                           &positionsX[i], &positionsY[i]);
     }
   }
 
@@ -1603,9 +1520,6 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
                              animationTime[segment], centerX, centerY,
                              radiusX, radiusY,
                              &oldX, &oldY, &oldDepth, &oldOpacity);
-        applyScrollOrbMotion(i, &scrollMotion[segment],
-                             letterBlend[segment], scrollFocusX, centerY,
-                             &oldX, &oldY);
       }
       const int oldOuterAlpha = (int)((4 + (trailSegments - segment) * 28 /
                                       trailSegments) * oldOpacity *

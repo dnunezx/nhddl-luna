@@ -21,7 +21,6 @@ set(SOURCES
     src/favorites.c
     src/neutrino.c
     src/target.c
-    src/genres.c
     src/storage.c
     src/forwarder.c
 

@@ -21,7 +21,7 @@ typedef enum {
 } LibraryBackground;
 
 void resetGlassVisuals(uint32_t startMs);
-void initOpeningCubeCapture(void);
+void initSystemConfigCapture(void);
 void initGlassStarAtlas(void);
 int setLibraryBackground(LibraryBackground background);
 LibraryBackground getLibraryBackground(void);

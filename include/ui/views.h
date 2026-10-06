@@ -8,6 +8,7 @@
 
 void calculateCoverArtGeometry(void);
 void setClassicArtOverlap(int overlap);
+// titles is the active indexed list; flags use canonical Target.idx even in Favorites.
 void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPage,
                    GSTEXTURE *selectedTitleCover, GSTEXTURE *selectedTitleDisc,
                    const uint8_t *favoriteFlags, int favoritesOnly, int coverPending,
