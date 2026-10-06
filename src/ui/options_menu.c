@@ -303,8 +303,9 @@ static void drawVideoOutRows(OptionsMenuState *state, int baseX, int firstY,
                        mode == row ? "On" : "Off");
   char position[20];
   snprintf(position, sizeof(position), "%d/%d", state->selectedGameRow + 1, count);
+  // Place the counter on the section heading, clear of the first row's value.
   drawText(gsGlobal->Width - baseX - getLineWidth(position) - 12,
-           firstY, 0, 0, 0, FontMainColor, position);
+           firstY - getFontLineHeight() - 4, 0, 0, 0, FontMainColor, position);
   drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
                  gsGlobal->Height - footerHeight, 0, HeaderTextColor, ALIGN_LEFT,
                  state->selectedGameRow == 0 ?
