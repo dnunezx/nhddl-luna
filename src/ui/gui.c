@@ -135,8 +135,6 @@ static void drawLibraryQuickMenu(int progress, int closing, UILibraryView view,
   for (int i = 0; i < count; i++) {
     int y = top + (i + 1) * rowHeight + 8;
     int enabled = i == 0 || (total > 0 && (i != 3 || total > 1));
-    drawIconWindow(left + 17, y + 2, 0, y + rowHeight + 2, 0,
-                   ColorBlack, ALIGN_VCENTER, icons[i]);
     drawIconWindow(left + 16, y, 0, y + rowHeight, 0,
                    enabled ? FontMainColor : HeaderTextColor, ALIGN_VCENTER, icons[i]);
     drawQuickMenuText(left + 16 + getIconWidth(icons[i]) + 10, y,
