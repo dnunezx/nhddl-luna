@@ -6,6 +6,7 @@
 #include "neutrino.h"
 #include "ui/ambient.h"
 #include "options.h"
+#include "cheat_storage.h"
 #include <debug.h>
 #include <kernel.h>
 #include <loadfile.h>
@@ -46,6 +47,16 @@ static char igrArgument[] = "igr";
 #define BSDFS_HDL "hdl"
 
 int launchELF(int argc, char *argv[]);
+#define LAUNCH_ARGS_BYTES (12 * 1024)
+
+int launchTitleArgumentsFit(Target *target, ArgumentList *arguments, const char *payload) {
+  // Reserve space for bsd, bsdfs, dvd, pfs, qb, igr and udpfs_ip added at launch.
+  size_t bytes = 1024 + strlen(target->fullPath) + strlen(LAUNCHER_OPTIONS.returnPath);
+  for (Argument *arg = arguments->first; arg; arg = arg->next)
+    bytes += sizeof(char *) + strlen(arg->arg) + (arg->value ? strlen(arg->value) : 0) + 3;
+  bytes += strlen(NEUTRINO_ELF_PATH) + (payload ? strlen(payload) + 16 : 0);
+  return bytes <= LAUNCH_ARGS_BYTES;
+}
 
 // Assembles argument lists into argv for loader.elf.
 // Expects argv to be initialized with at least (arguments->total) elements.
@@ -83,6 +94,23 @@ int assembleArgv(ArgumentList *arguments, char **argv[]) {
 // Expects arguments to be initialized
 void launchTitleWithProgress(Target *target, ArgumentList *arguments,
                              LaunchProgressCallback progress, void *userdata) {
+  char *payload = NULL;
+  char error[160];
+  if (lunaCheatsPrepare(target, NULL, &payload, error, sizeof(error))) {
+    DPRINTF("ERROR: %s\n", error);
+    return;
+  }
+  launchTitleWithCheatProgress(target, arguments, payload, progress, userdata);
+  free(payload);
+}
+
+void launchTitleWithCheatProgress(Target *target, ArgumentList *arguments,
+                                  const char *payload,
+                                  LaunchProgressCallback progress, void *userdata) {
+  if (!launchTitleArgumentsFit(target, arguments, payload)) {
+    DPRINTF("ERROR: launch arguments exceed the kernel handoff buffer\n");
+    return;
+  }
   // Append arguments
   char *bsdValue;
   // Map target device index to Neutrino bsd argument
@@ -159,8 +187,22 @@ void launchTitleWithProgress(Target *target, ArgumentList *arguments,
     appendArgument(arguments, newArgument("qb", ""));
 
   // Assemble argv
-  char **argv = malloc(((arguments->total) + 1) * sizeof(char *));
+  char **argv = malloc(((arguments->total) + 2) * sizeof(char *));
   int argCount = assembleArgv(arguments, &argv);
+  if (payload != NULL) {
+    char **expanded = realloc(argv, (argCount + 1) * sizeof(char *));
+    if (!expanded) return;
+    argv = expanded;
+    argv[argCount] = malloc(strlen(payload) + 9);
+    if (!argv[argCount]) return;
+    sprintf(argv[argCount++], "-cheats=%s", payload);
+  }
+  size_t handoffSize = argCount * sizeof(char *);
+  for (int i = 0; i < argCount; i++) handoffSize += strlen(argv[i]) + 1;
+  if (handoffSize > LAUNCH_ARGS_BYTES) {
+    DPRINTF("ERROR: launch arguments exceed the kernel handoff buffer\n");
+    return;
+  }
 
   DPRINTF("Launching %s (%s) with arguments:\n", target->name, target->id);
   for (int i = 0; i < argCount; i++) {
@@ -285,7 +327,7 @@ char *getNeutrinoVersion() {
 
 __attribute__((section("._launch_args"))) // Place launchArgs in the _launch_args memory section
 __attribute__((aligned(16)))              // Align the pointer
-static void *launchArgs = NULL;           // Used to mark the start of argv copy used to start Neutrino
+static char launchArgs[LAUNCH_ARGS_BYTES] __attribute__((aligned(16)));
 
 __attribute__((section("._launch_elf"))) // Place launchELF in the _launch_elf memory section
 __attribute__((noreturn))                // Mark as noreturn
@@ -318,8 +360,8 @@ int launchELF(int argc, char *argv[]) {
   }
 
   // Copy launch arguments from user memory into kernel memory
-  char **largv = (char **)&launchArgs;
-  char *argStart = (char *)&launchArgs + (argc * 0x4);
+  char **largv = (char **)launchArgs;
+  char *argStart = launchArgs + (argc * sizeof(char *));
   for (int i = 0; i < argc; i++) {
     strcpy(argStart, argv[i]);
     largv[i] = argStart;

@@ -18,6 +18,8 @@ set(SOURCES
     src/common.c
     src/runtime_locks.c
     src/options.c
+    src/cheats.c
+    src/cheat_storage.c
     src/favorites.c
     src/neutrino.c
     src/target.c

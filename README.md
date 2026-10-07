@@ -16,6 +16,25 @@ Neutrino provides the game-launch runtime and its supported compatibility featur
 
 ## Usage
 
+Per-game **Options > Game > Cheats** reads raw PS2RD files from the drive's
+root **CHT** folder, named after the title ID (for example,
+`CHT/SLUS_203.12.cht`). APA/HDL games use the mounted OPL metadata folder.
+Cheats are **off by default**. Open Cheats, toggle individual named entries,
+turn **Enable cheats** on, and press **Start** to save. **Square** tests the
+pending choices without saving, and **Triangle** returns. Turning cheats off
+retains the selected entries; **Clear selections** removes them.
+
+An entry's code lines stay together. Required master/enable entries are
+included automatically when optional cheats are selected. Files must include
+a raw PS2RD master/enable hook; encrypted formats are not supported. The
+combined runtime limit is five hooks and 250 ordinary code lines, including
+Neutrino's existing compatibility patches. Missing or invalid files block an
+enabled cheat launch with an error; disabled cheats do not load the `.cht`.
+Selections are stored by title ID under `/LUNA/cheats-<title ID>.cfg`, so ISO
+renaming and entry reordering preserve choices. Changed entries must be
+reviewed again. **Reload file** refreshes the checklist after editing a file.
+Use the matching LUNA Neutrino build, which accepts the selected-code payload.
+
 Press **Start** in the game library to open LUNA's main menu. Choose **File
 Manager** to browse connected storage and memory cards, **Return to Library**
 to go back, **Exit LUNA** to quit, or **Shutdown** to power off the console.

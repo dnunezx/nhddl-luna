@@ -3,6 +3,7 @@
 
 #include "target.h"
 #include "options.h"
+#include "cheats.h"
 #include <gsKit.h>
 #include <stdint.h>
 
@@ -10,6 +11,9 @@ int uiInit();
 uint32_t uiNowMs(void);
 int uiLoop(TargetList *titles, int preparedCollectionIdx);
 void uiLaunchTitle(Target *target, ArgumentList *arguments);
+// Returns 0 after a recoverable preflight error, -1 if execution returned.
+int uiLaunchTitleWithCheats(Target *target, ArgumentList *arguments,
+                           const LunaCheatSettings *cheats);
 
 // Splash screen log level types
 typedef enum {

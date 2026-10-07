@@ -10,6 +10,7 @@
 #include "devices/devices.h"
 #include "vmc_create.h"
 #include "storage.h"
+#include "cheat_storage.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <libpad.h>
@@ -38,6 +39,7 @@ typedef enum {
   GAME_MEMORY_CARDS,
   GAME_COMPATIBILITY,
   GAME_VIDEO,
+  GAME_CHEATS,
   GAME_LAUNCH,
   GAME_SECTION_COUNT,
   GAME_VIDEO_OUT
@@ -80,6 +82,13 @@ typedef struct {
   int pendingTailsColor;
   uint32_t pendingViews;
   int titleArgumentsChanged;
+  LunaCheatSettings cheats;
+  LunaCheatFile cheatFile;
+  int cheatsChanged;
+  int cheatLoadResult;
+  int cheatFirstRow;
+  char cheatStatus[192];
+  char cheatPath[PATH_MAX + 1];
   int saveError;
   const char *saveErrorLabel;
   char vmcStatus[96];
@@ -94,7 +103,8 @@ typedef struct {
   int selectedOrbsRow;
 } OptionsMenuState;
 
-static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments);
+static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments,
+                              const LunaCheatSettings *cheats);
 static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
                            LunaGameOptions *gameOptions, int slot);
 
@@ -122,11 +132,12 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Disable Neutrino's in-game return for this title."};
 
 static const char *const gameSectionLabels[GAME_SECTION_COUNT] = {
-    "Virtual memory cards", "Compatibility", "Video", "Launch & debug"};
+    "Virtual memory cards", "Compatibility", "Video", "Cheats", "Launch & debug"};
 static const char *const gameSectionDescriptions[GAME_SECTION_COUNT] = {
     "Enable virtual cards by assigning one to a slot.",
     "Change this game's compatibility switches.",
     "Adjust this game's video output.",
+    "Select individual codes from CHT/<title ID>.cht on this drive.",
     "Set the startup logo and review launch options."};
 static const LunaGameRow gameSectionRows[GAME_SECTION_COUNT][6] = {
     {LUNA_GAME_VMC_SLOT1, LUNA_GAME_VMC_SLOT2},
@@ -134,9 +145,10 @@ static const LunaGameRow gameSectionRows[GAME_SECTION_COUNT][6] = {
      LUNA_GAME_UNHOOK_SYSCALLS, LUNA_GAME_DVD_DL,
      LUNA_GAME_BUFFER_OVERRUN, LUNA_GAME_NEUTRINO_DISABLE_IGR},
     {LUNA_GAME_VIDEO_MODE, LUNA_GAME_FIELD_FLIP},
+    {0},
     {LUNA_GAME_PS2_LOGO, LUNA_GAME_LAUNCH_ARGUMENTS,
      LUNA_GAME_DEBUG_COLORS}};
-static const int gameSectionRowCounts[GAME_SECTION_COUNT] = {4, 6, 2, 3};
+static const int gameSectionRowCounts[GAME_SECTION_COUNT] = {4, 6, 2, 3, 3};
 
 static int gameSectionRowCount(GameSection section) {
   if (section == GAME_VIDEO_OUT)
@@ -336,6 +348,24 @@ static int gameVMCEnabled(ArgumentList *arguments) {
   return 0;
 }
 
+static int gameLaunchEnabled(const OptionsMenuState *state) {
+  int enabled = state->gameOptions.debugColors;
+  for (Argument *argument = state->titleArguments->first;
+       argument != NULL; argument = argument->next) {
+    const char *name = argument->arg;
+    if (!strcmp(name, "logo")) {
+      // Inherit is the default; either explicit logo choice is a title override.
+      enabled += !argument->isGlobal;
+    } else if (strcmp(name, "dbc") && strcmp(name, "gc") &&
+               strcmp(name, "gsm") && strcmp(name, "mc0") &&
+               strcmp(name, "mc1") && strcmp(name, "luna_neutrino_disable_igr")) {
+      // Other arguments belong to Launch arguments, including disabled overrides.
+      enabled += !argument->isDisabled || !argument->isGlobal;
+    }
+  }
+  return enabled;
+}
+
 static void drawOptionsMusicNote(int centerX, int y, uint64_t color) {
   gsKit_prim_line(gsGlobal, centerX - 1, y + 3,
                   centerX - 1, y + 13, 0, color);
@@ -431,10 +461,81 @@ static void drawGameVMCRows(OptionsMenuState *state, int baseX,
                  HeaderTextColor, ALIGN_LEFT, description);
 }
 
+static void reloadGameCheats(OptionsMenuState *state) {
+  lunaCheatFileFree(&state->cheatFile);
+  state->cheatLoadResult = lunaCheatsLoad(state->target, &state->cheatFile,
+      state->cheatPath, sizeof(state->cheatPath), state->cheatStatus, sizeof(state->cheatStatus));
+  state->cheatFirstRow = 0;
+  if (state->cheatLoadResult) return;
+  int removed = 0;
+  for (int i = 0; i < state->cheats.count;) {
+    int found = 0;
+    for (int e = 0; e < state->cheatFile.entryCount; e++)
+      if (!state->cheatFile.entries[e].required &&
+          state->cheatFile.entries[e].id == state->cheats.ids[i]) found = 1;
+    if (found) i++;
+    else {
+      lunaCheatToggle(&state->cheats, state->cheats.ids[i]);
+      removed++;
+    }
+  }
+  if (removed) {
+    state->cheatsChanged = 1;
+    snprintf(state->cheatStatus, sizeof(state->cheatStatus),
+             "%d changed or missing selections cleared. Press Start to save.", removed);
+  } else {
+    snprintf(state->cheatStatus, sizeof(state->cheatStatus),
+             "%d entries from CHT/%s.cht", state->cheatFile.entryCount, state->target->id);
+  }
+}
+
+static void drawGameCheatRows(OptionsMenuState *state, int baseX, int firstY, int bottom) {
+  int count = 3 + state->cheatFile.entryCount;
+  int step = getFontLineHeight() + getFontLineHeight() / 3;
+  int visible = (bottom - firstY) / step;
+  if (visible < 1) visible = 1;
+  if (state->selectedGameRow >= count) state->selectedGameRow = count - 1;
+  if (state->selectedGameRow < state->cheatFirstRow) state->cheatFirstRow = state->selectedGameRow;
+  if (state->selectedGameRow >= state->cheatFirstRow + visible)
+    state->cheatFirstRow = state->selectedGameRow - visible + 1;
+  for (int row = state->cheatFirstRow; row < count && row < state->cheatFirstRow + visible; row++) {
+    const char *label, *value;
+    char name[48];
+    if (row == 0) { label = "Enable cheats"; value = state->cheats.enabled ? "On" : "Off"; }
+    else if (row == 1) { label = "Clear selections"; value = ">"; }
+    else if (row == 2) { label = "Reload file"; value = ">"; }
+    else {
+      const LunaCheatEntry *entry = &state->cheatFile.entries[row - 3];
+      snprintf(name, sizeof(name), "%.43s%s", entry->name, strlen(entry->name) > 43 ? "..." : "");
+      label = name;
+      value = entry->required ? "Required" :
+          lunaCheatSelected(&state->cheats, entry->id) ? "[x]" : "[ ]";
+    }
+    int y = firstY + (row - state->cheatFirstRow) * step;
+    drawOptionsTextRow(baseX, y, gsGlobal->Width - baseX,
+                       row == state->selectedGameRow, y, label, value);
+  }
+  char detail[192];
+  if (state->selectedGameRow >= 3) {
+    const LunaCheatEntry *entry = &state->cheatFile.entries[state->selectedGameRow - 3];
+    snprintf(detail, sizeof(detail), "%.110s: %d lines. %s", entry->name, entry->pairCount,
+             entry->required ? "Included with selected cheats." : "Toggle this whole code block.");
+  } else if (state->cheatLoadResult || state->selectedGameRow == 2) {
+    snprintf(detail, sizeof(detail), "%s", state->cheatStatus);
+  } else {
+    snprintf(detail, sizeof(detail), "%d selected. %s", state->cheats.count,
+             state->cheats.enabled ? "Press Start to save or Square to test." :
+                                     "Cheats are off; selections are retained.");
+  }
+  drawTextWindow(baseX + 18, bottom, gsGlobal->Width - baseX,
+                 gsGlobal->Height - footerHeight, 0,
+                 state->cheatLoadResult ? ErrorTextColor : HeaderTextColor, ALIGN_LEFT, detail);
+}
+
 static void drawTitleOptionsFrame(OptionsMenuState *state,
                                   int transitionProgress, int transitionMode) {
   const int showDirty = transitionMode != 2;
-  const int gameDirty = showDirty && state->titleArgumentsChanged;
+  const int gameDirty = showDirty && (state->titleArgumentsChanged || state->cheatsChanged);
   const int systemDirty = showDirty && optionsGlobalDirty(
       state->pendingBackground, state->pendingGlassColor,
       state->pendingFont, state->pendingAmbient, state->pendingLogo,
@@ -601,18 +702,26 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
     const int gameStep = lineHeight + lineHeight / 2;
     const int firstY = contentTop + lineHeight + 4;
     if (state->gameSection == GAME_HUB) {
-      char compatSummary[24];
+      char compatSummary[24], launchSummary[24];
       int compatEnabled = 0;
       for (int bit = 0; bit < LUNA_GAME_COMPAT_COUNT; bit++)
         compatEnabled += (state->gameOptions.compat & (1U << bit)) != 0;
       compatEnabled += state->gameOptions.neutrinoIgrDisabled;
-      snprintf(compatSummary, sizeof(compatSummary), "%d enabled", compatEnabled);
+      if (compatEnabled)
+        snprintf(compatSummary, sizeof(compatSummary), "%d enabled", compatEnabled);
+      else
+        snprintf(compatSummary, sizeof(compatSummary), "Default");
+      int launchEnabled = gameLaunchEnabled(state);
+      if (launchEnabled)
+        snprintf(launchSummary, sizeof(launchSummary), "%d enabled", launchEnabled);
+      else
+        snprintf(launchSummary, sizeof(launchSummary), "Default");
       const char *const summaries[GAME_SECTION_COUNT] = {
           gameVMCEnabled(state->titleArguments) ? "Enabled" : "Disabled",
           compatSummary,
           lunaGameOptionsValue(&state->gameOptions,
               LUNA_GAME_VIDEO_MODE),
-          "3 options"};
+          state->cheats.enabled ? "Enabled" : "Disabled", launchSummary};
       drawOptionsSection(contentTop, "Game settings", 0);
       int selectorY = optionsSelectorY(&state->selector, state->page,
           state->selectedGameHubRow, firstY + state->selectedGameHubRow * gameStep);
@@ -626,11 +735,13 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                      ALIGN_LEFT, gameSectionDescriptions[state->selectedGameHubRow]);
     } else {
       const GameSection section = state->gameSection;
-      if (state->selectedGameRow >= gameSectionRowCount(section))
+      if (section != GAME_CHEATS && state->selectedGameRow >= gameSectionRowCount(section))
         state->selectedGameRow = 0;
       drawOptionsSection(contentTop, section == GAME_VIDEO_OUT ? "Video out" :
                                                           gameSectionLabels[section], 0);
-      if (section == GAME_VIDEO_OUT) {
+      if (section == GAME_CHEATS) {
+        drawGameCheatRows(state, baseX, firstY, menuBottom);
+      } else if (section == GAME_VIDEO_OUT) {
         drawVideoOutRows(state, baseX, firstY, gameStep, menuBottom);
       } else if (section == GAME_MEMORY_CARDS) {
         drawGameVMCRows(state, baseX, firstY, gameStep, menuBottom);
@@ -1100,14 +1211,20 @@ static int handleSystemInput(OptionsMenuState *state, int input) {
 static int handleGameInput(OptionsMenuState *state, int input) {
   if (input & PAD_SQUARE) {
     // Launch title without saving arguments
-    uiLaunchTitle(state->target, state->titleArguments);
-    return -1;
+    return uiLaunchTitleWithCheats(state->target, state->titleArguments, &state->cheats);
   }
   if (input & PAD_START) {
     state->saveErrorLabel = "Could not save game settings";
-    state->saveError = updateTitleLaunchArguments(state->target, state->titleArguments);
-    if (!state->saveError)
-      state->titleArgumentsChanged = 0;
+    state->saveError = 0;
+    if (state->titleArgumentsChanged || !state->cheatsChanged) {
+      state->saveError = updateTitleLaunchArguments(state->target, state->titleArguments);
+      if (!state->saveError) state->titleArgumentsChanged = 0;
+    }
+    if (!state->saveError && state->cheatsChanged) {
+      state->saveErrorLabel = "Could not save cheat selections";
+      state->saveError = lunaCheatsSaveSettings(state->target, &state->cheats);
+      if (!state->saveError) state->cheatsChanged = 0;
+    }
     return 0;
   }
   if (state->gameSection == GAME_HUB) {
@@ -1123,6 +1240,7 @@ static int handleGameInput(OptionsMenuState *state, int input) {
       state->selectedGameRow = 0;
       state->vmcStatus[0] = '\0';
       state->selector.initialized = 0;
+      if (state->gameSection == GAME_CHEATS) reloadGameCheats(state);
     }
     return 0;
   }
@@ -1130,6 +1248,25 @@ static int handleGameInput(OptionsMenuState *state, int input) {
     state->gameSection = state->gameSection == GAME_VIDEO_OUT ? GAME_VIDEO : GAME_HUB;
     state->selectedGameRow = 0;
     state->selector.initialized = 0;
+    return 0;
+  }
+  if (state->gameSection == GAME_CHEATS) {
+    int count = 3 + state->cheatFile.entryCount;
+    if (input & PAD_UP) state->selectedGameRow = (state->selectedGameRow + count - 1) % count;
+    else if (input & PAD_DOWN) state->selectedGameRow = (state->selectedGameRow + 1) % count;
+    else if (input & (PAD_CROSS | PAD_CIRCLE)) {
+      int row = state->selectedGameRow;
+      if (row == 0 && (!state->cheatLoadResult || state->cheats.enabled)) {
+        state->cheats.enabled = !state->cheats.enabled;
+        state->cheatsChanged = 1;
+      } else if (row == 1) {
+        state->cheats.count = 0;
+        state->cheatsChanged = 1;
+      } else if (row == 2) reloadGameCheats(state);
+      else if (row >= 3 && !state->cheatFile.entries[row - 3].required) {
+        state->cheatsChanged |= lunaCheatToggle(&state->cheats, state->cheatFile.entries[row - 3].id);
+      }
+    }
     return 0;
   }
   int count = state->gameSection == GAME_MEMORY_CARDS &&
@@ -1214,7 +1351,7 @@ static int handleGameInput(OptionsMenuState *state, int input) {
     }
   } else if (selectedRow == LUNA_GAME_LAUNCH_ARGUMENTS &&
              (input & (PAD_CROSS | PAD_CIRCLE))) {
-    int result = uiArgumentListLoop(state->target, state->titleArguments);
+    int result = uiArgumentListLoop(state->target, state->titleArguments, &state->cheats);
     if (result < 0)
       return -1;
     if (result == 2)
@@ -1279,6 +1416,11 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
   // Load arguments from config files
   state.titleArguments = loadLaunchArgumentLists(state.target);
   lunaGameOptionsRead(&state.gameOptions, state.titleArguments);
+  if (lunaCheatsLoadSettings(target, &state.cheats)) {
+    state.cheatsChanged = 1; // Save can repair an unreadable selection file.
+    state.saveError = 1;
+    state.saveErrorLabel = "Could not read cheat settings. Cheats are off; save to reset.";
+  }
   int input = 0;
 
   uint32_t transitionStart = uiNowMs();
@@ -1344,12 +1486,14 @@ exit:
   // Restore the saved color while the closing frame is fully black.
   setGlassColorPreset((GlassColorPreset)*state.glassColorSetting);
   freeArgumentList(state.titleArguments);
+  lunaCheatFileFree(&state.cheatFile);
   return res;
 }
 
 // LUNA's advanced view of the merged game and global launch arguments.
 // Returns -1 after a failed launch, 0 on Back, 1 after edits, or 2 after Save.
-static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments) {
+static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments,
+                              const LunaCheatSettings *cheats) {
   int selectedArgIdx = 0;
   int saveError = 0;
   int changed = 0;
@@ -1403,8 +1547,7 @@ static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments) {
 
     int input = waitForInput(-1);
     if (input & PAD_SQUARE) {
-      uiLaunchTitle(target, titleArguments);
-      return -1;
+      if (uiLaunchTitleWithCheats(target, titleArguments, cheats)) return -1;
     } else if (input & PAD_START) {
       saveError = updateTitleLaunchArguments(target, titleArguments);
       if (!saveError)

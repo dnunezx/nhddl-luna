@@ -26,5 +26,10 @@ void launchTitle(Target *target, ArgumentList *arguments);
 // The callback must not block or introduce an artificial launch delay.
 void launchTitleWithProgress(Target *target, ArgumentList *arguments,
                              LaunchProgressCallback progress, void *userdata);
+// Payload is prepared before the UI closes its pad and library scene.
+void launchTitleWithCheatProgress(Target *target, ArgumentList *arguments,
+                                  const char *payload,
+                                  LaunchProgressCallback progress, void *userdata);
+int launchTitleArgumentsFit(Target *target, ArgumentList *arguments, const char *payload);
 
 #endif

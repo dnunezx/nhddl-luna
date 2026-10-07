@@ -13,7 +13,7 @@
 ENTRY(__start);
 
 MEMORY {
-	bram	: ORIGIN = 0x000f8000, LENGTH = 0x8000 /* 0x000ff000 - 0x00100000: Unused kernel memory used to place the ELF loading code */
+	bram	: ORIGIN = 0x000f4000, LENGTH = 0xc000 /* Kernel scratch area, released by Neutrino before EE_CORE installation. */
 	gram	: ORIGIN = 0x00100000, LENGTH =    15M /* 0x00100000 - 0x02000000: User memory, limited to 15M to avoid conflicts with the compressed neutrino.elf */
 }
 
@@ -36,8 +36,9 @@ SECTIONS {
 	} >bram
 	.data : {
 		*libkernel.a:*(.data .data.*)
-		*(._launch_args) # Marks the start of free memory section
+		*(._launch_args) # Reserved argument-copy buffer
 	} >bram
+    ASSERT(. <= 0x000fe000, "Kernel launch buffer must leave 8 KB for the launch stack")
 
 	.text : {
 		_ftext = . ;

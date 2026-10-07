@@ -3,6 +3,7 @@
 #include "dprintf.h"
 #include "favorites.h"
 #include "neutrino.h"
+#include "cheat_storage.h"
 #include "options.h"
 #include "ui/ambient.h"
 #include "ui/ambient_orbs.h"
@@ -1000,15 +1001,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       libraryListChanged = 1;
       goto restart_library_view;
     } else if ((input & PAD_CROSS) && titles->total > 0) {
-      // Copy target, free title list and launch
-      Target *target = copyTarget(curTarget);
-      freeTargetList(favoriteTitles);
-      favoriteTitles = NULL;
-      free(allFavoriteFlags);
-      allFavoriteFlags = NULL;
-      favoriteFlags = NULL;
-      freeTargetList(allTitles);
-      uiLaunchTitle(target, NULL);
+      // Preserve the library if cheat preflight fails before handing off.
+      if (uiLaunchTitleWithCheats(curTarget, NULL, NULL) == 0)
+        continue;
       // Something went wrong, main loop must exit immediately
       return -1;
     } else if ((input & PAD_CIRCLE) || finishCaseViewSwitch) {
@@ -1268,18 +1263,54 @@ exit:
 }
 // Displays Game ID and launches the title
 void uiLaunchTitle(Target *target, ArgumentList *arguments) {
+  uiLaunchTitleWithCheats(target, arguments, NULL);
+}
+
+int uiLaunchTitleWithCheats(Target *target, ArgumentList *arguments,
+                           const LunaCheatSettings *cheats) {
+  int ownedArguments = arguments == NULL;
+  if (ownedArguments) arguments = loadLaunchArgumentLists(target);
+  char error[192], *payload = NULL;
+  int result = lunaCheatsPrepare(target, cheats, &payload, error, sizeof(error));
+  if (!result && !launchTitleArgumentsFit(target, arguments, payload)) {
+    snprintf(error, sizeof(error), "Launch arguments are too large. Reduce selected cheats or custom arguments.");
+    result = -1;
+  }
+  if (result) {
+    // Keep input and library resources alive so the user can correct selections.
+    int input;
+    do {
+      gsKit_TexManager_nextFrame(gsGlobal);
+      gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
+      drawSharedLibraryBackground(uiNowMs());
+      drawTextWindow(keepoutArea + 24, gsGlobal->Height / 3,
+                     gsGlobal->Width - keepoutArea - 24, 0, 0,
+                     ErrorTextColor, ALIGN_HCENTER, error);
+      drawTextWindow(keepoutArea + 24, gsGlobal->Height - footerHeight - 30,
+                     gsGlobal->Width - keepoutArea - 24, 0, 0,
+                     HeaderTextColor, ALIGN_HCENTER, "Press Triangle to return");
+      gsKit_set_test(gsGlobal, GS_ZTEST_ON);
+      gsKit_queue_exec(gsGlobal);
+      gsKit_finish();
+      gsKit_sync_flip(gsGlobal);
+      input = readInput();
+    } while (!(input & PAD_TRIANGLE));
+    free(payload);
+    if (ownedArguments) freeArgumentList(arguments);
+    return 0;
+  }
   uiPlayLaunchTransition();
   closePad();
 
-  if (arguments == NULL)
-    arguments = loadLaunchArgumentLists(target);
-
   // Keep the black framebuffer resident while Neutrino loads.
-  launchTitleWithProgress(target, arguments, uiLaunchHandoffProgress, NULL);
+  launchTitleWithCheatProgress(target, arguments, payload, uiLaunchHandoffProgress, NULL);
+  free(payload);
+  if (ownedArguments) freeArgumentList(arguments);
 
   // launchTitleWithProgress normally never returns. Retain cleanup for an
   // unsupported target mode or another pre-exec failure.
   closeUI();
+  return -1;
 }
 
 // Splash screen functions
