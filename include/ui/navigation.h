@@ -31,6 +31,7 @@
 #define SCROLL_FAST_HOLD_MS 1500
 #define SCROLL_FAST_STEP_MS 90
 #define SCROLL_FAST_ANIMATION_MS 110
+#define QUICK_MENU_CLOSE_DELAY_MS 1000
 
 typedef struct {
   int heldDirection;
@@ -60,11 +61,14 @@ typedef struct {
   int open;
   int captured;
   int consumed;
+  int releasePending;
+  uint32_t releaseStartMs;
 } LunaQuickMenu;
 
-// Returns a direct action, or -1. Capture lasts until all controls are released.
+// Returns a direct action, or -1. R1 release starts the close delay; another
+// R1 press dismisses it. Capture lasts through the delay and control release.
 int lunaQuickMenuUpdate(LunaQuickMenu *menu, int held, int controlsHeld,
-                        int count, int shortcut);
+                        int count, int shortcut, uint32_t now);
 
 // Consume entry controls until the view is ready and those controls are released.
 int lunaNavEntryInputBlocked(int *pending, int viewReady, int controlsHeld);

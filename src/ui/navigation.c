@@ -10,22 +10,44 @@ int lunaNavEntryInputBlocked(int *pending, int viewReady, int controlsHeld) {
   return 1;
 }
 int lunaQuickMenuUpdate(LunaQuickMenu *menu, int held, int controlsHeld,
-                        int count, int shortcut) {
-  if (!held) {
+                        int count, int shortcut, uint32_t now) {
+  if (menu->releasePending &&
+      now - menu->releaseStartMs >= QUICK_MENU_CLOSE_DELAY_MS) {
     menu->open = 0;
+    menu->releasePending = 0;
+  }
+  if (menu->consumed) {
     if (!controlsHeld) {
       menu->captured = 0;
       menu->consumed = 0;
     }
     return -1;
   }
-  menu->captured = 1;
-  if (menu->consumed)
+  if (held && menu->releasePending) {
+    // Consume the dismissing press until all buttons are released, so a
+    // held R1 cannot reopen the menu or let a simultaneous shortcut leak.
+    menu->open = 0;
+    menu->releasePending = 0;
+    menu->consumed = 1;
+    menu->captured = 1;
     return -1;
-  menu->open = 1;
+  }
+  if (held) {
+    menu->open = 1;
+    menu->captured = 1;
+  } else if (menu->open && !menu->releasePending) {
+    menu->releasePending = 1;
+    menu->releaseStartMs = now;
+  }
+  if (!menu->open) {
+    if (!controlsHeld)
+      menu->captured = 0;
+    return -1;
+  }
   if (shortcut < 0 || shortcut >= count)
     return -1;
   menu->open = 0;
+  menu->releasePending = 0;
   menu->consumed = 1;
   return shortcut;
 }

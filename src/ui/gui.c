@@ -775,7 +775,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                         (view == UI_VIEW_ORBIT && (quickPressed & PAD_R3)) ? 3 : -1;
     quickAction = lunaQuickMenuUpdate(&quickMenu, (input & PAD_R1) != 0,
                                      input != 0, view == UI_VIEW_ORBIT ? 4 : 3,
-                                     quickShortcut);
+                                     quickShortcut, uiNowMs());
     if (!quickWasOpen && (quickMenu.open || quickAction >= 0)) {
       // Freeze the visible title, including during a scan or cover glide.
       if (titles->total > 0 && view == UI_VIEW_PSBBN && collectionVisualTitleIdx >= 0)
