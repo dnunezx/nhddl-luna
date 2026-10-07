@@ -25,6 +25,7 @@
 #define OPTIONS_CLOSE_DURATION_MS 180
 #define OPTIONS_GLASS_FADE_DURATION_MS 180
 #define OPTIONS_SELECTOR_GLIDE_DURATION_MS 110
+#define OPTIONS_TAB_SELECTOR_GLIDE_DURATION_MS 200
 #define OPTIONS_SELECTOR_ROW_SCALE 256
 
 typedef enum {
@@ -53,6 +54,15 @@ typedef struct {
   uint32_t startMs;
   int initialized;
 } OptionsSelector;
+
+typedef struct {
+  int initialized;
+  int fromLeft;
+  int fromRight;
+  int toLeft;
+  int toRight;
+  uint32_t startMs;
+} OptionsTabSelector;
 
 typedef struct {
   Target *target;
@@ -94,6 +104,7 @@ typedef struct {
   char vmcStatus[96];
   OptionsPage page;
   OptionsSelector selector;
+  OptionsTabSelector tabSelector;
   GameSection gameSection;
   int selectedGameHubRow;
   int selectedGameRow;
@@ -163,10 +174,19 @@ static LunaGameRow gameSectionRow(GameSection section, int row) {
 #define OPTIONS_VIEW_ART_LAYOUT_ROW UI_VIEW_COUNT
 #define OPTIONS_VIEW_ROW_COUNT (UI_VIEW_COUNT + 1)
 
+static int optionsHeadingY(void) {
+  return headerHeight - getFontLineHeight() + getFontLineHeight() / 4;
+}
+
+static int optionsMenuTop(void) {
+  return headerHeight + getFontLineHeight() + 8;
+}
+
 // Give Options its own scene without carrying library text into the menu.
 static void drawOptionsSheet(void) {
   const int width = gsGlobal->Width;
   const int height = gsGlobal->Height;
+  const int panelTop = 78 - getFontLineHeight();
   gsGlobal->PrimAlphaEnable = GS_SETTING_OFF;
   gsKit_set_test(gsGlobal, GS_ATEST_OFF);
   gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 0,
@@ -176,16 +196,50 @@ static void drawOptionsSheet(void) {
   drawSharedLibraryBackground(uiNowMs());
   gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 0,
                     glassPresetColor(0x02, 0x07, 0x16, 0x38));
-  gsKit_prim_sprite(gsGlobal, 32, 80, width - 32,
+  gsKit_prim_sprite(gsGlobal, 32, panelTop + 2, width - 32,
                     height - footerHeight + 1, 1,
                     glassPresetColor(0x02, 0x08, 0x18, 0x48));
-  drawGlassPanel(30, 78, width - 30, height - footerHeight + 3, 2);
+  drawGlassPanel(30, panelTop, width - 30, height - footerHeight + 3, 2);
 }
 
 static int optionsTransitionProgress(uint32_t elapsed, uint32_t duration) {
   int progress = elapsed >= duration ? 1000 : (int)(elapsed * 1000U / duration);
   return (int)((int64_t)progress * progress *
                (3000 - 2 * progress) / 1000000);
+}
+
+static void drawOptionsTabSelector(OptionsTabSelector *selector, int left,
+                                    int right, int y) {
+  const uint32_t now = uiNowMs();
+  int progress = optionsTransitionProgress(now - selector->startMs,
+                                            OPTIONS_TAB_SELECTOR_GLIDE_DURATION_MS);
+  if (!selector->initialized) {
+    selector->fromLeft = selector->toLeft = left * OPTIONS_SELECTOR_ROW_SCALE;
+    selector->fromRight = selector->toRight = right * OPTIONS_SELECTOR_ROW_SCALE;
+    selector->startMs = now;
+    selector->initialized = 1;
+  } else if (selector->toLeft != left * OPTIONS_SELECTOR_ROW_SCALE ||
+             selector->toRight != right * OPTIONS_SELECTOR_ROW_SCALE) {
+    selector->fromLeft += (selector->toLeft - selector->fromLeft) * progress / 1000;
+    selector->fromRight += (selector->toRight - selector->fromRight) * progress / 1000;
+    selector->toLeft = left * OPTIONS_SELECTOR_ROW_SCALE;
+    selector->toRight = right * OPTIONS_SELECTOR_ROW_SCALE;
+    selector->startMs = now;
+    progress = 0;
+  }
+  float stripLeft = (selector->fromLeft +
+      (selector->toLeft - selector->fromLeft) * progress / 1000) /
+      (float)OPTIONS_SELECTOR_ROW_SCALE;
+  float stripRight = (selector->fromRight +
+      (selector->toRight - selector->fromRight) * progress / 1000) /
+      (float)OPTIONS_SELECTOR_ROW_SCALE;
+  const int stripY = psbbnFieldStableY(y);
+  gsKit_prim_sprite(gsGlobal, stripLeft, stripY - 4, stripRight, stripY + 6, 3,
+                    GS_SETREG_RGBA(0x48, 0xB8, 0xF0, 0x10));
+  gsKit_prim_sprite(gsGlobal, stripLeft, stripY - 2, stripRight, stripY + 4, 4,
+                    GS_SETREG_RGBA(0x70, 0xD0, 0xFF, 0x24));
+  gsKit_prim_sprite(gsGlobal, stripLeft, stripY, stripRight, stripY + 2, 5,
+                    GS_SETREG_RGBA(0xB0, 0xE8, 0xFF, 0x78));
 }
 
 static void drawOptionsBlackout(int alpha) {
@@ -556,11 +610,7 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
   gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
   drawOptionsSheet();
 
-  drawTextWindow(baseX, headerHeight - lineHeight,
-                 gsGlobal->Width - baseX, 0, 0, HeaderTextColor,
-                 ALIGN_HCENTER, "Options");
-
-  const int tabY = headerHeight + lineHeight / 4;
+  const int tabY = optionsHeadingY();
   const int middle = gsGlobal->Width / 2;
   static const int tabOffsets[] = {-175, -75, 30, 135};
   static const char *const tabLabels[] = {"Game", "Global", "Views", "Orbs"};
@@ -570,12 +620,16 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                  FontMainColor, ALIGN_VCENTER, ICON_L1);
   for (int tab = OPTIONS_PER_GAME; tab <= OPTIONS_ORBS; tab++) {
     drawText(middle + tabOffsets[tab], tabY, 0, 0, 0,
-             state->page == tab ? ColorSelected : HeaderTextColor,
+             HeaderTextColor,
              tabDirty[tab] ? dirtyTabLabels[tab] : tabLabels[tab]);
   }
+  const int selectedTabX = middle + tabOffsets[state->page];
+  drawOptionsTabSelector(&state->tabSelector, selectedTabX - 4,
+      selectedTabX + (int)getLineWidth(tabLabels[state->page]) + 4,
+      tabY + lineHeight + 4);
   drawIconWindow(middle + 215, tabY, middle + 245, tabY + lineHeight, 0,
                  FontMainColor, ALIGN_VCENTER, ICON_R1);
-  const int menuTop = headerHeight + 2 * lineHeight + 8;
+  const int menuTop = optionsMenuTop();
   const int menuBottom = gsGlobal->Height - footerHeight - lineHeight;
   const int rowStep = lineHeight + lineHeight / 2;
   if (state->page == OPTIONS_GLOBAL) {
@@ -853,10 +907,7 @@ static void drawGameVMCProgress(int percent, void *context) {
   gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
   drawOptionsSheet();
   const int baseX = keepoutArea + 10;
-  drawTextWindow(baseX, headerHeight - getFontLineHeight(),
-                 gsGlobal->Width - baseX, 0, 0, HeaderTextColor,
-                 ALIGN_HCENTER, "Options");
-  drawOptionsSection(headerHeight + getFontLineHeight() / 4,
+  drawOptionsSection(optionsHeadingY(),
                      "Virtual memory cards", 0);
   drawTextWindow(baseX, gsGlobal->Height / 2,
                  gsGlobal->Width - baseX, 0, 0, HeaderTextColor,
@@ -932,16 +983,14 @@ static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
     drawOptionsSheet();
     const int baseX = keepoutArea + 10;
     const int lineHeight = getFontLineHeight();
-    const int menuTop = headerHeight + 2 * lineHeight + 8;
+    const int menuTop = optionsMenuTop();
     const int menuBottom = gsGlobal->Height - footerHeight - lineHeight;
     const int rowStep = lineHeight + lineHeight / 3;
     const int rowRight = gsGlobal->Width - baseX;
     const int focusY = menuTop + selected * rowStep;
     const int scrollOffset = focusY + lineHeight > menuBottom
                                  ? focusY + lineHeight - menuBottom : 0;
-    drawTextWindow(baseX, headerHeight - lineHeight, gsGlobal->Width - baseX,
-                   0, 0, HeaderTextColor, ALIGN_HCENTER, "Options");
-    drawOptionsSection(headerHeight + lineHeight / 4,
+    drawOptionsSection(optionsHeadingY(),
                        slot == 0 ? "VMC slot 1" : "VMC slot 2", 0);
     drawTextWindow(baseX, menuTop - lineHeight, gsGlobal->Width - baseX,
                    menuTop, 0, HeaderTextColor, ALIGN_HCENTER,
@@ -1503,16 +1552,14 @@ static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments,
     drawOptionsSheet();
     const int baseX = keepoutArea + 10;
     const int lineHeight = getFontLineHeight();
-    const int menuTop = headerHeight + 2 * lineHeight + 8;
+    const int menuTop = optionsMenuTop();
     const int menuBottom = gsGlobal->Height - footerHeight - lineHeight;
     const int rowStep = lineHeight + lineHeight / 3;
     const int focusY = menuTop + selectedArgIdx * rowStep;
     const int scrollOffset = focusY + lineHeight > menuBottom
                                  ? focusY + lineHeight - menuBottom : 0;
 
-    drawTextWindow(baseX, headerHeight - lineHeight, gsGlobal->Width - baseX,
-                   0, 0, HeaderTextColor, ALIGN_HCENTER, "Options");
-    drawOptionsSection(headerHeight + lineHeight / 4,
+    drawOptionsSection(optionsHeadingY(),
                        "Launch arguments", 0);
     snprintf(lineBuffer, sizeof(lineBuffer), "%.38s  (%s)", target->name, target->id);
     drawTextWindow(baseX, menuTop - lineHeight, gsGlobal->Width - baseX,

@@ -341,8 +341,12 @@ void drawMenuRowSelector(int left, int top, int right) {
   // Cover both interlaced fields without thin horizontal rules that shimmer.
   gsKit_prim_sprite(gsGlobal, insetLeft, plateTop, insetRight, plateBottom, 2,
                     glassPresetColor(0x16, 0x54, 0x82, 0x38));
-  gsKit_prim_sprite(gsGlobal, insetLeft, plateTop, insetLeft + 5, plateBottom, 3,
-                    glassPresetColor(0x70, 0xD8, 0xF8, 0x68));
+  gsKit_prim_sprite(gsGlobal, insetLeft - 4, plateTop, insetLeft + 6, plateBottom, 3,
+                    GS_SETREG_RGBA(0x48, 0xB8, 0xF0, 0x10));
+  gsKit_prim_sprite(gsGlobal, insetLeft - 2, plateTop, insetLeft + 4, plateBottom, 4,
+                    GS_SETREG_RGBA(0x70, 0xD0, 0xFF, 0x24));
+  gsKit_prim_sprite(gsGlobal, insetLeft, plateTop, insetLeft + 2, plateBottom, 5,
+                    GS_SETREG_RGBA(0xB0, 0xE8, 0xFF, 0x78));
 }
 
 void drawPromptBar(int left, int top, int right, int bottom, int z,
