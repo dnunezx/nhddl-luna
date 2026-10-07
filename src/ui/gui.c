@@ -134,7 +134,8 @@ static void drawLibraryQuickMenu(int progress, int closing, UILibraryView view,
                       glassPresetColor(0xA0, 0xE0, 0xF8, (0x30 * wake) / 1000));
   drawQuickMenuText(left + 16, top + 10, right - 16,
                  top + rowHeight + 10, FontMainColor,
-                 ALIGN_CENTER, total > 0 ? title : lunaText("No favorites yet"));
+                 ALIGN_LEFT | ALIGN_VCENTER,
+                 total > 0 ? title : lunaText("No favorites yet"));
   for (int i = 0; i < count; i++) {
     int y = top + (i + 1) * rowHeight + 8;
     int enabled = i == 0 || (total > 0 && (i != 3 || total > 1));

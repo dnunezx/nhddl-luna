@@ -2109,7 +2109,7 @@ static int mainMenuRow(int index, char *name, size_t nameSize,
                       (hasLibrary && index == 4 ? lunaText("Return to Library") :
                        index == (hasLibrary ? 6 : 5) ? lunaText("Shutdown") : lunaText("Exit LUNA"));
   snprintf(name, nameSize, "%s", label);
-  snprintf(detail, detailSize, "%s", index == 3 ? lunaLanguageName(lunaLanguage()) : "");
+  detail[0] = '\0';
   *cardArt = index == 0 ? CARD_ART_FILE_EXPLORER :
              index == 1 ? CARD_ART_MEMORY_CARD_MENU : CARD_ART_NONE;
   (void)detailSize;

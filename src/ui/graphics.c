@@ -110,6 +110,15 @@ static void releaseFontPages(void) {
   fontPages = NULL;
 }
 
+static void prepareFontPageAlpha(GSTEXTURE *page) {
+  // The shared PNG decoder uses inverted GS alpha for artwork. Fonts need
+  // zero for transparent texels so vertex opacity can fade the glyph without
+  // turning its transparent rectangle into an opaque, depth-writing block.
+  u8 *pixels = (u8 *)page->Mem;
+  for (size_t i = 0; i < (size_t)page->Width * page->Height; i++)
+    pixels[i * 4 + 3] = 0x80 - pixels[i * 4 + 3];
+}
+
 int setUIFont(UIFont selection) {
   if (selection < UI_FONT_DEJAVU || selection >= UI_FONT_COUNT)
     return -1;
@@ -147,6 +156,7 @@ int setUIFont(UIFont selection) {
   activeUIFont = selection;
   for (int i = 0; i < next->pageCount; i++) {
     GSTEXTURE *page = fontPages[i];
+    prepareFontPageAlpha(page);
     page->Vram = fontVram + pageSize * i;
     gsKit_setup_tbw(page);
     SyncDCache(page->Mem, (u8 *)page->Mem + pageSize);
@@ -410,6 +420,16 @@ static void drawGlyph(const BMFontChar *glyph, float x, float y, int z, uint64_t
                             z, color);
 }
 
+static void beginFontDraw(void) {
+  // Conventional source alpha: (source - destination) * alpha + destination.
+  // Reject zero alpha after modulation, including a fully faded glyph.
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+  gsGlobal->Test->ATST = 6; // GREATER
+  gsGlobal->Test->AREF = 0;
+  gsGlobal->Test->AFAIL = 0;
+  gsKit_set_test(gsGlobal, GS_ATEST_ON);
+}
+
 // Draws the text with specified max dimensions relative to x and y
 // Returns the bottom Y coordinate of the last line that can be used to draw the next text
 int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, const char *text) {
@@ -422,11 +442,7 @@ int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, c
   // Transparent font-atlas texels must be rejected rather than merely blended.
   // Otherwise their invisible quads still write depth and appear as boxes when
   // animated artwork passes behind text.
-  gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
-  gsGlobal->Test->ATST = 2;
-  gsGlobal->Test->AREF = 0x80;
-  gsGlobal->Test->AFAIL = 0;
-  gsKit_set_test(gsGlobal, GS_ATEST_ON);
+  beginFontDraw();
 
   int curHeight = 0;
   const char *cursor = text;
@@ -540,11 +556,7 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
 
   // Reject fully transparent atlas texels so glyph bounds cannot mask moving
   // artwork through depth writes.
-  gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
-  gsGlobal->Test->ATST = 2;
-  gsGlobal->Test->AREF = 0x80;
-  gsGlobal->Test->AFAIL = 0;
-  gsKit_set_test(gsGlobal, GS_ATEST_ON);
+  beginFontDraw();
 
   // Get the width of the first line
   int lineWidth = getLineWidth(text);
@@ -621,11 +633,7 @@ int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *te
   const int previousAlphaReference = gsGlobal->Test->AREF;
   const int previousAlphaFail = gsGlobal->Test->AFAIL;
 
-  gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
-  gsGlobal->Test->ATST = 2;
-  gsGlobal->Test->AREF = 0x80;
-  gsGlobal->Test->AFAIL = 0;
-  gsKit_set_test(gsGlobal, GS_ATEST_ON);
+  beginFontDraw();
 
   const char *cursor = text;
   while (*cursor && *cursor != '\n') {
