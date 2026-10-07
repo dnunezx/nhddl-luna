@@ -4,6 +4,7 @@
 #include "dprintf.h"
 #include "ui/dejavu_sans.h"
 #include "ui/psbbn_font.h"
+#include "ui/utf8.h"
 #include "ui/icons.h"
 #include "ui/grid_selector.h"
 #include "ui/view_internal.h"
@@ -428,8 +429,10 @@ int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, c
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
 
   int curHeight = 0;
-  for (int i = 0; text[i] != '\0'; i++) {
-    if (text[i] == '\n') {
+  const char *cursor = text;
+  while (*cursor) {
+    uint32_t character = lunaUTF8Next(&cursor);
+    if (character == '\n') {
       curX = x;
       curHeight += font->lineHeight;
       continue;
@@ -439,7 +442,7 @@ int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, c
       continue;
     }
 
-    glyph = getGlyph(text[i]);
+    glyph = getGlyph(character);
     if (glyph == NULL) {
       continue;
     }
@@ -452,10 +455,12 @@ int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, c
     curX += glyph->xadvance;
 
     // Account for kerning if kernings are present and next char is not a null terminator
-    if (glyph->kernings && (text[i + 1] != '\0')) {
-      for (int i = 0; i < glyph->kerningsCount; i++) {
-        if (glyph->kernings[i].secondChar == text[i + 1]) {
-          curX += glyph->kernings[i].amount;
+    if (glyph->kernings && (*cursor != '\0')) {
+      const char *next = cursor;
+      uint32_t nextCharacter = lunaUTF8Next(&next);
+      for (int k = 0; k < glyph->kerningsCount; k++) {
+        if (glyph->kernings[k].secondChar == nextCharacter) {
+          curX += glyph->kernings[k].amount;
         }
       }
     }
@@ -475,22 +480,26 @@ int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, c
 float getLineWidth(const char *text) {
   float lineWidth = 0;
   const BMFontChar *glyph;
-  for (int i = 0; text[i] != '\0'; i++) {
-    if (text[i] == '\n') {
+  const char *cursor = text;
+  while (*cursor) {
+    uint32_t character = lunaUTF8Next(&cursor);
+    if (character == '\n') {
       return lineWidth;
     }
 
-    glyph = getGlyph(text[i]);
+    glyph = getGlyph(character);
     if (glyph == NULL) {
       continue;
     }
 
     lineWidth += glyph->xadvance;
     // Account for kerning
-    if (glyph->kernings && (text[i + 1] != '\0')) {
-      for (int i = 0; i < glyph->kerningsCount; i++) {
-        if (glyph->kernings[i].secondChar == text[i + 1]) {
-          lineWidth += glyph->kernings[i].amount;
+    if (glyph->kernings && (*cursor != '\0')) {
+      const char *next = cursor;
+      uint32_t nextCharacter = lunaUTF8Next(&next);
+      for (int k = 0; k < glyph->kerningsCount; k++) {
+        if (glyph->kernings[k].secondChar == nextCharacter) {
+          lineWidth += glyph->kernings[k].amount;
         }
       }
     }
@@ -505,7 +514,7 @@ float getLineWidth(const char *text) {
 int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_t alignment, const char *text) {
   if (!x2 && !y2) {
     // If window limits are not set, use faster drawing function
-    return drawText(x1, x2, z, 0, 0, color, text);
+    return drawText(x1, y1, z, 0, 0, color, text);
   }
   float curX = x1;
   float curY = y1;
@@ -549,12 +558,14 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
   }
 
   const BMFontChar *glyph;
-  for (int i = 0; text[i] != '\0'; i++) {
-    if (text[i] == '\n') {
+  const char *cursor = text;
+  while (*cursor) {
+    uint32_t character = lunaUTF8Next(&cursor);
+    if (character == '\n') {
       curX = x1;
       curY += font->lineHeight;
       // Get the width of the next line
-      lineWidth = getLineWidth(&text[i + 1]);
+      lineWidth = getLineWidth(cursor);
       // Set line offset according to alignment
       if (x2) {
         if (alignment & ALIGN_HCENTER) {
@@ -566,7 +577,7 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
       continue;
     }
 
-    glyph = getGlyph(text[i]);
+    glyph = getGlyph(character);
     if (glyph == NULL) {
       continue;
     }
@@ -583,10 +594,12 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
 
     curX += glyph->xadvance;
     // Account for kerning if kernings are present and next char is not a null terminator
-    if (glyph->kernings && (text[i + 1] != '\0')) {
-      for (int i = 0; i < glyph->kerningsCount; i++) {
-        if (glyph->kernings[i].secondChar == text[i + 1]) {
-          curX += glyph->kernings[i].amount;
+    if (glyph->kernings && (*cursor != '\0')) {
+      const char *next = cursor;
+      uint32_t nextCharacter = lunaUTF8Next(&next);
+      for (int k = 0; k < glyph->kerningsCount; k++) {
+        if (glyph->kernings[k].secondChar == nextCharacter) {
+          curX += glyph->kernings[k].amount;
         }
       }
     }
@@ -614,8 +627,10 @@ int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *te
   gsGlobal->Test->AFAIL = 0;
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
 
-  for (int i = 0; text[i] != '\0' && text[i] != '\n'; i++) {
-    const BMFontChar *glyph = getGlyph(text[i]);
+  const char *cursor = text;
+  while (*cursor && *cursor != '\n') {
+    uint32_t character = lunaUTF8Next(&cursor);
+    const BMFontChar *glyph = getGlyph(character);
     if (glyph == NULL)
       continue;
 
@@ -634,9 +649,11 @@ int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *te
     }
 
     curX += glyph->xadvance;
-    if (glyph->kernings && text[i + 1] != '\0') {
+    if (glyph->kernings && *cursor != '\0') {
+      const char *next = cursor;
+      uint32_t nextCharacter = lunaUTF8Next(&next);
       for (int k = 0; k < glyph->kerningsCount; k++) {
-        if (glyph->kernings[k].secondChar == text[i + 1])
+        if (glyph->kernings[k].secondChar == nextCharacter)
           curX += glyph->kernings[k].amount;
       }
     }

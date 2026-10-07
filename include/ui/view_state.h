@@ -29,6 +29,9 @@ int saveLibraryBackground(Target *target, LibraryBackground background);
 AmbientOrbsTheme loadAmbientOrbsTheme(Target *target);
 int saveAmbientOrbsTheme(Target *target, AmbientOrbsTheme theme);
 
+uint32_t loadEnabledOrbShapes(Target *target);
+int saveEnabledOrbShapes(Target *target, uint32_t enabledShapes);
+
 // Appearance is independent of behavior and defaults to LUNA.
 AmbientOrbsAppearance loadAmbientOrbsAppearance(Target *target);
 int saveAmbientOrbsAppearance(Target *target, AmbientOrbsAppearance appearance);

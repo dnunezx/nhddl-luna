@@ -1,5 +1,6 @@
 // LUNA visual rendering extracted from gui.c.
 #include "ui/view_internal.h"
+#include "ui/language.h"
 #include "ui/view_scroll.h"
 #include "ui/ambient_orbs.h"
 #include "ui/ps2_menu_scene.h"
@@ -1643,7 +1644,7 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
                     glassPresetColor(0x02, 0x05, 0x10, 0x62));
 
   drawTextWindow(keepoutArea + 10, headerHeight - getFontLineHeight(),
-                 width - keepoutArea, 0, 7, FontMainColor, ALIGN_LEFT, "SCROLL");
+                 width - keepoutArea, 0, 7, FontMainColor, ALIGN_LEFT, lunaText("SCROLL"));
   snprintf(lineBuffer, sizeof(lineBuffer), "%d/%d", visualTitleIdx + 1,
            titles->total);
   drawTextWindow(width - 116, headerHeight - getFontLineHeight(),

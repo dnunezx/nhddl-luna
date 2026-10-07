@@ -1,5 +1,6 @@
 // LUNA 2026: all supported storage sources share one refresh lifecycle.
 #include "storage.h"
+#include "ui/language.h"
 #include "devices/devices.h"
 #include "devices/init.h"
 #include "options.h"
@@ -25,7 +26,7 @@ static ModeType selectedMode;
 static int selectedDevice, selectedView, restoreSelection;
 
 ModeType storageSourceMode(int index) { return modes[index]; }
-const char *storageSourceName(int index) { return names[index]; }
+const char *storageSourceName(int index) { return lunaText(names[index]); }
 
 const char *storageVMCRoot(const struct DeviceMapEntry *device) {
   if (!device || !(STORAGE_SETTINGS.enabled & device->mode)) return NULL;
@@ -242,7 +243,7 @@ TargetList *storageRefresh(TargetList *previous) {
       if (!part) goto fail;
       int result = 0;
       if (scan & mode) {
-        uiSplashLogString(LEVEL_INFO_NODELAY, "Scanning %s...\n", names[s]);
+        uiSplashLogString(LEVEL_INFO_NODELAY, lunaText("Scanning %s...\n"), lunaText(names[s]));
         result = dev->scan(part, dev);
       }
       if (!(scan & mode) || (result && result != -ENOENT)) {

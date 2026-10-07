@@ -18,6 +18,8 @@ static const char backgroundPath[] = "/background.txt";
 static const char backgroundTempPath[] = "/background.txt.tmp";
 static const char orbsThemePath[] = "/orbsTheme.txt";
 static const char orbsThemeTempPath[] = "/orbsTheme.txt.tmp";
+static const char orbShapesPath[] = "/orbShapes.txt";
+static const char orbShapesTempPath[] = "/orbShapes.txt.tmp";
 static const char orbsAppearancePath[] = "/orbsAppearance.txt";
 static const char orbsAppearanceTempPath[] = "/orbsAppearance.txt.tmp";
 static const char orbsColorPath[] = "/orbsColor.txt";
@@ -321,6 +323,58 @@ int saveAmbientOrbsTheme(Target *target, AmbientOrbsTheme theme) {
   if (commitConfigFile(tempPath, path))
     return -EIO;
   return 0;
+}
+
+uint32_t loadEnabledOrbShapes(Target *target) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  const char *paths[] = {orbShapesTempPath, orbShapesPath};
+  char path[PATH_MAX], value[32];
+  if (device == NULL || device->mountpoint == NULL)
+    return ORBS_SHAPES_ALL_MASK;
+  for (int i = 0; i < 2; i++) {
+    if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
+      continue;
+    FILE *file = fopen(path, "r");
+    if (file == NULL)
+      continue;
+    int readable = fgets(value, sizeof(value), file) != NULL;
+    int complete = readable && (strchr(value, '\n') || feof(file));
+    fclose(file);
+    if (!complete)
+      continue;
+    char *end;
+    errno = 0;
+    unsigned long mask = strtoul(value, &end, 10);
+    if (!errno && end != value && mask <= ORBS_SHAPES_ALL_MASK &&
+        strspn(end, " \t\r\n") == strlen(end))
+      return (uint32_t)mask;
+  }
+  return ORBS_SHAPES_ALL_MASK;
+}
+
+int saveEnabledOrbShapes(Target *target, uint32_t enabledShapes) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  if (device == NULL || device->mountpoint == NULL ||
+      (enabledShapes & ~ORBS_SHAPES_ALL_MASK))
+    return -EINVAL;
+  char directory[PATH_MAX], path[PATH_MAX], tempPath[PATH_MAX];
+  struct stat st;
+  if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
+      buildConfigFilePath(path, sizeof(path), device->mountpoint, orbShapesPath) ||
+      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, orbShapesTempPath))
+    return -ENAMETOOLONG;
+  if (stat(directory, &st) == -1 && mkdir(directory, 0777))
+    return -EIO;
+  FILE *file = fopen(tempPath, "w");
+  if (file == NULL)
+    return -EIO;
+  int written = fprintf(file, "%u\n", (unsigned)enabledShapes);
+  int closed = fclose(file);
+  if (written < 0 || closed) {
+    remove(tempPath);
+    return -EIO;
+  }
+  return commitConfigFile(tempPath, path) ? -EIO : 0;
 }
 
 AmbientOrbsAppearance loadAmbientOrbsAppearance(Target *target) {

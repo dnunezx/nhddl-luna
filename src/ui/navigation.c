@@ -1,5 +1,6 @@
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/navigation.h"
+#include "ui/language.h"
 #include <stddef.h>
 
 int lunaNavEntryInputBlocked(int *pending, int viewReady, int controlsHeld) {
@@ -274,8 +275,8 @@ const char *lunaNavViewLabel(UILibraryView view) {
       [UI_VIEW_CLASSIC] = "List", [UI_VIEW_PSBBN] = "Collections",
       [UI_VIEW_ORBIT] = "Orbit",
       [UI_VIEW_ORBS] = "Scroll", [UI_VIEW_3D] = "3D"};
-  return view >= UI_VIEW_CLASSIC && view < UI_VIEW_ID_LIMIT && labels[view] ?
-         labels[view] : "View";
+  return view >= UI_VIEW_CLASSIC && view < UI_VIEW_ID_LIMIT && lunaText(labels[view]) ?
+         lunaText(labels[view]) : lunaText("View");
 }
 
 UILibraryView lunaNavNextView(UILibraryView view, uint32_t enabledViews) {

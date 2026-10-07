@@ -1,5 +1,6 @@
 // LUNA 2026
 #include "common.h"
+#include "ui/language.h"
 #include "dprintf.h"
 #include "favorites.h"
 #include "neutrino.h"
@@ -54,6 +55,7 @@ static int orbsThemeSetting = ORBS_THEME_LUNA;
 static int orbsAppearanceSetting = ORBS_APPEARANCE_LUNA;
 static int orbsColorSetting = ORBS_COLOR_ORIGINAL;
 static int tailsColorSetting = ORBS_COLOR_ORIGINAL;
+static uint32_t enabledOrbShapes = ORBS_SHAPES_ALL_MASK;
 static int glassColorSetting = GLASS_COLOR_ORIGINAL;
 static int fontSetting = UI_FONT_DEJAVU;
 static uint32_t splashVisibleStartMs;
@@ -79,8 +81,8 @@ static int libraryViewEntryProgress(int entryView, UILibraryView view,
 
 static void drawLibraryFooter(int canLaunch) {
   const ButtonPrompt prompts[] = {
-      {ICON_CIRCLE, "View"}, {ICON_CROSS, canLaunch ? "Launch" : NULL},
-      {ICON_START, "Menu"}, {ICON_R1, "More"}};
+      {ICON_CIRCLE, lunaText("View")}, {ICON_CROSS, canLaunch ? lunaText("Launch") : NULL},
+      {ICON_START, lunaText("Menu")}, {ICON_R1, lunaText("More")}};
   drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
                 gsGlobal->Width - 20, gsGlobal->Height, 8, FontMainColor,
                 (PromptBar){NULL, prompts, 4});
@@ -101,9 +103,9 @@ static void drawLibraryQuickMenu(int progress, int closing, UILibraryView view,
   if (progress <= 0)
     return;
   const char *labels[] = {
-      favoritesOnly ? "Show All" : "Show Favorites",
-      isFavorite ? "Remove from Favorites" : "Add to Favorites",
-      "Options", "Random"};
+      favoritesOnly ? lunaText("Show All") : lunaText("Show Favorites"),
+      isFavorite ? lunaText("Remove from Favorites") : lunaText("Add to Favorites"),
+      lunaText("Options"), lunaText("Random")};
   const IconType icons[] = {ICON_CROSS, ICON_CIRCLE, ICON_TRIANGLE, ICON_R3};
   int count = view == UI_VIEW_ORBIT ? 4 : 3;
   int rowHeight = getFontLineHeight() + 10;
@@ -132,7 +134,7 @@ static void drawLibraryQuickMenu(int progress, int closing, UILibraryView view,
                       glassPresetColor(0xA0, 0xE0, 0xF8, (0x30 * wake) / 1000));
   drawQuickMenuText(left + 16, top + 10, right - 16,
                  top + rowHeight + 10, FontMainColor,
-                 ALIGN_CENTER, total > 0 ? title : "No favorites yet");
+                 ALIGN_CENTER, total > 0 ? title : lunaText("No favorites yet"));
   for (int i = 0; i < count; i++) {
     int y = top + (i + 1) * rowHeight + 8;
     int enabled = i == 0 || (total > 0 && (i != 3 || total > 1));
@@ -387,6 +389,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     libraryBackground = LIBRARY_BACKGROUND_STARS;
   orbsThemeSetting = loadAmbientOrbsTheme(curTarget);
   setAmbientOrbsTheme((AmbientOrbsTheme)orbsThemeSetting, uiNowMs());
+  enabledOrbShapes = loadEnabledOrbShapes(curTarget);
+  setAmbientOrbsShapes(enabledOrbShapes, uiNowMs());
   orbsAppearanceSetting = loadAmbientOrbsAppearance(curTarget);
   if (setAmbientOrbsAppearance((AmbientOrbsAppearance)orbsAppearanceSetting))
     orbsAppearanceSetting = ORBS_APPEARANCE_LUNA;
@@ -450,14 +454,14 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     gsKit_clear(gsGlobal, BGColor);
     gsKit_TexManager_nextFrame(gsGlobal);
     const UILibraryView nextView = lunaNavNextView(view, enabledViews);
-    const char *nextViewLabel = nextView == view ? "Only view" :
+    const char *nextViewLabel = nextView == view ? lunaText("Only view") :
                                 lunaNavViewLabel(nextView);
 
     if (titles->total == 0) {
       drawSharedLibraryBackground(uiNowMs());
       drawTextWindow(20, headerHeight, gsGlobal->Width - 20,
                      gsGlobal->Height - footerHeight, 6, HeaderTextColor,
-                     ALIGN_CENTER, "NO FAVORITES YET\nHold R1 to show all games");
+                     ALIGN_CENTER, lunaText("NO FAVORITES YET\nHold R1 to show all games"));
       goto library_view_drawn;
     }
 
@@ -681,7 +685,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     drawLibraryFooter(titles->total > 0);
     if (favoritesOnly && view != UI_VIEW_CLASSIC && view != UI_VIEW_PSBBN)
       drawTextWindow(20, 8, gsGlobal->Width - 20, headerHeight, 0,
-                     HeaderTextColor, ALIGN_RIGHT, "Favorites");
+                     HeaderTextColor, ALIGN_RIGHT, lunaText("Favorites"));
     gsKit_set_test(gsGlobal, GS_ZTEST_ON);
     uint32_t quickNow = uiNowMs();
     uint32_t quickElapsed = quickNow - quickMenuFrameMs;
@@ -1126,7 +1130,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         allFavoriteFlags[originalIndex] = wasFavorite;
         // Capacity is reserved at startup, so rollback cannot allocate or fail.
         setFavoriteTarget(favoriteTitles, originalTarget, wasFavorite);
-        quickMenuMessage = "Could not save favorites";
+        quickMenuMessage = lunaText("Could not save favorites");
         quickMenuMessageUntil = uiNowMs() + 2500;
       } else {
         if (favoritesOnly) {
@@ -1196,7 +1200,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                                     &libraryBackground, &glassColorSetting,
                                     &fontSetting, &ambientEnabled, &orbsThemeSetting,
                                     &orbsAppearanceSetting, &orbsColorSetting,
-                                    &tailsColorSetting,
+                                    &tailsColorSetting, &enabledOrbShapes,
                                     &enabledViews)) < 0) {
         // Something went wrong, main loop must exit immediately
         ambientStop();
@@ -1273,7 +1277,7 @@ int uiLaunchTitleWithCheats(Target *target, ArgumentList *arguments,
   char error[192], *payload = NULL;
   int result = lunaCheatsPrepare(target, cheats, &payload, error, sizeof(error));
   if (!result && !launchTitleArgumentsFit(target, arguments, payload)) {
-    snprintf(error, sizeof(error), "Launch arguments are too large. Reduce selected cheats or custom arguments.");
+    snprintf(error, sizeof(error), lunaText("Launch arguments are too large. Reduce selected cheats or custom arguments."));
     result = -1;
   }
   if (result) {
@@ -1288,7 +1292,7 @@ int uiLaunchTitleWithCheats(Target *target, ArgumentList *arguments,
                      ErrorTextColor, ALIGN_HCENTER, error);
       drawTextWindow(keepoutArea + 24, gsGlobal->Height - footerHeight - 30,
                      gsGlobal->Width - keepoutArea - 24, 0, 0,
-                     HeaderTextColor, ALIGN_HCENTER, "Press Triangle to return");
+                     HeaderTextColor, ALIGN_HCENTER, lunaText("Press Triangle to return"));
       gsKit_set_test(gsGlobal, GS_ZTEST_ON);
       gsKit_queue_exec(gsGlobal);
       gsKit_finish();

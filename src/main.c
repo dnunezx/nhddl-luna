@@ -10,6 +10,7 @@
 #include "target.h"
 #include "storage.h"
 #include "ui/ui.h"
+#include "ui/language.h"
 #include "ui/ambient.h"
 #include "ui/art_cache.h"
 #include "ui/view_state.h"
@@ -106,14 +107,14 @@ int main(int argc, char *argv[]) {
   if (res)
     goto fail;
 
-  uiSplashLogString(LEVEL_INFO_NODELAY, "Building target list...\n");
+  uiSplashLogString(LEVEL_INFO_NODELAY, lunaText("Building target list...\n"));
 
   titles = storageRefresh(NULL);
   if (titles == NULL)
     goto fail;
 
   if (titles->total == 0) {
-    uiSplashLogString(LEVEL_INFO_NODELAY, "No targets found; file manager available\n");
+    uiSplashLogString(LEVEL_INFO_NODELAY, lunaText("No targets found; file manager available\n"));
   }
 
   // Let the audio worker preempt long cover decodes in the UI thread.
@@ -172,7 +173,7 @@ int main(int argc, char *argv[]) {
     DPRINTF("Storage refresh: discovering games\n");
     TargetList *updated = storageRefresh(titles);
     if (updated) titles = updated;
-    else uiSplashLogString(LEVEL_ERROR, "Scan could not finish. Previous library kept.\n");
+    else uiSplashLogString(LEVEL_ERROR, lunaText("Scan could not finish. Previous library kept.\n"));
     stopUISplashThread();
     DPRINTF("Storage refresh: finished with %d games\n", titles->total);
     preparedCollectionIdx = -1;
@@ -199,14 +200,14 @@ fail:
 int initDevices() {
   // Device backends already perform bounded readiness probes. Do not add a
   // second, unconditional one-second splash delay before those probes begin.
-  uiSplashLogString(LEVEL_INFO_NODELAY, "Waiting for storage devices...\n");
+  uiSplashLogString(LEVEL_INFO_NODELAY, lunaText("Waiting for storage devices...\n"));
   int res = initDeviceMap();
   if ((res < 0)) {
-    uiSplashLogString(LEVEL_ERROR, "Failed to initialize devices\n");
+    uiSplashLogString(LEVEL_ERROR, lunaText("Failed to initialize devices\n"));
     return -EIO;
   }
   if (!res) {
-    uiSplashLogString(LEVEL_INFO_NODELAY, "No storage devices found; settings available\n");
+    uiSplashLogString(LEVEL_INFO_NODELAY, lunaText("No storage devices found; settings available\n"));
   }
   return 0;
 }
@@ -238,10 +239,12 @@ int argInit() {
   if (initDevices() < 0)
     return -EIO;
 
+  lunaLanguageConfigure(cwdPath);
+
   // Search for neutrino.elf
   getcwd(cwdPath, PATH_MAX + 1);
   if (findNeutrinoELF(cwdPath)) {
-    uiSplashLogString(LEVEL_ERROR, "Couldn't find neutrino.elf\n");
+    uiSplashLogString(LEVEL_ERROR, lunaText("Couldn't find neutrino.elf\n"));
     return -ENOENT;
   }
 
@@ -252,7 +255,7 @@ int argInit() {
 
 // Initializes modules, NHDDL configuraton, Neutrino path and device map
 int init(char *elfPath) {
-  uiSplashLogString(LEVEL_INFO_NODELAY, "Initializing...\n");
+  uiSplashLogString(LEVEL_INFO_NODELAY, lunaText("Initializing...\n"));
   int initialModules = 0;
   if (elfPath) {
     // Guess root device
@@ -285,11 +288,13 @@ int init(char *elfPath) {
     return -EIO;
   }
 
+  lunaLanguageConfigure(elfPath);
+
   // Search for neutrino.elf
   res = findNeutrinoELF(elfPath);
   free(elfPath);
   if (res < 0) {
-    uiSplashLogString(LEVEL_ERROR, "Couldn't find neutrino.elf\n");
+    uiSplashLogString(LEVEL_ERROR, lunaText("Couldn't find neutrino.elf\n"));
     return -ENOENT;
   }
 

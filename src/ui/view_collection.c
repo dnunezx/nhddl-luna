@@ -1,5 +1,6 @@
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/view_internal.h"
+#include "ui/language.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -69,7 +70,7 @@ void drawPSBBNCover(GSTEXTURE *cover, float x1, float y1, float size, int cacheI
     if (showLabel)
       drawTextWindow((int)x1, centerY + radius / 2, (int)x2, 0, z + 1,
                      glassMissingCoverTextColor(), ALIGN_HCENTER,
-                     "COVER\nUNAVAILABLE");
+                     lunaText("COVER\nUNAVAILABLE"));
   }
 }
 
@@ -209,21 +210,21 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
   int selectorCenterY = psbbnFieldStableY(gsGlobal->Height - footerHeight - getFontLineHeight() - 16);
   int collectionTextY = selectorCenterY - getFontLineHeight() - 8;
   int favoritesTextY = selectorCenterY + 10;
-  const char *collectionLabel = "Collection";
-  const char *favoritesLabel = "Favorites";
+  const char *collectionLabel = lunaText("Collection");
+  const char *favoritesLabel = lunaText("Favorites");
   int activeTextY = favoritesOnly ? favoritesTextY : collectionTextY;
   int activeTextRight = 70 + getLineWidth(favoritesOnly ? favoritesLabel : collectionLabel);
   drawPSBBNFocusGlow(70, activeTextY, panelRight - 8, activeTextRight);
   drawTextWindow(70, collectionTextY, panelRight - 8, 0, 6,
                  favoritesOnly ? HeaderTextColor : FontMainColor, ALIGN_LEFT, collectionLabel);
   drawTextWindow(70, favoritesTextY, panelRight - 8, 0, 6,
-                 favoritesOnly ? FontMainColor : HeaderTextColor, ALIGN_LEFT, "Favorites");
+                 favoritesOnly ? FontMainColor : HeaderTextColor, ALIGN_LEFT, lunaText("Favorites"));
 
   if (titles->total <= 0) {
     collectionVisibleTitle = NULL;
     drawTextWindow(40, headerHeight + 96, panelRight, selectorCenterY - getFontLineHeight() * 2,
                    5, HeaderTextColor, ALIGN_CENTER,
-                   "NO FAVORITES YET\nAdd favorites in List");
+                   lunaText("NO FAVORITES YET\nAdd favorites in List"));
     drawCollectionEntryFade(entryProgress);
     return;
   }

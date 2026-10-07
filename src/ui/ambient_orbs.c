@@ -45,6 +45,7 @@ static AmbientOrbsTheme ambientOrbsTheme = ORBS_THEME_LUNA;
 static AmbientOrbsAppearance ambientOrbsAppearance = ORBS_APPEARANCE_LUNA;
 static AmbientOrbsColor ambientOrbsColor = ORBS_COLOR_ORIGINAL;
 static AmbientOrbsColor ambientTailsColor = ORBS_COLOR_ORIGINAL;
+static uint32_t enabledOrbShapes = ORBS_SHAPES_ALL_MASK;
 static int orbBackgroundColorsActive;
 static const uint8_t orbPalette[ORBS_COLOR_COUNT][3] = {
     {0, 0, 0}, {0x52, 0xE0, 0xFF}, {0xB0, 0x82, 0xFF},
@@ -147,6 +148,14 @@ void resetAmbientOrbs(uint32_t startMs) {
   orbitStartMs = 0;
   splashStartMs = 0;
   resetAmbientOrbsScroll();
+}
+
+void setAmbientOrbsShapes(uint32_t enabledShapes, uint32_t now) {
+  enabledShapes &= ORBS_SHAPES_ALL_MASK;
+  if (enabledOrbShapes != enabledShapes) {
+    enabledOrbShapes = enabledShapes;
+    resetAmbientOrbs(now);
+  }
 }
 
 void setAmbientOrbsTheme(AmbientOrbsTheme theme, uint32_t now) {
@@ -526,16 +535,6 @@ static OrbMotion orbMotion(uint32_t elapsedMs) {
   return motion;
 }
 
-typedef enum {
-  ORB_SHAPE_DIAMOND,
-  ORB_SHAPE_CUBE,
-  ORB_SHAPE_OCTAHEDRON,
-  ORB_SHAPE_SPHERE,
-  ORB_SHAPE_LUNA,
-  ORB_SHAPE_PLAYTIME,
-  ORB_SHAPE_COUNT
-} OrbShape;
-
 typedef struct {
   int x1, y1, x2, y2;
 } OrbLogoStroke;
@@ -623,13 +622,41 @@ static void resetScrollFormation(void) {
   scrollFormation.initialized = 0;
 }
 
+static OrbShape pickEnabledOrbShape(uint32_t mask, OrbShape previous,
+                                     uint32_t choice) {
+  mask &= ORBS_SHAPES_ALL_MASK;
+  const uint32_t previousBit = previous < ORB_SHAPE_PLAYTIME ? 1U << previous : 0;
+  if (mask & ~previousBit)
+    mask &= ~previousBit;
+  OrbShape candidates[ORB_SHAPE_PLAYTIME];
+  int count = 0;
+  for (int shape = 0; shape < ORB_SHAPE_PLAYTIME; shape++)
+    if (mask & (1U << shape))
+      candidates[count++] = (OrbShape)shape;
+  return count ? candidates[choice % count] : ORB_SHAPE_PLAYTIME;
+}
+
+static OrbShape nextEnabledOrbitShape(OrbShape previous) {
+  static const OrbShape order[] = {
+    ORB_SHAPE_CUBE, ORB_SHAPE_OCTAHEDRON, ORB_SHAPE_LUNA,
+    ORB_SHAPE_SKULL, ORB_SHAPE_ATOM, ORB_SHAPE_DIAMOND, ORB_SHAPE_SPHERE
+  };
+  int start = -1;
+  for (int i = 0; i < ORB_SHAPE_PLAYTIME; i++)
+    if (order[i] == previous)
+      start = i;
+  for (int offset = 1; offset <= ORB_SHAPE_PLAYTIME; offset++) {
+    const OrbShape shape = order[(start + offset) % ORB_SHAPE_PLAYTIME];
+    if (enabledOrbShapes & (1U << shape))
+      return shape;
+  }
+  return ORB_SHAPE_PLAYTIME;
+}
+
 static OrbFormation *orbFormationAt(uint32_t elapsedMs, int formationMode) {
   static OrbFormation sharedFormation;
   static OrbFormation orbitFormation;
   static OrbFormation splashFormation;
-  static const OrbShape orbitShapes[] = {
-    ORB_SHAPE_CUBE, ORB_SHAPE_OCTAHEDRON, ORB_SHAPE_LUNA
-  };
   OrbFormation *formation = formationMode == 3 ? &scrollFormation :
                             formationMode == 2 ? &splashFormation :
                             formationMode == 1 ? &orbitFormation : &sharedFormation;
@@ -654,7 +681,8 @@ static OrbFormation *orbFormationAt(uint32_t elapsedMs, int formationMode) {
     formation->startMs = glassStartMs;
     formation->epochMs = epochMs;
     formation->from = formationMode == 2 ? ORB_SHAPE_LUNA :
-                      formationMode == 1 ? ORB_SHAPE_CUBE : ORB_SHAPE_DIAMOND;
+                      formationMode == 1 ? nextEnabledOrbitShape(ORB_SHAPE_PLAYTIME) :
+                      pickEnabledOrbShape(enabledOrbShapes, ORB_SHAPE_PLAYTIME, 0);
     formation->to = formation->from;
     formation->previousFrom = formation->from;
     formation->previousTo = formation->to;
@@ -685,15 +713,12 @@ static OrbFormation *orbFormationAt(uint32_t elapsedMs, int formationMode) {
       formation->to = ORB_SHAPE_PLAYTIME;
       formation->morphMs = ORB_PLAYTIME_ENTRY_MS;
     } else if (formationMode == 1) {
-      formation->to = orbitShapes[(formation->cycle / 2U) %
-                                  (sizeof(orbitShapes) / sizeof(orbitShapes[0]))];
+      formation->to = nextEnabledOrbitShape(formation->lastShape);
       formation->morphMs = ORB_FORMATION_MORPH_MS;
     } else {
       formation->random = formation->random * 1664525U + 1013904223U;
-      int next = (int)(formation->random % (ORB_SHAPE_PLAYTIME - 1));
-      if (next >= formation->lastShape)
-        next++;
-      formation->to = (OrbShape)next;
+      formation->to = pickEnabledOrbShape(enabledOrbShapes, formation->lastShape,
+                                           formation->random);
       formation->morphMs = ORB_FORMATION_MORPH_MS;
     }
   }
@@ -731,6 +756,101 @@ static void orbPlaytimePosition(int index, uint32_t animationMs,
   *depth = 65.0f + orbWave(phaseX) * 24.0f / 127.0f;
 }
 
+// Share the projected curves between the lights and their formation outlines.
+static void orbCurvedShapePoint(GlassPoint *point, OrbShape shape, int ring,
+                                 uint32_t phase, uint32_t elapsedMs,
+                                 const OrbMotion *motion, int centerX, int centerY,
+                                 int radiusX, int radiusY) {
+  float sourceX, sourceY, sourceZ;
+  uint32_t yaw, pitch, roll;
+  if (shape == ORB_SHAPE_SKULL) {
+    phase &= 65535U;
+    if (ring == 0 && phase <= 32768U) {
+      // A round cranium joins the cheekbones and narrower squared jaw.
+      sourceX = orbWave(phase + 16384U);
+      sourceY = 25.0f + orbWave(phase) * 105.0f / 127.0f;
+    } else if (ring == 0) {
+      static const int jaw[10][2] = {
+        {-127, 25}, {-105, -5}, {-75, -18}, {-65, -48}, {-65, -85},
+        {65, -85}, {65, -48}, {75, -18}, {105, -5}, {127, 25}
+      };
+      const float along = (phase - 32768U) * 9.0f / 32768.0f;
+      const int segment = (int)along;
+      const float blend = along - segment;
+      sourceX = jaw[segment][0] +
+                (jaw[segment + 1][0] - jaw[segment][0]) * blend;
+      sourceY = jaw[segment][1] +
+                (jaw[segment + 1][1] - jaw[segment][1]) * blend;
+    } else if (ring <= 2) {
+      sourceX = (ring == 1 ? -48.0f : 48.0f) +
+                orbWave(phase + 16384U) * 28.0f / 127.0f;
+      sourceY = 35.0f + orbWave(phase) * 32.0f / 127.0f;
+    } else if (ring == 3) {
+      static const int nose[4][2] = {
+        {-15, -15}, {0, 9}, {15, -15}, {-15, -15}
+      };
+      const float along = phase * 3.0f / 65536.0f;
+      const int segment = (int)along;
+      const float blend = along - segment;
+      sourceX = nose[segment][0] +
+                (nose[segment + 1][0] - nose[segment][0]) * blend;
+      sourceY = nose[segment][1] +
+                (nose[segment + 1][1] - nose[segment][1]) * blend;
+    } else {
+      // One continuous route lets a light draw the mouth and teeth.
+      static const int teeth[10][2] = {
+        {-65, -48}, {-30, -48}, {-30, -85}, {0, -85}, {0, -48},
+        {30, -48}, {30, -85}, {65, -85}, {65, -48}, {-65, -48}
+      };
+      const float along = phase * 9.0f / 65536.0f;
+      const int segment = (int)along;
+      const float blend = along - segment;
+      sourceX = teeth[segment][0] +
+                (teeth[segment + 1][0] - teeth[segment][0]) * blend;
+      sourceY = teeth[segment][1] +
+                (teeth[segment + 1][1] - teeth[segment][1]) * blend;
+    }
+    sourceZ = ring == 0 ? 0.0f : 10.0f;
+    yaw = (uint32_t)(int)(orbWave(glassPhase(elapsedMs, 11000, 0)) * 18.0f);
+    pitch = (uint32_t)(int)(orbWave(glassPhase(elapsedMs, 9700, 0)) * 7.0f);
+    roll = (uint32_t)(int)(orbWave(glassPhase(elapsedMs, 8600, 0)) * 9.0f);
+  } else {
+    // Three narrow ellipses tilted sixty degrees apart make an atom silhouette.
+    const float alongX = orbWave(phase + 16384U);
+    const float alongY = orbWave(phase) * 0.34f;
+    const uint32_t tilt = (uint32_t)ring * 10923U;
+    const float sine = orbWave(tilt) / 127.0f;
+    const float cosine = orbWave(tilt + 16384U) / 127.0f;
+    sourceX = alongX * cosine - alongY * sine;
+    sourceY = alongX * sine + alongY * cosine;
+    sourceZ = orbWave(phase) * 0.65f;
+    yaw = (uint32_t)(int)(orbWave(glassPhase(elapsedMs, 12000, 0)) * 14.0f);
+    pitch = (uint32_t)(int)(orbWave(glassPhase(elapsedMs, 10300, 0)) * 8.0f);
+    roll = (uint32_t)(int)(orbWave(glassPhase(elapsedMs, 14000, 0)) * 7.0f);
+  }
+  const int smallerRadius = radiusX < radiusY ? radiusX : radiusY;
+  projectCrystalPoint(point, centerX, centerY, smallerRadius * 83 / 100,
+                      yaw, pitch, roll, (int)sourceX, (int)sourceY, (int)sourceZ);
+  const float breath = 0.85f + motion->scale / 500.0f;
+  point->x = centerX + (point->x - centerX) * breath;
+  point->y = centerY + (point->y - centerY) * breath;
+}
+
+static void orbSkullLightPath(int index, uint32_t elapsedMs,
+                              int *ring, uint32_t *phase) {
+  if (index < 6) {
+    *ring = 0;
+    *phase = glassPhase(elapsedMs, 3300, 0) + (uint32_t)index * 65536U / 6U;
+  } else if (index < 10) {
+    *ring = 1 + (index - 6) / 2;
+    *phase = glassPhase(elapsedMs, 1600U + (uint32_t)*ring * 180U, 0) +
+             (uint32_t)(index & 1) * 32768U;
+  } else {
+    *ring = index == 10 ? 3 : 4;
+    *phase = glassPhase(elapsedMs, index == 10 ? 1300U : 2400U, 0);
+  }
+}
+
 static void orbPatternPosition(OrbShape shape, int index, uint32_t elapsedMs,
                                const OrbMotion *motion, int centerX, int centerY,
                                int radiusX, int radiusY, float *x, float *y,
@@ -759,6 +879,26 @@ static void orbPatternPosition(OrbShape shape, int index, uint32_t elapsedMs,
     *x = left + logoX * scale;
     *y = top + logoY * scale;
     *depth = 65.0f + orbWave(phase + 16384) * 20.0f / 127.0f;
+    return;
+  }
+  if (shape == ORB_SHAPE_SKULL || shape == ORB_SHAPE_ATOM) {
+    int ring = index / 4;
+    uint32_t phase;
+    if (shape == ORB_SHAPE_SKULL) {
+      // Every light moves: six trace the outline, four the eyes, two the face.
+      orbSkullLightPath(index, elapsedMs, &ring, &phase);
+    } else {
+      phase = glassPhase(elapsedMs, 2500U + (uint32_t)ring * 280U, 0);
+      if (ring == 1)
+        phase = 0U - phase;
+      phase += (uint32_t)(index & 3) * 16384U + (uint32_t)ring * 8192U;
+    }
+    GlassPoint point;
+    orbCurvedShapePoint(&point, shape, ring, phase, elapsedMs, motion,
+                        centerX, centerY, radiusX, radiusY);
+    *x = point.x;
+    *y = point.y;
+    *depth = 65.0f + point.depth / 5.0f;
     return;
   }
   if (shape == ORB_SHAPE_DIAMOND) {
@@ -1092,6 +1232,71 @@ static void drawOrbLogoStroke(float x1, float y1, float x2, float y2,
                                     ORBS_COLOR_PART_TAILS));
 }
 
+static void drawOrbCurvedGuides(OrbShape shape, float extent,
+                                int centerX, int centerY, int radiusX,
+                                int radiusY, uint32_t animationMs,
+                                const OrbMotion *motion, int z, int alpha) {
+  if (shape == ORB_SHAPE_SKULL) {
+    // Moving, fading strokes follow each light instead of a fixed skull guide.
+    for (int index = 0; index < ORB_COUNT; index++) {
+      int ring;
+      uint32_t phase;
+      orbSkullLightPath(index, animationMs, &ring, &phase);
+      GlassPoint a;
+      orbCurvedShapePoint(&a, shape, ring, phase, animationMs, motion,
+                          centerX, centerY, radiusX, radiusY);
+      const uint32_t historyMs = index < 6 ? 650U : index < 10 ? 600U :
+                                 index == 10 ? 650U : 900U;
+      for (int step = 1; step <= 12; step++) {
+        const uint32_t age = (uint32_t)(step * historyMs * extent / 12.0f);
+        const uint32_t sampleMs = animationMs > age ? animationMs - age : 0;
+        orbSkullLightPath(index, sampleMs, &ring, &phase);
+        GlassPoint b;
+        orbCurvedShapePoint(&b, shape, ring, phase, sampleMs, motion,
+                            centerX, centerY, radiusX, radiusY);
+        const float headFade = (13 - step) / 12.0f;
+        const float tailFade = (12 - step) / 12.0f;
+        drawOrbTrailSegment(a.x, a.y, b.x, b.y,
+                            6.0f * headFade, 6.0f * tailFade, z,
+                            orbLightColor(0x40, 0x78, 0xC8,
+                                          (int)(alpha * headFade * 0.45f),
+                                          ORBS_COLOR_PART_TAILS),
+                            orbLightColor(0x40, 0x78, 0xC8,
+                                          (int)(alpha * tailFade * 0.45f),
+                                          ORBS_COLOR_PART_TAILS));
+        drawOrbTrailSegment(a.x, a.y, b.x, b.y,
+                            2.5f * headFade, 2.5f * tailFade, z,
+                            orbLightColor(0xA0, 0xD8, 0xFF,
+                                          (int)(alpha * headFade),
+                                          ORBS_COLOR_PART_TAILS),
+                            orbLightColor(0xA0, 0xD8, 0xFF,
+                                          (int)(alpha * tailFade),
+                                          ORBS_COLOR_PART_TAILS));
+        a = b;
+      }
+    }
+    return;
+  }
+  const int steps = 16;
+  for (int ring = 0; ring < 3; ring++) {
+    GlassPoint a;
+    orbCurvedShapePoint(&a, shape, ring, 0, animationMs, motion,
+                        centerX, centerY, radiusX, radiusY);
+    for (int step = 1; step <= steps; step++) {
+      GlassPoint b;
+      orbCurvedShapePoint(&b, shape, ring, (uint32_t)step * 65536U / steps,
+                          animationMs, motion, centerX, centerY, radiusX, radiusY);
+      int edgeAlpha = (int)(alpha *
+                            (0.55f + (a.depth + b.depth + 254) / 800.0f));
+      if (edgeAlpha > 0x50)
+        edgeAlpha = 0x50;
+      drawOrbTailStroke(a.x, a.y, b.x, b.y, extent * steps - (step - 1),
+                        2.5f, edgeAlpha, z);
+      a = b;
+    }
+  }
+}
+
 static void drawOrbFormationEdges(OrbShape shape, float extent,
                                    int centerX, int centerY, int radiusX,
                                    int radiusY, uint32_t animationMs,
@@ -1117,6 +1322,11 @@ static void drawOrbFormationEdges(OrbShape shape, float extent,
   if (extent <= 0.0f || shape == ORB_SHAPE_PLAYTIME ||
       shape == ORB_SHAPE_SPHERE || shape == ORB_SHAPE_LUNA)
     return;
+  if (shape == ORB_SHAPE_SKULL || shape == ORB_SHAPE_ATOM) {
+    drawOrbCurvedGuides(shape, extent, centerX, centerY, radiusX, radiusY,
+                        animationMs, motion, z, alpha);
+    return;
+  }
   float x[ORB_COUNT], y[ORB_COUNT], depth;
   for (int i = 0; i < ORB_COUNT; i++)
     orbPatternPosition(shape, i, animationMs, motion, centerX, centerY,

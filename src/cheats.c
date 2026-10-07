@@ -1,4 +1,5 @@
 #include "cheats.h"
+#include "ui/language.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,8 +8,8 @@
 
 static int fail(char *error, size_t size, int line, const char *message) {
   if (error && size) {
-    if (line) snprintf(error, size, "Line %d: %s", line, message);
-    else snprintf(error, size, "%s", message);
+    if (line) snprintf(error, size, lunaText("Line %d: %s"), line, lunaText(message));
+    else snprintf(error, size, "%s", lunaText(message));
   }
   return -EINVAL;
 }

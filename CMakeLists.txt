@@ -33,6 +33,7 @@ set(SOURCES
     src/ui/options_menu.c
     src/ui/game_options.c
     src/ui/graphics.c
+    src/ui/language.c
     src/ui/texture_budget.c
     src/ui/handoff.c
     src/ui/ambient.c

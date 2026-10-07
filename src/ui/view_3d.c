@@ -1,5 +1,6 @@
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/view_internal.h"
+#include "ui/language.h"
 #include "ui/case_page.h"
 #include <stdio.h>
 
@@ -391,7 +392,7 @@ static void drawCase(float x, float y, float width, float height,
         z + 6, caseColor(glassMissingCoverDiamondColor(0x60)));
     if (large)
       drawTextWindow(left + 4, bottom - height * 0.25f, right - 4, 0,
-          z + 6, caseColor(HeaderTextColor), ALIGN_HCENTER, resolved ? "NO COVER" : "LOADING");
+          z + 6, caseColor(HeaderTextColor), ALIGN_HCENTER, resolved ? lunaText("NO COVER") : lunaText("LOADING"));
   }
   if (cover != NULL)
     drawCaseShimmer(&g, z + 6, shimmerPhase, large);

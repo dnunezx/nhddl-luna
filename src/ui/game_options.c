@@ -1,5 +1,6 @@
 // LUNA's per-game settings model. The launcher still owns the YAML argument list.
 #include "ui/game_options.h"
+#include "ui/language.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,8 +17,8 @@ int lunaGameVideoModeCount(void) {
 
 const char *lunaGameVideoModeLabel(int mode) {
   if (mode < 0 || mode >= lunaGameVideoModeCount())
-    return "Custom";
-  return videoLabels[mode];
+    return lunaText("Custom");
+  return lunaText(videoLabels[mode]);
 }
 
 static int argumentEnabled(ArgumentList *arguments, const char *name) {
@@ -57,7 +58,7 @@ void lunaGameOptionsRead(LunaGameOptions *options, ArgumentList *arguments) {
   for (int slot = 0; slot < 2; slot++) {
     const char *name = slot == 0 ? "mc0" : "mc1";
     Argument *card = getArgument(arguments, name);
-    const char *label = "Physical card";
+    const char *label = lunaText("Physical card");
     if (card != NULL && !card->isDisabled && card->value != NULL && card->value[0]) {
       const char *slash = strrchr(card->value, '/');
       const char *backslash = strrchr(card->value, '\\');
@@ -219,19 +220,19 @@ int lunaGameOptionsCyclePS2Logo(LunaGameOptions *options,
 
 const char *lunaGameOptionsValue(const LunaGameOptions *options, LunaGameRow row) {
   if (row == LUNA_GAME_NEUTRINO_DISABLE_IGR)
-    return options->neutrinoIgrDisabled ? "On" : "Off";
+    return options->neutrinoIgrDisabled ? lunaText("On") : lunaText("Off");
   if (row >= LUNA_GAME_FAST_READS && row <= LUNA_GAME_BUFFER_OVERRUN)
-    return (options->compat & (1 << (row - LUNA_GAME_FAST_READS))) ? "On" : "Off";
+    return (options->compat & (1 << (row - LUNA_GAME_FAST_READS))) ? lunaText("On") : lunaText("Off");
   if (row == LUNA_GAME_VIDEO_MODE)
     return lunaGameVideoModeLabel(options->videoMode);
   if (row == LUNA_GAME_FIELD_FLIP)
-    return flipLabels[options->fieldFlip];
+    return lunaText(flipLabels[options->fieldFlip]);
   if (row == LUNA_GAME_VMC_SLOT1 || row == LUNA_GAME_VMC_SLOT2)
     return options->vmcSlotLabel[row - LUNA_GAME_VMC_SLOT1];
   if (row == LUNA_GAME_PS2_LOGO)
-    return options->ps2Logo ? "On" : "Off";
+    return options->ps2Logo ? lunaText("On") : lunaText("Off");
   if (row == LUNA_GAME_DEBUG_COLORS)
-    return options->debugColors ? "On" : "Off";
+    return options->debugColors ? lunaText("On") : lunaText("Off");
   return ">";
 }
 

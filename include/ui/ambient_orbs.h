@@ -30,6 +30,21 @@ typedef enum {
   ORBS_COLOR_PART_TAILS
 } AmbientOrbsColorPart;
 
+typedef enum {
+  ORB_SHAPE_DIAMOND,
+  ORB_SHAPE_CUBE,
+  ORB_SHAPE_OCTAHEDRON,
+  ORB_SHAPE_SPHERE,
+  ORB_SHAPE_LUNA,
+  ORB_SHAPE_SKULL,
+  ORB_SHAPE_ATOM,
+  ORB_SHAPE_PLAYTIME,
+  ORB_SHAPE_COUNT
+} OrbShape;
+
+#define ORBS_SHAPES_ALL_MASK ((1U << ORB_SHAPE_PLAYTIME) - 1U)
+void setAmbientOrbsShapes(uint32_t enabledShapes, uint32_t now);
+
 // Ambient Orbs own their default background, placement, and animation.
 void resetAmbientOrbs(uint32_t startMs);
 void observeAmbientOrbsSelection(int selectedTitleIdx, uint32_t now);
@@ -40,7 +55,7 @@ void setAmbientOrbsColor(AmbientOrbsColorPart part, AmbientOrbsColor color);
 // Returns 1 when the Ambient Orbs background was selected and drawn.
 int drawAmbientOrbsBackground(uint32_t now);
 
-// Orbit view cycles its centered cube, octahedron, and LUNA formations.
+// Orbit view cycles enabled centered formations.
 void resetAmbientOrbsOrbit(uint32_t now);
 void drawAmbientOrbsOrbit(int centerX, int centerY, int radiusX,
                           int radiusY, uint32_t now, int trailZ);

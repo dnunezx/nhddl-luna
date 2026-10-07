@@ -1,4 +1,5 @@
 #include "cheat_storage.h"
+#include "ui/language.h"
 #include "devices/devices.h"
 #include "options.h"
 #include <ctype.h>
@@ -81,7 +82,7 @@ int lunaCheatsLoad(Target *target, LunaCheatFile *file, char *path, size_t pathS
   memset(file, 0, sizeof(*file));
   const char *root = metadataRoot(target);
   if (!root || !validID(target->id)) {
-    snprintf(error, size, "Cheats require a valid game title ID and metadata drive");
+    snprintf(error, size, lunaText("Cheats require a valid game title ID and metadata drive"));
     return -EINVAL;
   }
   char folder[PATH_MAX + 1], filename[32];
@@ -93,7 +94,7 @@ int lunaCheatsLoad(Target *target, LunaCheatFile *file, char *path, size_t pathS
   if (n < 0 || (size_t)n >= pathSize) return -ENAMETOOLONG;
   DIR *dir = opendir(folder);
   if (!dir) {
-    snprintf(error, size, "No cheat file found: CHT/%s", filename);
+    snprintf(error, size, lunaText("No cheat file found: CHT/%s"), filename);
     return -ENOENT;
   }
   char match[32] = "";
@@ -102,20 +103,20 @@ int lunaCheatsLoad(Target *target, LunaCheatFile *file, char *path, size_t pathS
     if (strcasecmp(entry->d_name, filename)) continue;
     if (match[0]) {
       closedir(dir);
-      snprintf(error, size, "Multiple .cht files match this title ID");
+      snprintf(error, size, lunaText("Multiple .cht files match this title ID"));
       return -EINVAL;
     }
     strcpy(match, entry->d_name); // Matching filename has the same bounded length.
   }
   closedir(dir);
   if (!match[0]) {
-    snprintf(error, size, "No cheat file found: CHT/%s", filename);
+    snprintf(error, size, lunaText("No cheat file found: CHT/%s"), filename);
     return -ENOENT;
   }
   snprintf(path, pathSize, "%s/%s", folder, match);
   FILE *stream = fopen(path, "rb");
   if (!stream) {
-    snprintf(error, size, "Could not read CHT/%s", match);
+    snprintf(error, size, lunaText("Could not read CHT/%s"), match);
     return -EIO;
   }
   int result = lunaCheatParse(stream, file, error, size);
@@ -177,7 +178,7 @@ int lunaCheatsPrepare(Target *target, const LunaCheatSettings *settings,
   if (!settings) {
     int result = lunaCheatsLoadSettings(target, &saved);
     if (result) {
-      snprintf(error, size, "Could not read cheat settings. Open Cheats and save again.");
+      snprintf(error, size, lunaText("Could not read cheat settings. Open Cheats and save again."));
       return result;
     }
     settings = &saved;

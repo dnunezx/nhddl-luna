@@ -5,6 +5,7 @@
 #include "devices/init.h"
 #include "storage.h"
 #include "ui/graphics.h"
+#include "ui/language.h"
 #include "ui/pad.h"
 #include "ui/view_internal.h"
 #include <dirent.h>
@@ -215,7 +216,7 @@ static void drawBrowserFrameSelected(const char *heading, const char *path,
                 previewColumn - 20);
   if (count == 0)
     drawTextWindow(left + 18, listTop, right, listTop + lineHeight,
-                   0, HeaderTextColor, ALIGN_LEFT, "Nothing to show");
+                   0, HeaderTextColor, ALIGN_LEFT, lunaText("Nothing to show"));
   drawTextWindow(left + 18, listBottom, right, gsGlobal->Height - footerHeight,
                  0, HeaderTextColor, ALIGN_LEFT, status);
   drawPromptBar(left + 18, gsGlobal->Height - footerHeight, right,
@@ -266,7 +267,7 @@ static int fileRow(int index, char *name, size_t nameSize,
   snprintf(name, nameSize, "%s%s", entry->name,
            entry->isDirectory ? "/" : "");
   if (entry->isDirectory)
-    snprintf(detail, detailSize, "Folder");
+    snprintf(detail, detailSize, lunaText("Folder"));
   else if (entry->hasSize)
     snprintf(detail, detailSize, "%llu KB",
              (unsigned long long)((entry->size + 1023) / 1024));
@@ -305,7 +306,7 @@ static int collectRoots(BrowserRoot *roots) {
       // metadata partition is the safe directory view for this backend.
       if (device->metadev != NULL && device->metadev->mountpoint != NULL)
         count = addRoot(roots, count, device->metadev->mountpoint,
-                        "APA metadata");
+                        lunaText("APA metadata"));
       continue;
     }
     switch (device->mode) {
@@ -314,16 +315,16 @@ static int collectRoots(BrowserRoot *roots) {
     case MODE_MX4SIO: kind = "MX4SIO"; break;
     case MODE_ILINK: kind = "iLink"; break;
     case MODE_MMCE: kind = "MMCE"; break;
-    case MODE_UDPFS: kind = "Network"; break;
-    default: kind = "Storage"; break;
+    case MODE_UDPFS: kind = lunaText("Network"); break;
+    default: kind = lunaText("Storage"); break;
     }
     snprintf(label, sizeof(label), "%s", kind);
     count = addRoot(roots, count, device->mountpoint, label);
   }
-  count = addRoot(roots, count, "mc0:/", "Memory card 1");
-  count = addRoot(roots, count, "mc1:/", "Memory card 2");
+  count = addRoot(roots, count, "mc0:/", lunaText("Memory card 1"));
+  count = addRoot(roots, count, "mc1:/", lunaText("Memory card 2"));
 #ifdef LUNA_EMULATOR_BUILD
-  count = addRoot(roots, count, "host:/", "Emulator host");
+  count = addRoot(roots, count, "host:/", lunaText("Emulator host"));
 #endif
   return count;
 }
@@ -475,11 +476,11 @@ static int editFileName(const char *title, char *name, size_t capacity,
     drawTextWindow(left + 8, 351, right - 8, 379, 0, ErrorTextColor,
                    ALIGN_LEFT, message);
     const ButtonPrompt edit[] = {
-        {ICON_DPAD, "Pick"}, {ICON_CROSS, "Type"},
-        {ICON_SQUARE, "Space"}, {ICON_TRIANGLE, "Delete"}};
+        {ICON_DPAD, lunaText("Pick")}, {ICON_CROSS, lunaText("Type")},
+        {ICON_SQUARE, lunaText("Space")}, {ICON_TRIANGLE, lunaText("Delete")}};
     const ButtonPrompt actions[] = {
-        {ICON_R1, "Case"}, {ICON_START, "Save"},
-        {ICON_CIRCLE, "Cancel"}};
+        {ICON_R1, lunaText("Case")}, {ICON_START, lunaText("Save")},
+        {ICON_CIRCLE, lunaText("Cancel")}};
     drawPromptBar(left + 8, 385, right - 8, 411, 0,
                   HeaderTextColor, (PromptBar){NULL, edit, 4});
     drawPromptBar(left + 8, 411, right - 8, gsGlobal->Height - 8, 0,
@@ -490,9 +491,9 @@ static int editFileName(const char *title, char *name, size_t capacity,
       return 0;
     if (input & PAD_START) {
       if (length <= maxLength && (validFileName(name) ||
-          (!name[0] && !strncmp(title, "UDPFS console IP", 16))))
+          (!name[0] && !strncmp(title, lunaText("UDPFS console IP"), 16))))
         return 1;
-      snprintf(message, sizeof(message), "Enter a valid name (%u characters max).",
+      snprintf(message, sizeof(message), lunaText("Enter a valid name (%u characters max)."),
                (unsigned)maxLength);
     } else if (input & PAD_TRIANGLE) {
       if (length > 0)
@@ -502,7 +503,7 @@ static int editFileName(const char *title, char *name, size_t capacity,
       lowerCase = !lowerCase;
     } else if (input & (PAD_CROSS | PAD_SQUARE)) {
       if (length >= maxLength) {
-        snprintf(message, sizeof(message), "Name is at its length limit.");
+        snprintf(message, sizeof(message), lunaText("Name is at its length limit."));
       } else {
         char letter = input & PAD_SQUARE ? ' ' : keys[selected];
         if (lowerCase && letter >= 'A' && letter <= 'Z')
@@ -530,7 +531,7 @@ static void formatBytes(uint64_t bytes, char *text, size_t size) {
              (unsigned long long)((bytes % 1048576) * 100 / 1048576),
              (unsigned long long)bytes);
   else
-    snprintf(text, size, "%llu bytes", (unsigned long long)bytes);
+    snprintf(text, size, lunaText("%llu bytes"), (unsigned long long)bytes);
 }
 
 static int getAvailableSpace(const char *root, uint64_t *bytes) {
@@ -558,7 +559,7 @@ static int getAvailableSpace(const char *root, uint64_t *bytes) {
 static void showFileDetails(const BrowserRoot *roots, int rootCount,
                             const BrowserPane *pane) {
   char path[PATH_MAX + 1];
-  const char *kind = "Drive";
+  const char *kind = lunaText("Drive");
   int root = pane->root < 0 ? pane->rootSelected : pane->root;
   if (root < 0 || root >= rootCount)
     return;
@@ -567,10 +568,10 @@ static void showFileDetails(const BrowserRoot *roots, int rootCount,
     if (!joinPath(path, sizeof(path), pane->path,
                   pane->entries[pane->selected].name))
       return;
-    kind = pane->entries[pane->selected].isDirectory ? "Folder" : "File";
+    kind = pane->entries[pane->selected].isDirectory ? lunaText("Folder") : lunaText("File");
   } else if (pane->root >= 0) {
     snprintf(path, sizeof(path), "%s", pane->path);
-    kind = "Folder";
+    kind = lunaText("Folder");
   }
   struct stat info;
   int hasSize = stat(path, &info) == 0 && !S_ISDIR(info.st_mode);
@@ -580,11 +581,11 @@ static void showFileDetails(const BrowserRoot *roots, int rootCount,
   if (hasSize)
     formatBytes((uint64_t)info.st_size, sizeText, sizeof(sizeText));
   else
-    snprintf(sizeText, sizeof(sizeText), "Not calculated");
+    snprintf(sizeText, sizeof(sizeText), lunaText("Not calculated"));
   if (hasFree)
     formatBytes(freeBytes, freeText, sizeof(freeText));
   else
-    snprintf(freeText, sizeof(freeText), "Unavailable on this drive");
+    snprintf(freeText, sizeof(freeText), lunaText("Unavailable on this drive"));
   int scroll = 0;
   int lines = ((int)strlen(path) + 41) / 42;
   while (1) {
@@ -593,19 +594,19 @@ static void showFileDetails(const BrowserRoot *roots, int rootCount,
     gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
     drawBrowserSheet(1);
     drawTextWindow(left, 22, right, 50, 0, HeaderTextColor,
-                   ALIGN_HCENTER, "File details");
+                   ALIGN_HCENTER, lunaText("File details"));
     drawTextWindow(left + 8, 68, right - 8, 94, 0, FontMainColor,
                    ALIGN_LEFT, kind);
     drawTextWindow(left + 8, 102, right - 8, 128, 0, HeaderTextColor,
-                   ALIGN_LEFT, "SIZE");
+                   ALIGN_LEFT, lunaText("SIZE"));
     drawTextWindow(left + 8, 129, right - 8, 155, 0, FontMainColor,
                    ALIGN_LEFT, sizeText);
     drawTextWindow(left + 8, 163, right - 8, 189, 0, HeaderTextColor,
-                   ALIGN_LEFT, "AVAILABLE SPACE");
+                   ALIGN_LEFT, lunaText("AVAILABLE SPACE"));
     drawTextWindow(left + 8, 190, right - 8, 216, 0, FontMainColor,
                    ALIGN_LEFT, freeText);
     drawTextWindow(left + 8, 224, right - 8, 250, 0, HeaderTextColor,
-                   ALIGN_LEFT, "FULL PATH");
+                   ALIGN_LEFT, lunaText("FULL PATH"));
     for (int row = 0; row < 5 && scroll + row < lines; row++) {
       char segment[43];
       int offset = (scroll + row) * 42;
@@ -614,7 +615,7 @@ static void showFileDetails(const BrowserRoot *roots, int rootCount,
                      279 + row * 25, 0, FontMainColor, ALIGN_LEFT, segment);
     }
     const ButtonPrompt help[] = {
-        {ICON_DPAD, "Scroll path"}, {ICON_CIRCLE, "Back"}};
+        {ICON_DPAD, lunaText("Scroll path")}, {ICON_CIRCLE, lunaText("Back")}};
     drawPromptBar(left + 8, 391, right - 8, gsGlobal->Height - 8, 0,
                   HeaderTextColor, (PromptBar){NULL, help, 2});
     presentBrowserFrame();
@@ -644,10 +645,10 @@ static int fileActionRow(int index, char *name, size_t nameSize,
                          char *detail, size_t detailSize,
                          CardArtType *cardArt, void *context) {
   const FileActionMenu *menu = context;
-  const char *label = menu->actions[index] == FILE_ACTION_DETAILS ? "Details" :
-                      menu->actions[index] == FILE_ACTION_RENAME ? "Rename" :
-                      menu->actions[index] == FILE_ACTION_NEW_FOLDER ? "New folder" :
-                      "Move marked items";
+  const char *label = menu->actions[index] == FILE_ACTION_DETAILS ? lunaText("Details") :
+                      menu->actions[index] == FILE_ACTION_RENAME ? lunaText("Rename") :
+                      menu->actions[index] == FILE_ACTION_NEW_FOLDER ? lunaText("New folder") :
+                      lunaText("Move marked items");
   snprintf(name, nameSize, "%s", label);
   detail[0] = '\0';
   *cardArt = CARD_ART_NONE;
@@ -666,8 +667,8 @@ static int chooseFileAction(const BrowserPane *pane, const CopyQueue *queue) {
     menu.actions[menu.count++] = FILE_ACTION_MOVE;
   int selected = 0;
   while (1) {
-    drawBrowserFrame("File Explorer", "Actions", "Choose an action.",
-                     PROMPT_TWO(ICON_CROSS, "Select", ICON_CIRCLE, "Back"),
+    drawBrowserFrame(lunaText("File Explorer"), lunaText("Actions"), lunaText("Choose an action."),
+                     PROMPT_TWO(ICON_CROSS, lunaText("Select"), ICON_CIRCLE, lunaText("Back")),
                      menu.count, selected, 0, 0, fileActionRow, &menu);
     int input = waitForInput(-1);
     if (input & (PAD_CIRCLE | PAD_TRIANGLE))
@@ -708,27 +709,27 @@ static void renamePaneEntry(BrowserPane *pane, const BrowserRoot *roots,
   char name[PATH_MAX + 1];
   const char *oldName = pane->entries[pane->selected].name;
   if (!joinPath(source, sizeof(source), pane->path, oldName)) {
-    snprintf(status, statusSize, "The current path is too long.");
+    snprintf(status, statusSize, lunaText("The current path is too long."));
     return;
   }
   snprintf(name, sizeof(name), "%s", oldName);
   size_t limit = !strncmp(roots[pane->root].path, "mc", 2) ? 31 :
                  FILE_MANAGER_NAME_MAX;
-  if (!editFileName("Rename", name, sizeof(name), limit))
+  if (!editFileName(lunaText("Rename"), name, sizeof(name), limit))
     return;
   if (!strcmp(name, oldName))
     return;
   if (!joinPath(destination, sizeof(destination), pane->path, name)) {
-    snprintf(status, statusSize, "The new path is too long.");
+    snprintf(status, statusSize, lunaText("The new path is too long."));
     return;
   }
   struct stat info;
   if (stat(destination, &info) == 0) {
-    snprintf(status, statusSize, "That name already exists.");
+    snprintf(status, statusSize, lunaText("That name already exists."));
     return;
   }
   if (rename(source, destination) != 0) {
-    snprintf(status, statusSize, "Rename failed on this drive.");
+    snprintf(status, statusSize, lunaText("Rename failed on this drive."));
     return;
   }
   int cleared = 0;
@@ -743,10 +744,10 @@ static void renamePaneEntry(BrowserPane *pane, const BrowserRoot *roots,
   }
   selectPaneEntry(pane, name);
   if (cleared)
-    snprintf(status, statusSize, "Renamed to %s; %d affected marks cleared.",
+    snprintf(status, statusSize, lunaText("Renamed to %s; %d affected marks cleared."),
              name, cleared);
   else
-    snprintf(status, statusSize, "Renamed to %s", name);
+    snprintf(status, statusSize, lunaText("Renamed to %s"), name);
 }
 
 static void createPaneFolder(BrowserPane *pane, const BrowserRoot *roots,
@@ -757,23 +758,23 @@ static void createPaneFolder(BrowserPane *pane, const BrowserRoot *roots,
   char path[PATH_MAX + 1];
   size_t limit = !strncmp(roots[pane->root].path, "mc", 2) ? 31 :
                  FILE_MANAGER_NAME_MAX;
-  if (!editFileName("New folder", name, sizeof(name), limit))
+  if (!editFileName(lunaText("New folder"), name, sizeof(name), limit))
     return;
   if (!joinPath(path, sizeof(path), pane->path, name)) {
-    snprintf(status, statusSize, "The folder path is too long.");
+    snprintf(status, statusSize, lunaText("The folder path is too long."));
     return;
   }
   struct stat info;
   if (stat(path, &info) == 0) {
-    snprintf(status, statusSize, "That name already exists.");
+    snprintf(status, statusSize, lunaText("That name already exists."));
     return;
   }
   if (mkdir(path, 0777) != 0) {
-    snprintf(status, statusSize, "Could not create folder on this drive.");
+    snprintf(status, statusSize, lunaText("Could not create folder on this drive."));
     return;
   }
   selectPaneEntry(pane, name);
-  snprintf(status, statusSize, "Created folder %s", name);
+  snprintf(status, statusSize, lunaText("Created folder %s"), name);
 }
 
 static void drawFileManagerPane(int x1, int y1, int x2, int y2, int active) {
@@ -849,9 +850,9 @@ static void drawFileManagerFooter(int left, int right, PromptBar footer) {
     return;
   }
   const ButtonPrompt controls[] = {
-      {ICON_DPAD, "Width"}, {ICON_CROSS, "Open"},
-      {ICON_TRIANGLE, "Up"}, {ICON_SQUARE, "Mark"},
-      {ICON_START, "Copy"}, {ICON_R2, "More"}};
+      {ICON_DPAD, lunaText("Width")}, {ICON_CROSS, lunaText("Open")},
+      {ICON_TRIANGLE, lunaText("Up")}, {ICON_SQUARE, lunaText("Mark")},
+      {ICON_START, lunaText("Copy")}, {ICON_R2, lunaText("More")}};
   drawPromptBar(left + 8, top + 6, right - 8, bottom, 0,
                 HeaderTextColor, (PromptBar){NULL, controls, 6});
 }
@@ -874,7 +875,7 @@ static void drawFileManagerFrame(const BrowserRoot *roots, int rootCount,
   gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
   drawBrowserSheet(1);
   drawTextWindow(left, headerHeight - lineHeight, right, headerHeight + 2,
-                 0, HeaderTextColor, ALIGN_HCENTER, "File Explorer");
+                 0, HeaderTextColor, ALIGN_HCENTER, lunaText("File Explorer"));
   for (int side = 0; side < 2; side++) {
     const BrowserPane *pane = &panes[side];
     int paneLeft = side == 0 ? left : left + leftPaneWidth + 12;
@@ -888,15 +889,15 @@ static void drawFileManagerFrame(const BrowserRoot *roots, int rootCount,
     drawFileManagerPane(paneLeft, 51, paneRight, listBottom + 2,
                         side == active);
     char heading[48];
-    const char *sideName = side == 0 ? "LEFT" : "RIGHT";
+    const char *sideName = side == 0 ? lunaText("LEFT") : lunaText("RIGHT");
     if (queue->count > 0 && queue->sourceSide == side) {
       if (compact)
-        snprintf(heading, sizeof(heading), "%s SRC", sideName);
+        snprintf(heading, sizeof(heading), lunaText("%s SRC"), sideName);
       else
-        snprintf(heading, sizeof(heading), "%s SOURCE (%d)",
+        snprintf(heading, sizeof(heading), lunaText("%s SOURCE (%d)"),
                  sideName, queue->count);
     } else if (queue->count > 0)
-      snprintf(heading, sizeof(heading), compact ? "%s DST" : "%s DESTINATION",
+      snprintf(heading, sizeof(heading), compact ? lunaText("%s DST") : lunaText("%s DESTINATION"),
                sideName);
     else
       snprintf(heading, sizeof(heading), "%s", sideName);
@@ -905,7 +906,7 @@ static void drawFileManagerFrame(const BrowserRoot *roots, int rootCount,
                    ALIGN_LEFT, heading);
     drawTextWindow(x1, 79, x2, 79 + lineHeight, 0,
                    glassPresetColor(0x86, 0xA9, 0xBC, 0x60), ALIGN_LEFT,
-                   pane->root < 0 ? "DRIVES" : compact ? "FOLDER" : pane->path);
+                   pane->root < 0 ? lunaText("DRIVES") : compact ? lunaText("FOLDER") : pane->path);
     for (int index = first; index < total && index < first + visible; index++) {
       char name[PATH_MAX + 16];
       char detail[32] = "";
@@ -915,7 +916,7 @@ static void drawFileManagerFrame(const BrowserRoot *roots, int rootCount,
       if (isRoot) {
         const char *label = roots[index].label;
         if (compact && !strcmp(label, "Emulator host"))
-          label = "Host";
+          label = lunaText("Host");
         else if (compact && !strcmp(label, "Memory card 1"))
           label = "MC 1";
         else if (compact && !strcmp(label, "Memory card 2"))
@@ -961,7 +962,7 @@ static void drawFileManagerFrame(const BrowserRoot *roots, int rootCount,
     if (total == 0)
       drawTextWindow(x1 + 8, listTop, x2, listTop + lineHeight, 0,
                      HeaderTextColor, ALIGN_LEFT,
-                     compact ? "Empty" : "Nothing to show");
+                     compact ? lunaText("Empty") : lunaText("Nothing to show"));
   }
   if (progressPercent >= 0) {
     int filled = (right - left - 16) * progressPercent / 100;
@@ -1026,7 +1027,7 @@ static void showCopyProgress(CopyProgress *progress, const char *name,
       progress->bytes * 10000 / ((uint64_t)elapsed * 1048576) : 0;
   uint64_t secondsLeft = progress->bytes && progress->totalBytes > progress->bytes ?
       (progress->totalBytes - progress->bytes) * elapsed / progress->bytes / 1000 : 0;
-  snprintf(status, sizeof(status), "%d/%d items  %d%%  %llu/%llu MiB  %llu.%llu MiB/s",
+  snprintf(status, sizeof(status), lunaText("%d/%d items  %d%%  %llu/%llu MiB  %llu.%llu MiB/s"),
            progress->itemIndex, progress->itemCount, percent,
            (unsigned long long)(progress->bytes / 1048576),
            (unsigned long long)((progress->totalBytes + 1048575) / 1048576),
@@ -1038,7 +1039,7 @@ static void showCopyProgress(CopyProgress *progress, const char *name,
   drawFileManagerFrame(progress->roots, progress->rootCount, progress->panes,
                        progress->queue, progress->active,
                        progress->expandedPane, status,
-                       PROMPT_NOTE(footer, ICON_CIRCLE, "Cancel"),
+                       PROMPT_NOTE(footer, ICON_CIRCLE, lunaText("Cancel")),
                        percent);
 }
 
@@ -1085,13 +1086,13 @@ static int measureTree(const char *source, int depth, CopyProgress *progress) {
   uint32_t now = uiNowMs();
   if (now - progress->lastDrawMs >= 300) {
     char status[120];
-    snprintf(status, sizeof(status), "Measuring queue: %d files, %llu MiB",
+    snprintf(status, sizeof(status), lunaText("Measuring queue: %d files, %llu MiB"),
              progress->totalFiles,
              (unsigned long long)(progress->scannedBytes / 1048576));
     drawFileManagerFrame(progress->roots, progress->rootCount, progress->panes,
                          progress->queue, progress->active,
                          progress->expandedPane, status,
-                         PROMPT_ONE(ICON_CIRCLE, "Cancel measurement"), -1);
+                         PROMPT_ONE(ICON_CIRCLE, lunaText("Cancel measurement")), -1);
     progress->lastDrawMs = now;
   }
   return 0;
@@ -1341,8 +1342,8 @@ static int conflictRow(int index, char *name, size_t nameSize,
                         char *detail, size_t detailSize,
                         CardArtType *cardArt, void *context) {
   (void)context;
-  snprintf(name, nameSize, "%s", index == 0 ? "Skip" :
-           index == 1 ? "Keep Both" : "Replace");
+  snprintf(name, nameSize, "%s", index == 0 ? lunaText("Skip") :
+           index == 1 ? lunaText("Keep Both") : lunaText("Replace"));
   detail[0] = '\0';
   *cardArt = CARD_ART_NONE;
   (void)detailSize;
@@ -1355,7 +1356,7 @@ static int replaceConfirmRow(int index, char *name, size_t nameSize,
   (void)index;
   (void)context;
   (void)detailSize;
-  snprintf(name, nameSize, "Replace existing item");
+  snprintf(name, nameSize, lunaText("Replace existing item"));
   detail[0] = '\0';
   *cardArt = CARD_ART_NONE;
   return 1;
@@ -1366,9 +1367,9 @@ static int chooseConflict(const char *name, int samePath,
   int selected = 0;
   int count = samePath ? 2 : 3;
   while (1) {
-    drawBrowserFrame("Name conflict", name,
-                     "The destination already contains this name.",
-                     PROMPT_TWO(ICON_CROSS, "Choose", ICON_CIRCLE, "Cancel"),
+    drawBrowserFrame(lunaText("Name conflict"), name,
+                     lunaText("The destination already contains this name."),
+                     PROMPT_TWO(ICON_CROSS, lunaText("Choose"), ICON_CIRCLE, lunaText("Cancel")),
                      count, selected, 0, 0, conflictRow, NULL);
     int input = waitForInput(-1);
     if (input & (PAD_CIRCLE | PAD_TRIANGLE))
@@ -1380,11 +1381,11 @@ static int chooseConflict(const char *name, int samePath,
     else if (input & PAD_CROSS) {
       if (selected != 2)
         return selected;
-      drawBrowserFrame("Confirm Replace", name,
+      drawBrowserFrame(lunaText("Confirm Replace"), name,
                        existingDirectory ?
-                       "The existing folder and its contents will be removed." :
-                       "The existing file will be removed.",
-                       PROMPT_TWO(ICON_CROSS, "Replace", ICON_CIRCLE, "Cancel"),
+                       lunaText("The existing folder and its contents will be removed.") :
+                       lunaText("The existing file will be removed."),
+                       PROMPT_TWO(ICON_CROSS, lunaText("Replace"), ICON_CIRCLE, lunaText("Cancel")),
                        1, 0, 0, 0, replaceConfirmRow, NULL);
       return (waitForInput(PAD_CROSS | PAD_CIRCLE | PAD_TRIANGLE) & PAD_CROSS) ?
              2 : -1;
@@ -1415,31 +1416,31 @@ static void runCopyQueue(const BrowserRoot *roots, int rootCount,
                          int active, int expandedPane, int move,
                          char *status, size_t statusSize) {
   if (queue->count == 0) {
-    snprintf(status, statusSize, "Mark items before copying.");
+    snprintf(status, statusSize, lunaText("Mark items before copying."));
     return;
   }
   BrowserPane *destinationPane = &panes[1 - queue->sourceSide];
   int sourceSide = queue->sourceSide;
   if (destinationPane->root < 0) {
-    snprintf(status, statusSize, "Open a destination folder in the other pane.");
+    snprintf(status, statusSize, lunaText("Open a destination folder in the other pane."));
     return;
   }
   for (int index = 0; index < queue->count; index++) {
     const CopyItem *item = &queue->items[index];
     if (item->isDirectory && pathWithin(destinationPane->path, item->path)) {
-      snprintf(status, statusSize, "Destination is inside a marked folder.");
+      snprintf(status, statusSize, lunaText("Destination is inside a marked folder."));
       return;
     }
   }
-  snprintf(status, statusSize, "%s %d marked items to %s?",
-           move ? "Move" : "Copy", queue->count, destinationPane->path);
+  snprintf(status, statusSize, lunaText("%s %d marked items to %s?"),
+           move ? lunaText("Move") : lunaText("Copy"), queue->count, destinationPane->path);
   drawFileManagerFrame(roots, rootCount, panes, queue, active, expandedPane,
                        status,
-                       PROMPT_TWO(ICON_CROSS, move ? "Confirm move" :
-                                  "Confirm copy", ICON_CIRCLE, "Cancel"), -1);
+                       PROMPT_TWO(ICON_CROSS, move ? lunaText("Confirm move") :
+                                  lunaText("Confirm copy"), ICON_CIRCLE, lunaText("Cancel")), -1);
   if (!(waitForInput(PAD_CROSS | PAD_CIRCLE | PAD_TRIANGLE) & PAD_CROSS)) {
-    snprintf(status, statusSize, "Queue kept. %s cancelled.",
-             move ? "Move" : "Copy");
+    snprintf(status, statusSize, lunaText("Queue kept. %s cancelled."),
+             move ? lunaText("Move") : lunaText("Copy"));
     return;
   }
 
@@ -1453,15 +1454,15 @@ static void runCopyQueue(const BrowserRoot *roots, int rootCount,
   progress.itemCount = queue->count;
   progress.lastDrawMs = uiNowMs();
   drawFileManagerFrame(roots, rootCount, panes, queue, active, expandedPane,
-                       "Measuring selected files...",
-                       PROMPT_ONE(ICON_CIRCLE, "Cancel measurement"),
+                       lunaText("Measuring selected files..."),
+                       PROMPT_ONE(ICON_CIRCLE, lunaText("Cancel measurement")),
                        -1);
   for (int index = 0; index < queue->count; index++) {
     uint64_t before = progress.scannedBytes;
     if (measureTree(queue->items[index].path, 0, &progress) != 0) {
       snprintf(status, statusSize, progress.cancelled ?
-               "Measurement cancelled. Queue kept." :
-               "Cannot read a queued item. Queue kept.");
+               lunaText("Measurement cancelled. Queue kept.") :
+               lunaText("Cannot read a queued item. Queue kept."));
       return;
     }
     queue->items[index].measuredBytes = progress.scannedBytes - before;
@@ -1479,14 +1480,14 @@ static void runCopyQueue(const BrowserRoot *roots, int rootCount,
     struct stat info;
     if (!joinPath(destination, sizeof(destination), destinationPane->path,
                   name)) {
-      snprintf(status, statusSize, "%d completed; destination path too long.",
+      snprintf(status, statusSize, lunaText("%d completed; destination path too long."),
                completed);
       stopped = 1;
       break;
     }
     if (item->isDirectory &&
         pathWithin(destinationPane->path, item->path)) {
-      snprintf(status, statusSize, "%d completed; choose another destination.",
+      snprintf(status, statusSize, lunaText("%d completed; choose another destination."),
                completed);
       stopped = 1;
       break;
@@ -1496,7 +1497,7 @@ static void runCopyQueue(const BrowserRoot *roots, int rootCount,
     if (stat(destination, &info) == 0) {
       int choice = chooseConflict(name, samePath, S_ISDIR(info.st_mode));
       if (choice < 0) {
-        snprintf(status, statusSize, "%d completed; queue kept.", completed);
+        snprintf(status, statusSize, lunaText("%d completed; queue kept."), completed);
         stopped = 1;
         break;
       }
@@ -1509,19 +1510,19 @@ static void runCopyQueue(const BrowserRoot *roots, int rootCount,
       if (choice == 1 &&
           !findKeepBothPath(destinationPane->path, name, item->isDirectory,
                             destination, sizeof(destination))) {
-        snprintf(status, statusSize, "No available name for Keep Both.");
+        snprintf(status, statusSize, lunaText("No available name for Keep Both."));
         stopped = 1;
         break;
       }
       replace = choice == 2;
     } else if (samePath) {
-      snprintf(status, statusSize, "Cannot use the source as its destination.");
+      snprintf(status, statusSize, lunaText("Cannot use the source as its destination."));
       stopped = 1;
       break;
     }
     if (!findCopyStaging(destinationPane->path, destination, staging,
                          sizeof(staging))) {
-      snprintf(status, statusSize, "No temporary name on destination drive.");
+      snprintf(status, statusSize, lunaText("No temporary name on destination drive."));
       stopped = 1;
       break;
     }
@@ -1531,8 +1532,8 @@ static void runCopyQueue(const BrowserRoot *roots, int rootCount,
     int verificationFailed = 0;
     if (result == 0) {
       drawFileManagerFrame(roots, rootCount, panes, queue, active,
-                           expandedPane, "Verifying copied data...",
-                           PROMPT_ONE(ICON_CIRCLE, "Cancel verification"), -1);
+                           expandedPane, lunaText("Verifying copied data..."),
+                           PROMPT_ONE(ICON_CIRCLE, lunaText("Cancel verification")), -1);
       result = verifyTree(item->path, staging, 0, &progress);
       verificationFailed = result != 0;
     }
@@ -1543,13 +1544,13 @@ static void runCopyQueue(const BrowserRoot *roots, int rootCount,
       int cleanup = stat(staging, &info) == 0 ? removeCopyTree(staging, 0) : 0;
       if (result == -2)
         snprintf(status, statusSize,
-                 "Replace rollback failed; check LUNAxx.BAK and LUNAxx.TMP.");
+                 lunaText("Replace rollback failed; check LUNAxx.BAK and LUNAxx.TMP."));
       else if (cleanup != 0)
-        snprintf(status, statusSize, "Check LUNAxx.TMP; queue kept.");
+        snprintf(status, statusSize, lunaText("Check LUNAxx.TMP; queue kept."));
       else
-        snprintf(status, statusSize, "%d completed; %s. Queue kept.",
-                 completed, progress.cancelled ? "cancelled" :
-                 verificationFailed ? "verification failed" : "copy failed");
+        snprintf(status, statusSize, lunaText("%d completed; %s. Queue kept."),
+                 completed, progress.cancelled ? lunaText("cancelled") :
+                 verificationFailed ? lunaText("verification failed") : lunaText("copy failed"));
       stopped = 1;
       break;
     }
@@ -1562,14 +1563,14 @@ static void runCopyQueue(const BrowserRoot *roots, int rootCount,
   }
   if (!stopped && warnings > 0)
     snprintf(status, statusSize,
-             "%d completed; inspect source or LUNAxx.BAK for %d warnings.",
+             lunaText("%d completed; inspect source or LUNAxx.BAK for %d warnings."),
              completed, warnings);
   else if (!stopped && skipped > 0)
-    snprintf(status, statusSize, "%s %d; skipped %d (still marked).",
-             move ? "Moved" : "Copied", completed, skipped);
+    snprintf(status, statusSize, lunaText("%s %d; skipped %d (still marked)."),
+             move ? lunaText("Moved") : lunaText("Copied"), completed, skipped);
   else if (!stopped)
-    snprintf(status, statusSize, "%s %d items (%llu MiB, %d files).",
-             move ? "Moved" : "Copied", completed,
+    snprintf(status, statusSize, lunaText("%s %d items (%llu MiB, %d files)."),
+             move ? lunaText("Moved") : lunaText("Copied"), completed,
              (unsigned long long)(progress.bytes / 1048576), progress.files);
   if (completed > 0) {
     loadDirectory(destinationPane->path, destinationPane->entries,
@@ -1598,7 +1599,8 @@ static void uiFileManagerLoop(void) {
   queue.sourceSide = -1;
   int active = 0;
   int expandedPane = -1;
-  char status[160] = "Open a source and destination drive to copy files.";
+  char status[160];
+  snprintf(status, sizeof(status), "%s", lunaText("Open a source and destination drive to copy files."));
   while (1) {
     BrowserPane *pane = &panes[active];
     drawFileManagerFrame(roots, rootCount, panes, &queue, active,
@@ -1653,17 +1655,17 @@ static void uiFileManagerLoop(void) {
           pane->selected = 0;
           status[0] = '\0';
         } else {
-          snprintf(status, sizeof(status), "Could not open this device.");
+          snprintf(status, sizeof(status), lunaText("Could not open this device."));
         }
       } else if (pane->root >= 0 && pane->count > 0 &&
                  pane->entries[pane->selected].isDirectory) {
         char child[PATH_MAX + 1];
         if (!joinPath(child, sizeof(child), pane->path,
                       pane->entries[pane->selected].name)) {
-          snprintf(status, sizeof(status), "Folder path is too long.");
+          snprintf(status, sizeof(status), lunaText("Folder path is too long."));
         } else if (!loadDirectory(child, pane->entries, &pane->count,
                                   &pane->truncated)) {
-          snprintf(status, sizeof(status), "Could not open this folder.");
+          snprintf(status, sizeof(status), lunaText("Could not open this folder."));
         } else {
           snprintf(pane->path, sizeof(pane->path), "%s", child);
           pane->selected = 0;
@@ -1673,26 +1675,26 @@ static void uiFileManagerLoop(void) {
     } else if (input & PAD_SQUARE) {
       char path[PATH_MAX + 1];
       if (pane->root < 0 || pane->count == 0) {
-        snprintf(status, sizeof(status), "Open a folder and select an item to mark.");
+        snprintf(status, sizeof(status), lunaText("Open a folder and select an item to mark."));
         continue;
       }
       if (queue.count > 0 && queue.sourceSide != active) {
-        snprintf(status, sizeof(status), "Mark on the source side or clear the queue with Select.");
+        snprintf(status, sizeof(status), lunaText("Mark on the source side or clear the queue with Select."));
         continue;
       }
       if (!joinPath(path, sizeof(path), pane->path,
                     pane->entries[pane->selected].name)) {
-        snprintf(status, sizeof(status), "Item path is too long.");
+        snprintf(status, sizeof(status), lunaText("Item path is too long."));
         continue;
       }
       int marked = queueFind(&queue, path);
       if (marked >= 0) {
         queueRemove(&queue, marked);
-        snprintf(status, sizeof(status), "%d items queued.", queue.count);
+        snprintf(status, sizeof(status), lunaText("%d items queued."), queue.count);
         continue;
       }
       if (queue.count >= COPY_MAX_QUEUE) {
-        snprintf(status, sizeof(status), "Queue is full (128 items).");
+        snprintf(status, sizeof(status), lunaText("Queue is full (128 items)."));
         continue;
       }
       int overlaps = 0;
@@ -1701,12 +1703,12 @@ static void uiFileManagerLoop(void) {
             pathWithin(queue.items[index].path, path))
           overlaps = 1;
       if (overlaps) {
-        snprintf(status, sizeof(status), "A parent or child is already marked.");
+        snprintf(status, sizeof(status), lunaText("A parent or child is already marked."));
         continue;
       }
       queue.items[queue.count].path = strdup(path);
       if (queue.items[queue.count].path == NULL) {
-        snprintf(status, sizeof(status), "Not enough memory to mark this item.");
+        snprintf(status, sizeof(status), lunaText("Not enough memory to mark this item."));
         continue;
       }
       queue.items[queue.count].isDirectory =
@@ -1714,21 +1716,21 @@ static void uiFileManagerLoop(void) {
       queue.items[queue.count].measuredBytes = 0;
       queue.count++;
       queue.sourceSide = active;
-      snprintf(status, sizeof(status), "%d items queued. Open the destination, then Start.",
+      snprintf(status, sizeof(status), lunaText("%d items queued. Open the destination, then Start."),
                queue.count);
     } else if (input & PAD_SELECT) {
       if (queue.count == 0)
         continue;
-      snprintf(status, sizeof(status), "Clear all %d marked items?", queue.count);
+      snprintf(status, sizeof(status), lunaText("Clear all %d marked items?"), queue.count);
       drawFileManagerFrame(roots, rootCount, panes, &queue, active,
                            expandedPane, status,
-                           PROMPT_TWO(ICON_CROSS, "Clear queue",
-                                      ICON_CIRCLE, "Keep queue"), -1);
+                           PROMPT_TWO(ICON_CROSS, lunaText("Clear queue"),
+                                      ICON_CIRCLE, lunaText("Keep queue")), -1);
       if (waitForInput(PAD_CROSS | PAD_CIRCLE | PAD_TRIANGLE) & PAD_CROSS) {
         queueClear(&queue);
-        snprintf(status, sizeof(status), "Queue cleared.");
+        snprintf(status, sizeof(status), lunaText("Queue cleared."));
       } else {
-        snprintf(status, sizeof(status), "Queue kept.");
+        snprintf(status, sizeof(status), lunaText("Queue kept."));
       }
     } else if (input & PAD_START) {
       runCopyQueue(roots, rootCount, panes, &queue, active, expandedPane,
@@ -1759,7 +1761,7 @@ static int vmcRow(int index, char *name, size_t nameSize,
                   char *detail, size_t detailSize, CardArtType *cardArt,
                   void *context) {
   if (index == 0) {
-    snprintf(name, nameSize, "Create new card");
+    snprintf(name, nameSize, lunaText("Create new card"));
     snprintf(detail, detailSize, "8 MB");
     *cardArt = CARD_ART_VIRTUAL;
     return 1;
@@ -1805,9 +1807,9 @@ typedef struct {
 static void drawVMCProgress(int percent, void *context) {
   const VMCProgress *state = context;
   char status[80];
-  snprintf(status, sizeof(status), "Creating formatted card: %d%%", percent);
-  drawBrowserFrame("Virtual Memory Cards", state->directory, status,
-                   PROMPT_TEXT("Please wait until creation finishes"), 0, 0, 0, 0,
+  snprintf(status, sizeof(status), lunaText("Creating formatted card: %d%%"), percent);
+  drawBrowserFrame(lunaText("Virtual Memory Cards"), state->directory, status,
+                   PROMPT_TEXT(lunaText("Please wait until creation finishes")), 0, 0, 0, 0,
                    vmcRow, NULL);
 }
 
@@ -1843,14 +1845,15 @@ static void uiVMCManagerLoop(void) {
   BrowserSelector driveSelector = {.selected = -1};
   BrowserSelector cardSelector = {.selected = -1};
   char directory[PATH_MAX + 1] = "";
-  char status[96] = "Choose the drive that holds your games.";
+  char status[160];
+  snprintf(status, sizeof(status), "%s", lunaText("Choose the drive that holds your games."));
   for (int index = 0; index < MAX_DEVICES; index++) {
     struct DeviceMapEntry *device = &deviceModeMap[index];
     if (device->mode == MODE_NONE || device->mountpoint == NULL)
       break;
     const char *root = storageVMCRoot(device);
     if (root) {
-      const char *label = "Local storage";
+      const char *label = lunaText("Local storage");
       for (int source = 0; source < STORAGE_SOURCE_COUNT; source++)
         if (storageSourceMode(source) == device->mode)
           label = storageSourceName(source);
@@ -1859,16 +1862,16 @@ static void uiVMCManagerLoop(void) {
   }
   while (1) {
     if (activeRoot < 0)
-      drawBrowserFrameSelected("Virtual Memory Cards", "Choose a drive",
+      drawBrowserFrameSelected(lunaText("Virtual Memory Cards"), lunaText("Choose a drive"),
                        rootCount ? status :
-                                                    "No supported local drives found.",
-                       PROMPT_TWO(ICON_CROSS, "Open", ICON_TRIANGLE, "Back"),
+                                                    lunaText("No supported local drives found."),
+                       PROMPT_TWO(ICON_CROSS, lunaText("Open"), ICON_TRIANGLE, lunaText("Back")),
                        rootCount, rootSelected, browserFirstRow(rootSelected), 0,
                        rootRow, roots, &driveSelector);
     else
-      drawBrowserFrameSelected("Virtual Memory Cards", directory, status,
-                       PROMPT_TWO(ICON_CROSS, "Create/View",
-                                  ICON_TRIANGLE, "Back"),
+      drawBrowserFrameSelected(lunaText("Virtual Memory Cards"), directory, status,
+                       PROMPT_TWO(ICON_CROSS, lunaText("Create/View"),
+                                  ICON_TRIANGLE, lunaText("Back")),
                        count + 1, selected, browserFirstRow(selected), 128,
                        vmcRow, entries, &cardSelector);
     int input = readInput();
@@ -1878,7 +1881,7 @@ static void uiVMCManagerLoop(void) {
       clearEntries(entries, count);
       count = 0;
       activeRoot = -1;
-      snprintf(status, sizeof(status), "Choose the drive that holds your games.");
+      snprintf(status, sizeof(status), lunaText("Choose the drive that holds your games."));
     } else if (input & PAD_UP) {
       int total = activeRoot < 0 ? rootCount : count + 1;
       int *focus = activeRoot < 0 ? &rootSelected : &selected;
@@ -1893,26 +1896,26 @@ static void uiVMCManagerLoop(void) {
       if (activeRoot < 0 && rootCount > 0) {
         if (!joinPath(directory, sizeof(directory), roots[rootSelected].path,
                       "VMC")) {
-          snprintf(status, sizeof(status), "Drive path is too long.");
+          snprintf(status, sizeof(status), lunaText("Drive path is too long."));
           continue;
         }
         activeRoot = rootSelected;
         selected = 0;
         cardSelector.selected = -1;
         loadVMCCards(directory, entries, &count);
-        snprintf(status, sizeof(status), "Create a card, then assign it in pregame settings.");
+        snprintf(status, sizeof(status), lunaText("Create a card, then assign it in pregame settings."));
       } else if (activeRoot >= 0 && selected == 0) {
         char created[PATH_MAX + 1];
         if (createNextVMC(directory, created, sizeof(created))) {
           clearEntries(entries, count);
           loadVMCCards(directory, entries, &count);
           selected = 0;
-          snprintf(status, sizeof(status), "Created %s", strrchr(created, '/') + 1);
+          snprintf(status, sizeof(status), lunaText("Created %s"), strrchr(created, '/') + 1);
         } else {
-          snprintf(status, sizeof(status), "Could not create card. Check free space and drive.");
+          snprintf(status, sizeof(status), lunaText("Could not create card. Check free space and drive."));
         }
       } else if (activeRoot >= 0) {
-        snprintf(status, sizeof(status), "Assign this card in a game's VMC slot options.");
+        snprintf(status, sizeof(status), lunaText("Assign this card in a game's VMC slot options."));
       }
     }
   }
@@ -1931,28 +1934,28 @@ static int unlockFileExplorer(void) {
     const int top = gsGlobal->Height / 2 - 100;
     const int bottom = gsGlobal->Height / 2 + 100;
     char progress[24];
-    snprintf(progress, sizeof(progress), "%d of 4 buttons entered", entered);
+    snprintf(progress, sizeof(progress), lunaText("%d of 4 buttons entered"), entered);
     gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
     drawBrowserSheet(0);
     drawTextWindow(left, headerHeight - getFontLineHeight(), right,
                    headerHeight + 2, 0, HeaderTextColor,
-                   ALIGN_HCENTER, "File Explorer");
+                   ALIGN_HCENTER, lunaText("File Explorer"));
     drawGlassPanel(left, top, right, bottom, 3);
     drawTextWindow(left + 12, top + 16, right - 12, top + 44,
-                   4, ColorSelected, ALIGN_HCENTER, "Under construction");
+                   4, ColorSelected, ALIGN_HCENTER, lunaText("Under construction"));
     drawTextWindow(left + 12, top + 55, right - 12, top + 81,
                    4, FontMainColor, ALIGN_HCENTER,
-                   "File Explorer is under construction.");
+                   lunaText("File Explorer is under construction."));
     drawTextWindow(left + 12, top + 88, right - 12, top + 114,
                    4, HeaderTextColor, ALIGN_HCENTER,
-                   "Enter the four-button access code.");
+                   lunaText("Enter the four-button access code."));
     drawTextWindow(left + 12, top + 122, right - 12, top + 148,
                    4, FontMainColor, ALIGN_HCENTER, progress);
     drawTextWindow(left + 12, top + 160, right - 12, bottom - 10,
                    4, ErrorTextColor, ALIGN_HCENTER, status);
     drawPromptBar(left, gsGlobal->Height - footerHeight, right,
                   gsGlobal->Height, 0, HeaderTextColor,
-                  PROMPT_ONE(ICON_TRIANGLE, "Back"));
+                  PROMPT_ONE(ICON_TRIANGLE, lunaText("Back")));
     presentBrowserFrame();
 
     int input = waitForInput(PAD_CROSS | PAD_SQUARE | PAD_CIRCLE | PAD_TRIANGLE);
@@ -1966,7 +1969,7 @@ static int unlockFileExplorer(void) {
         return 1;
     } else {
       entered = 0;
-      status = "Incorrect code. Try again.";
+      status = lunaText("Incorrect code. Try again.");
     }
   }
 }
@@ -1979,29 +1982,30 @@ static int storageRow(int index, char *name, size_t nameSize,
   if (index < STORAGE_SOURCE_COUNT) {
     ModeType mode = storageSourceMode(index);
     snprintf(name, nameSize, "%s", storageSourceName(index));
-    if (!(settings->enabled & mode)) snprintf(detail, detailSize, "Disabled");
-    else if (!(STORAGE_SETTINGS.enabled & mode)) snprintf(detail, detailSize, "Enable pending");
-    else if (STORAGE_STATUS[index].error) snprintf(detail, detailSize, "Scan failed");
-    else if (!STORAGE_STATUS[index].devices) snprintf(detail, detailSize, "No device found");
-    else snprintf(detail, detailSize, "Ready - %d games", STORAGE_STATUS[index].games);
+    if (!(settings->enabled & mode)) snprintf(detail, detailSize, lunaText("Disabled"));
+    else if (!(STORAGE_SETTINGS.enabled & mode)) snprintf(detail, detailSize, lunaText("Enable pending"));
+    else if (STORAGE_STATUS[index].error) snprintf(detail, detailSize, lunaText("Scan failed"));
+    else if (!STORAGE_STATUS[index].devices) snprintf(detail, detailSize, lunaText("No device found"));
+    else snprintf(detail, detailSize, lunaText("Ready - %d games"), STORAGE_STATUS[index].games);
   } else {
-    snprintf(name, nameSize, "%s", index == 7 ? "UDPFS console IP address" :
-             index == 8 ? "Apply changes & scan" : "Rescan all enabled devices");
+    snprintf(name, nameSize, "%s", index == 7 ? lunaText("UDPFS console IP address") :
+             index == 8 ? lunaText("Apply changes & scan") : lunaText("Rescan all enabled devices"));
     snprintf(detail, detailSize, "%s", index == 7 ?
-             (settings->ip[0] ? settings->ip : "Use IPCONFIG.DAT") : "");
+             (settings->ip[0] ? settings->ip : lunaText("Use IPCONFIG.DAT")) : "");
   }
   return 1;
 }
 
 static int uiStorageLoop(void) {
   StorageSettings settings = STORAGE_SETTINGS;
-  char status[160] = "Select a source to enable or disable it.";
+  char status[160];
+  snprintf(status, sizeof(status), "%s", lunaText("Select a source to enable or disable it."));
   int selected = 0;
   BrowserSelector selector = {.selected = -1};
   while (1) {
-    const ButtonPrompt prompts[] = {{ICON_CROSS, "Select"}, {ICON_SQUARE, "Rescan"},
-                                   {ICON_CIRCLE, "Back"}};
-    drawBrowserFrameSelected("Storage Devices", "Connected devices only", status,
+    const ButtonPrompt prompts[] = {{ICON_CROSS, lunaText("Select")}, {ICON_SQUARE, lunaText("Rescan")},
+                                   {ICON_CIRCLE, lunaText("Back")}};
+    drawBrowserFrameSelected(lunaText("Storage Devices"), lunaText("Connected devices only"), status,
                      (PromptBar){NULL, prompts, 3}, 10, selected,
                      browserFirstRow(selected), 0, storageRow, &settings, &selector);
     int input = readInput();
@@ -2014,51 +2018,82 @@ static int uiStorageLoop(void) {
       settings.enabled ^= mode;
       if ((settings.enabled & MODE_MX4SIO) && (settings.enabled & MODE_MMCE)) {
         settings.enabled &= ~(mode == MODE_MX4SIO ? MODE_MMCE : MODE_MX4SIO);
-        snprintf(status, sizeof(status), "MX4SIO and MMCE cannot be enabled together.");
-      } else snprintf(status, sizeof(status), "Choose Apply changes & scan to save your selection.");
+        snprintf(status, sizeof(status), lunaText("MX4SIO and MMCE cannot be enabled together."));
+      } else snprintf(status, sizeof(status), lunaText("Choose Apply changes & scan to save your selection."));
       if (storageRequiredConflict(&settings)) {
         settings = before;
-        snprintf(status, sizeof(status), "This conflicts with the device LUNA was started from.");
+        snprintf(status, sizeof(status), lunaText("This conflicts with the device LUNA was started from."));
       }
     } else if ((input & PAD_CROSS) && selected == 7) {
       char ip[16];
       snprintf(ip, sizeof(ip), "%s", settings.ip);
       // The shared keyboard supports digits and dots; an empty value uses IPCONFIG.
-      if (editFileName("UDPFS console IP (empty uses IPCONFIG.DAT)", ip, sizeof(ip), 15)) {
+      if (editFileName(lunaText("UDPFS console IP (empty uses IPCONFIG.DAT)"), ip, sizeof(ip), 15)) {
         if (storageValidIP(ip)) {
           strcpy(settings.ip, ip);
-          snprintf(status, sizeof(status), "Apply changes to use this address for scanning and games.");
-        } else snprintf(status, sizeof(status), "Enter a valid unicast IPv4 address, such as 192.168.1.10.");
+          snprintf(status, sizeof(status), lunaText("Apply changes to use this address for scanning and games."));
+        } else snprintf(status, sizeof(status), lunaText("Enter a valid unicast IPv4 address, such as 192.168.1.10."));
       }
     } else if ((input & PAD_CROSS) && selected == 8) {
       if (storageRequiredConflict(&settings) || !storageValidSettings(&settings)) {
-        snprintf(status, sizeof(status), "These device settings conflict with the startup device.");
+        snprintf(status, sizeof(status), lunaText("These device settings conflict with the startup device."));
         continue;
       }
       if (storageNeedsRestart(&settings)) {
-        drawBrowserFrameSelected("Restart storage drivers", "Apply changes",
-                         "LUNA will reopen the library after restarting its drivers.",
-                         PROMPT_TWO(ICON_CROSS, "Apply", ICON_CIRCLE, "Cancel"),
+        drawBrowserFrameSelected(lunaText("Restart storage drivers"), lunaText("Apply changes"),
+                         lunaText("LUNA will reopen the library after restarting its drivers."),
+                         PROMPT_TWO(ICON_CROSS, lunaText("Apply"), ICON_CIRCLE, lunaText("Cancel")),
                          10, selected, browserFirstRow(selected), 0, storageRow, &settings, &selector);
         if (!(waitForInput(PAD_CROSS | PAD_CIRCLE) & PAD_CROSS)) continue;
       }
       if (storageSave(&settings)) {
-        snprintf(status, sizeof(status), "Could not save storage.cfg beside LUNA. Changes were not applied.");
+        snprintf(status, sizeof(status), lunaText("Could not save storage.cfg beside LUNA. Changes were not applied."));
         continue;
       }
       if (!storageRequest(&settings, settings.enabled)) return STORAGE_UI_REFRESH;
     } else if (((input & PAD_CROSS) && selected == 9) ||
                ((input & PAD_SQUARE) && selected < STORAGE_SOURCE_COUNT)) {
       if (settings.enabled != STORAGE_SETTINGS.enabled || strcmp(settings.ip, STORAGE_SETTINGS.ip)) {
-        snprintf(status, sizeof(status), "Apply changes before rescanning, or go Back to discard them.");
+        snprintf(status, sizeof(status), lunaText("Apply changes before rescanning, or go Back to discard them."));
         continue;
       }
       ModeType scan = selected == 9 ? settings.enabled : storageSourceMode(selected);
       if (!(scan & settings.enabled)) {
-        snprintf(status, sizeof(status), "Enable this source and apply changes before scanning it.");
+        snprintf(status, sizeof(status), lunaText("Enable this source and apply changes before scanning it."));
         continue;
       }
       if (!storageRequest(&settings, scan)) return STORAGE_UI_REFRESH;
+    }
+  }
+}
+
+static int languageRow(int index, char *name, size_t nameSize,
+                       char *detail, size_t detailSize, CardArtType *cardArt,
+                       void *context) {
+  snprintf(name, nameSize, "%s", lunaLanguageName((LunaLanguage)index));
+  snprintf(detail, detailSize, "%s", index == (int)lunaLanguage() ? lunaText("Selected") : "");
+  *cardArt = CARD_ART_NONE;
+  (void)context;
+  return 1;
+}
+
+static void uiLanguageLoop(void) {
+  int selected = lunaLanguage();
+  const char *status = lunaText("Choose the language used throughout LUNA.");
+  BrowserSelector selector = {.selected = -1, .wordOnly = 1};
+  while (1) {
+    drawBrowserFrameSelected("LUNA", lunaText("Language"), status,
+        PROMPT_TWO(ICON_CROSS, lunaText("Select"), ICON_CIRCLE, lunaText("Cancel")),
+        LUNA_LANGUAGE_COUNT, selected, 0, 0, languageRow, NULL, &selector);
+    int input = readInput();
+    if (input & (PAD_CIRCLE | PAD_TRIANGLE)) return;
+    if (input & PAD_UP)
+      selected = (selected + LUNA_LANGUAGE_COUNT - 1) % LUNA_LANGUAGE_COUNT;
+    else if (input & PAD_DOWN)
+      selected = (selected + 1) % LUNA_LANGUAGE_COUNT;
+    else if (input & PAD_CROSS) {
+      if (!lunaLanguageSave((LunaLanguage)selected)) return;
+      status = lunaText("Could not save language. Check LUNA's folder.");
     }
   }
 }
@@ -2067,13 +2102,14 @@ static int mainMenuRow(int index, char *name, size_t nameSize,
                        char *detail, size_t detailSize, CardArtType *cardArt,
                        void *context) {
   int hasLibrary = ((MainMenuContext *)context)->hasLibrary;
-  const char *label = index == 0 ? "File Explorer" :
-                      index == 1 ? "Virtual Memory Cards" :
-                      index == 2 ? "Storage Devices" :
-                      (hasLibrary && index == 3 ? "Return to Library" :
-                       index == (hasLibrary ? 5 : 4) ? "Shutdown" : "Exit LUNA");
+  const char *label = index == 0 ? lunaText("File Explorer") :
+                      index == 1 ? lunaText("Virtual Memory Cards") :
+                      index == 2 ? lunaText("Storage Devices") :
+                      index == 3 ? lunaText("Language") :
+                      (hasLibrary && index == 4 ? lunaText("Return to Library") :
+                       index == (hasLibrary ? 6 : 5) ? lunaText("Shutdown") : lunaText("Exit LUNA"));
   snprintf(name, nameSize, "%s", label);
-  detail[0] = '\0';
+  snprintf(detail, detailSize, "%s", index == 3 ? lunaLanguageName(lunaLanguage()) : "");
   *cardArt = index == 0 ? CARD_ART_FILE_EXPLORER :
              index == 1 ? CARD_ART_MEMORY_CARD_MENU : CARD_ART_NONE;
   (void)detailSize;
@@ -2083,16 +2119,16 @@ static int mainMenuRow(int index, char *name, size_t nameSize,
 int uiMainMenuLoop(int hasLibrary) {
   static int fileExplorerUnlocked;
   int selected = 0;
-  int count = hasLibrary ? 6 : 5;
+  int count = hasLibrary ? 7 : 6;
   MainMenuContext menu = {.hasLibrary = hasLibrary};
   BrowserSelector selector = {.selected = -1, .wordOnly = 1};
   while (1) {
-    drawBrowserFrameSelected("LUNA", hasLibrary ? "Main menu" : "No games found",
-                     hasLibrary ? "Browse storage or return to your games."
-                                : "Browse storage even without a game library.",
+    drawBrowserFrameSelected("LUNA", hasLibrary ? lunaText("Main menu") : lunaText("No games found"),
+                     hasLibrary ? lunaText("Browse storage or return to your games.")
+                                : lunaText("Browse storage even without a game library."),
                      hasLibrary ?
-                         PROMPT_TWO(ICON_CROSS, "Select", ICON_TRIANGLE, "Back") :
-                         PROMPT_ONE(ICON_CROSS, "Select"),
+                         PROMPT_TWO(ICON_CROSS, lunaText("Select"), ICON_TRIANGLE, lunaText("Back")) :
+                         PROMPT_ONE(ICON_CROSS, lunaText("Select")),
                      count, selected, 0,
                      selected == 0 || selected == 1 ? 220 : 0,
                      mainMenuRow, &menu, &selector);
@@ -2115,13 +2151,15 @@ int uiMainMenuLoop(int hasLibrary) {
       else if (selected == 2) {
         if (uiStorageLoop() == STORAGE_UI_REFRESH) return STORAGE_UI_REFRESH;
       }
-      else if (hasLibrary && selected == 3)
+      else if (selected == 3)
+        uiLanguageLoop();
+      else if (hasLibrary && selected == 4)
         return 0;
       else if (selected == count - 1) {
-        drawBrowserFrameSelected("LUNA", "Confirm shutdown",
-                         "Power off the console?",
-                         PROMPT_TWO(ICON_CROSS, "Shutdown",
-                                    ICON_CIRCLE, "Cancel"),
+        drawBrowserFrameSelected("LUNA", lunaText("Confirm shutdown"),
+                         lunaText("Power off the console?"),
+                         PROMPT_TWO(ICON_CROSS, lunaText("Shutdown"),
+                                    ICON_CIRCLE, lunaText("Cancel")),
                          count, selected, 0, 0, mainMenuRow, &menu, &selector);
         if (waitForInput(PAD_CROSS | PAD_CIRCLE | PAD_TRIANGLE) & PAD_CROSS) {
           powerOffConsole();

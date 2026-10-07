@@ -1,5 +1,6 @@
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/view_internal.h"
+#include "ui/language.h"
 #include "ui/ambient_orbs.h"
 
 #include <stdio.h>
@@ -159,11 +160,11 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
   }
   drawTextWindow(keepoutArea + 10, headerHeight - getFontLineHeight(),
                  gsGlobal->Width - keepoutArea, 0, 6,
-                 HeaderTextColor, ALIGN_LEFT, "ORBIT");
+                 HeaderTextColor, ALIGN_LEFT, lunaText("ORBIT"));
   if (randomActive)
     drawTextWindow(gsGlobal->Width / 2, headerHeight - getFontLineHeight(),
                    gsGlobal->Width - keepoutArea - 8, 0, 6,
-                   FontMainColor, ALIGN_RIGHT, "RANDOM SCAN");
+                   FontMainColor, ALIGN_RIGHT, lunaText("RANDOM SCAN"));
   drawOrbitGuide(centerX, centerY, radiusX, radiusY);
 
   for (cacheIdx = 0; cacheIdx < PSBBN_COVER_CACHE_COUNT; cacheIdx++) {
@@ -275,7 +276,7 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
         drawTextWindow((int)item->quad.upperLeftX, item->centerY + radius / 2,
                        (int)item->quad.upperRightX, 0, z + 1,
                        glassMissingCoverTextColor(), ALIGN_HCENTER,
-                       "COVER\nUNAVAILABLE");
+                       lunaText("COVER\nUNAVAILABLE"));
     }
   }
 

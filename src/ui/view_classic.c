@@ -1,5 +1,6 @@
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/view_internal.h"
+#include "ui/language.h"
 #include <stdio.h>
 
 #define DIV_ROUND(n, d) (n + (d - 1)) / d
@@ -334,17 +335,17 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
                     glassPresetColor(0x05, 0x0D, 0x22, 0x4C));
   drawTextWindow(baseX, headerHeight - getFontLineHeight(), gsGlobal->Width - baseX, 0, 3, FontMainColor, ALIGN_HCENTER, "L  U  N  A");
   const int headerY = headerHeight - getFontLineHeight();
-  const int classicRight = baseX + getLineWidth("List");
+  const int classicRight = baseX + getLineWidth(lunaText("List"));
   const int favoriteTextX = classicRight + 22;
-  const int favoriteRight = favoriteTextX + getLineWidth("Favorites");
+  const int favoriteRight = favoriteTextX + getLineWidth(lunaText("Favorites"));
   if (favoritesOnly)
     drawPSBBNFocusGlow(favoriteTextX, headerY, favoriteRight + 16, favoriteRight);
   else
     drawPSBBNFocusGlow(baseX, headerY, classicRight + 16, classicRight);
   drawTextWindow(baseX, headerY, classicRight + 2, 0, 6,
-                 favoritesOnly ? HeaderTextColor : FontMainColor, ALIGN_LEFT, "List");
+                 favoritesOnly ? HeaderTextColor : FontMainColor, ALIGN_LEFT, lunaText("List"));
   drawTextWindow(favoriteTextX, headerY, favoriteRight + 2, 0, 6,
-                 favoritesOnly ? FontMainColor : HeaderTextColor, ALIGN_LEFT, "Favorites");
+                 favoritesOnly ? FontMainColor : HeaderTextColor, ALIGN_LEFT, lunaText("Favorites"));
   snprintf(lineBuffer, 255, "%d/%d", curPage + 1, pageCount);
   drawTextWindow(baseX, headerHeight - getFontLineHeight(), gsGlobal->Width - baseX, 0, 3, HeaderTextColor, ALIGN_RIGHT, lineBuffer);
 
@@ -358,7 +359,7 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
   if (favoritesOnly && titles->total == 0) {
     drawTextWindow(listTextX, titleY + getFontLineHeight() * 3, coverArtX1 - 12,
                    titleY + getFontLineHeight() * 5, 6, HeaderTextColor,
-                   ALIGN_CENTER, "NO FAVORITES YET");
+                   ALIGN_CENTER, lunaText("NO FAVORITES YET"));
   }
   int pageStart = maxTitlesPerPage * curPage;
   int pageEnd = pageStart + maxTitlesPerPage;
@@ -405,7 +406,7 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
     drawTextWindow(coverArtX1, coverArtY1, coverArtX2, coverArtY2 + 44,
                    classicArtOverlap ? 7 : 6,
                    glassMissingCoverTextColor(), ALIGN_CENTER,
-                   "COVER\nUNAVAILABLE");
+                   lunaText("COVER\nUNAVAILABLE"));
   }
   if (selectedTitleCover != NULL)
     drawClassicCoverTexture(selectedTitleCover, coverTextureZ);

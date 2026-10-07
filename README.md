@@ -16,6 +16,13 @@ Neutrino provides the game-launch runtime and its supported compatibility featur
 
 ## Usage
 
+Press **Start > Language** to choose **English** (the default), **Español**, or
+**Português** (Brazilian Portuguese). Cross confirms and saves the choice;
+Circle or Triangle cancels. The interface updates immediately. The preference
+is stored in `language.cfg` beside LUNA, independently of the game library.
+If that location is read-only, the current language is retained and a save error
+is shown. Missing or invalid settings use English. Both UI fonts support accents.
+
 Per-game **Options > Game > Cheats** reads raw PS2RD files from the drive's
 root **CHT** folder, named after the title ID (for example,
 `CHT/SLUS_203.12.cht`). APA/HDL games use the mounted OPL metadata folder.
