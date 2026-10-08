@@ -17,7 +17,7 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
                    const char *nextViewLabel);
 void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers,
                          int flowOffset, int outgoingTitleIdx, int favoritesOnly, int fastScrolling,
-                         int entryProgress, uint32_t frameNowMs,
+                         int entryProgress, int entryFade, uint32_t frameNowMs,
                          const char *nextViewLabel);
 void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers,
                int flowOffset, int randomActive, int entryProgress,

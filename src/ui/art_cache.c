@@ -2010,13 +2010,14 @@ static void serviceBackgroundCovers(TargetList *titles, int selectedTitleIdx,
   }
 }
 
-static void serviceCollectionCoversInternal(TargetList *titles, int selectedTitleIdx,
+static int serviceCollectionCoversInternal(TargetList *titles, int selectedTitleIdx,
                                       int direction, int fastScrolling, int flowOffset,
                                       int entering) {
   uint8_t nearPriority[PSBBN_COVER_CACHE_COUNT];
   static const uint8_t farPriority[PSBBN_COVER_CACHE_COUNT] = {9, 8, 7, 6, 0, 1, 5, 2, 4, 3};
   if (direction == 0) direction = collectionNavigationDirection;
   int requestCount = PSBBN_COVER_CACHE_COUNT;
+  int entryCached = entering && collectionCoversReady(titles, selectedTitleIdx);
   if (entering)
     requestCount = collectionArtEntryPriority(nearPriority, titles->total, selectedTitleIdx);
   else
@@ -2048,6 +2049,8 @@ static void serviceCollectionCoversInternal(TargetList *titles, int selectedTitl
       psbbnCoverLoaded[i] = collectionCoverAttempted[i] = collectionCoverResolved[i] = 1;
       collectionArtStats.cacheHits++;
     }
+    if (entering)
+      entryCached = collectionCoversReady(titles, selectedTitleIdx);
     startCollectionFarArtWorker();
     // Drain a retiring far job before waking the hidden preload worker again.
     // Finished results still pass through adoption/reuse even without requests.
@@ -2093,6 +2096,7 @@ static void serviceCollectionCoversInternal(TargetList *titles, int selectedTitl
     memset(&collectionArtStats, 0, sizeof(collectionArtStats));
     collectionArtStats.reportMs = now;
   }
+  return entryCached;
 }
 
 void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx) {
@@ -2104,8 +2108,8 @@ void serviceCollectionCoversNavigating(TargetList *titles, int selectedTitleIdx,
   serviceCollectionCoversInternal(titles, selectedTitleIdx, direction, fastScrolling, flowOffset, 0);
 }
 
-void serviceCollectionEntryCovers(TargetList *titles, int selectedTitleIdx) {
-  serviceCollectionCoversInternal(titles, selectedTitleIdx, 0, 0, 0, 1);
+int serviceCollectionEntryCovers(TargetList *titles, int selectedTitleIdx) {
+  return serviceCollectionCoversInternal(titles, selectedTitleIdx, 0, 0, 0, 1);
 }
 
 void recordCollectionCoverBind(uint32_t elapsedMs) {

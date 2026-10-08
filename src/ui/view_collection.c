@@ -167,7 +167,7 @@ void formatPSBBNTitle(const char *source, char *destination, int maxWidth) {
 
 void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int flowOffset,
                          int outgoingTitleIdx, int favoritesOnly, int fastScrolling,
-                         int entryProgress, uint32_t frameNowMs,
+                         int entryProgress, int entryFade, uint32_t frameNowMs,
                          const char *nextViewLabel) {
   int top = headerHeight + 12;
   int bottom = gsGlobal->Height - footerHeight - 18;
@@ -225,7 +225,8 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
     drawTextWindow(40, headerHeight + 96, panelRight, selectorCenterY - getFontLineHeight() * 2,
                    5, HeaderTextColor, ALIGN_CENTER,
                    lunaText("NO FAVORITES YET\nAdd favorites in List"));
-    drawCollectionEntryFade(entryProgress);
+    if (entryFade)
+      drawCollectionEntryFade(entryProgress);
     return;
   }
 
@@ -381,12 +382,14 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
         fadeDistance = 5000;
       visibility = 1000 - (fadeDistance * 850) / 5000;
     }
-    visibility = visibility * (250 + entryProgress * 750 / 1000) / 1000;
+    if (entryFade)
+      visibility = visibility * (250 + entryProgress * 750 / 1000) / 1000;
 
     if (x1 + size > 24.0f && x1 < (float)(gsGlobal->Width - keepoutArea))
       drawPSBBNCover(covers[cacheToDraw], x1, y1, size, cacheToDraw, emphasis, visibility,
                      (cacheToDraw == foregroundCacheIdx) ? PSBBN_COVER_FOREGROUND_Z
                                                       : PSBBN_COVER_BACKGROUND_Z);
   }
-  drawCollectionEntryFade(entryProgress);
+  if (entryFade)
+    drawCollectionEntryFade(entryProgress);
 }

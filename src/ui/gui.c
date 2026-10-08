@@ -336,6 +336,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   UILibraryView view = UI_VIEW_CLASSIC;
   int entryView = -1;
   int entryPending = 0;
+  int collectionEntryFade = -1;
   uint32_t entryStartMs = 0;
   uint32_t entryDurationMs = LIBRARY_VIEW_ENTRY_MS;
   int caseViewSwitchPending = 0;
@@ -606,9 +607,12 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       flowOffset = lunaNavAnimatedOffset(psbbnAnimationStartOffset,
           psbbnAnimationStart, psbbnAnimationDuration, now);
       if (view == UI_VIEW_PSBBN) {
-        if (entryPending)
-          serviceCollectionEntryCovers(flowTitles, flowSelectedTitleIdx);
-        else
+        if (entryPending) {
+          int entryCached = serviceCollectionEntryCovers(flowTitles, flowSelectedTitleIdx);
+          // Decide once: later loads completing must not cancel a cold-entry fade.
+          if (collectionEntryFade < 0)
+            collectionEntryFade = !entryCached;
+        } else
           serviceCollectionCoversNavigating(flowTitles, flowSelectedTitleIdx,
             collectionScan.active ? collectionScan.heldDirection : 0,
             collectionScan.active, flowOffset);
@@ -638,7 +642,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                             collectionScan.active,
                             entryPending ? -1 :
                                 libraryViewEntryProgress(entryView, view, entryStartMs, entryDurationMs, now),
-                            now, nextViewLabel);
+                            collectionEntryFade, now, nextViewLabel);
       } else if (view == UI_VIEW_ORBIT)
         drawOrbit(titles, selectedTitleIdx, psbbnCoverTextures, flowOffset,
                   orbitRandomActive, libraryViewEntryProgress(entryView, view, entryStartMs, entryDurationMs, now),
@@ -1036,6 +1040,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       entryDurationMs = previousView == UI_VIEW_3D && view != previousView
           ? CASE_VIEW_HANDOFF_MS : LIBRARY_VIEW_ENTRY_MS;
       entryPending = view != UI_VIEW_CLASSIC;
+      collectionEntryFade = -1;
       collectionCirclePending = view == UI_VIEW_PSBBN;
       classicEntryFirstFramePending = view == UI_VIEW_CLASSIC &&
                                       previousView != UI_VIEW_CLASSIC;

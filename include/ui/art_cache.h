@@ -51,7 +51,8 @@ int collectionArtBackgroundAvailable(void);
 // Applies to running decodes as well as future requests; retains cached pixels.
 void setCollectionArtForeground(int foreground);
 void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx);
-void serviceCollectionEntryCovers(TargetList *titles, int selectedTitleIdx);
+// Returns whether entry covers were ready from memory before servicing new loads.
+int serviceCollectionEntryCovers(TargetList *titles, int selectedTitleIdx);
 void serviceCollectionCoversNavigating(TargetList *titles, int selectedTitleIdx,
                                       int direction, int fastScrolling, int flowOffset);
 void recordCollectionCoverBind(uint32_t elapsedMs);
