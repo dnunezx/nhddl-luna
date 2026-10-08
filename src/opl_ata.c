@@ -3,6 +3,7 @@
 #include "opl_ata.h"
 #include "opl_ata_abi.h"
 #include "opl_devices.h"
+#include "opl_logo.h"
 #include "opl_vmc.h"
 #include "common.h"
 #include "devices/devices.h"
@@ -151,7 +152,8 @@ static OplCdvdSettingsBdm *findCdvdSettings(void) {
   return NULL;
 }
 
-static int prepareDisc(Target *target, uint8_t compat, const LunaOplDevice *device) {
+static int prepareDisc(Target *target, uint8_t compat, const LunaOplDevice *device,
+                       int *logo) {
   if (target->id == NULL ||
       strlen(target->id) > 15)
     return -EINVAL;
@@ -222,6 +224,8 @@ static int prepareDisc(Target *target, uint8_t compat, const LunaOplDevice *devi
     settings->bdDeviceId = number;
   }
 
+  if (*logo)
+    *logo = oplPrepareLogo(fd);
   uint32_t maxLba = 0;
   unsigned char descriptor[6] = {0};
   if (lseek(fd, 16 * 2048, SEEK_SET) >= 0 &&
@@ -474,9 +478,11 @@ int launchOplTitle(Target *target, ArgumentList *arguments, const char *cheatPay
   if (result)
     return result;
   uint8_t compat = lunaGetOplCompatMask(arguments);
+  Argument *logoArgument = getArgument(arguments, "logo");
+  int logo = logoArgument != NULL && !logoArgument->isDisabled;
   result = loadPayloads(device);
   if (!result)
-    result = prepareDisc(target, compat, device);
+    result = prepareDisc(target, compat, device, &logo);
   if (!result)
     result = validateCore();
   int activeCards = 0;
@@ -622,7 +628,11 @@ int launchOplTitle(Target *target, ArgumentList *arguments, const char *cheatPay
   }
   char bootPath[32];
   snprintf(bootPath, sizeof(bootPath), "cdrom0:\\%s;1", target->id);
-  char *argv[] = {bootPath};
+  char *argv[2];
+  int argc = 0;
+  if (logo)
+    argv[argc++] = "rom0:PS2LOGO";
+  argv[argc++] = bootPath;
   if (progress)
     progress(LAUNCH_STAGE_STARTING, userdata);
   DPRINTF("OPL: starting EE core at %08x with %s\n", elf->entry, bootPath);
@@ -630,7 +640,7 @@ int launchOplTitle(Target *target, ArgumentList *arguments, const char *cheatPay
   FlushCache(INVALIDATE_ICACHE);
   fileXioExit();
   SifExitRpc();
-  ExecPS2((void *)elf->entry, NULL, 1, argv);
+  ExecPS2((void *)elf->entry, NULL, argc, argv);
   DPRINTF("OPL: ExecPS2 returned after handoff\n");
   __builtin_trap();
 }
