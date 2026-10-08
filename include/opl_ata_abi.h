@@ -58,6 +58,15 @@ typedef struct {
   OplFhiFile file[6];
 } __attribute__((packed)) OplFhiSettings;
 
+// opl/modules/mcemu/mcemu.h, compiled with LUNA_DRIVER.
+typedef struct {
+  uint32_t active, flags;
+  struct { uint16_t PageSize, BlockSize; uint32_t CardSize; } cspec;
+  uint32_t transport, frag_count;
+  bd_fragment_t frags[64];
+} OplVmcCard;
+_Static_assert(sizeof(OplVmcCard) == 792, "OPL VMC settings ABI changed");
+
 typedef struct {
   s16 interlace, mode, ffmd;
   u32 dx_offset, dy_offset;

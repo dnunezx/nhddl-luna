@@ -23,6 +23,8 @@ set(SOURCES
     src/favorites.c
     src/neutrino.c
     src/opl_ata.c
+    src/opl_pfs_vmc.c
+    src/opl_vmc.c
     src/target.c
     src/storage.c
     src/forwarder.c

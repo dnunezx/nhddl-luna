@@ -3,6 +3,7 @@
 #include "opl_ata.h"
 #include "opl_ata_abi.h"
 #include "opl_devices.h"
+#include "opl_vmc.h"
 #include "common.h"
 #include "devices/devices.h"
 #include "dprintf.h"
@@ -68,7 +69,7 @@ typedef struct {
 
 enum { PAYLOAD_CORE, PAYLOAD_CDVDMAN, PAYLOAD_CDVDFSV, PAYLOAD_EESYNC,
        PAYLOAD_IOPRP, PAYLOAD_UDNL, PAYLOAD_IMGDRV, PAYLOAD_RESETSPU,
-       PAYLOAD_EXTRA0, PAYLOAD_EXTRA1, PAYLOAD_EXTRA2, PAYLOAD_COUNT };
+       PAYLOAD_EXTRA0, PAYLOAD_EXTRA1, PAYLOAD_EXTRA2, PAYLOAD_VMC, PAYLOAD_COUNT };
 
 static OplPayload payloads[PAYLOAD_COUNT] = {
     {"ee_core.elf", NULL, 0}, {"bdm_ata_cdvdman.irx", NULL, 0},
@@ -76,10 +77,20 @@ static OplPayload payloads[PAYLOAD_COUNT] = {
     {"IOPRP.img", NULL, 0}, {"udnl.irx", NULL, 0},
     {"imgdrv.irx", NULL, 0}, {"resetspu.irx", NULL, 0},
     {NULL, NULL, 0}, {NULL, NULL, 0}, {NULL, NULL, 0},
+    {"luna_mcemu.irx", NULL, 0},
 };
 static int remoteFd = -1;
+static int vmcFds[2] = {-1, -1};
+static OplFhiSettings *remoteSettings;
+static OplCdvdSettingsBdm *discSettings;
 
 static void freePayloads(void) {
+  for (int slot = 0; slot < 2; slot++) {
+    if (vmcFds[slot] >= 0) close(vmcFds[slot]);
+    vmcFds[slot] = -1;
+  }
+  remoteSettings = NULL;
+  discSettings = NULL;
   if (remoteFd >= 0) {
     close(remoteFd);
     remoteFd = -1;
@@ -147,6 +158,7 @@ static int prepareDisc(Target *target, uint8_t compat, const LunaOplDevice *devi
   OplCdvdSettingsBdm *settings = findCdvdSettings();
   if (settings == NULL)
     return -EINVAL;
+  discSettings = settings;
 
   int fd = open(target->fullPath, O_RDONLY);
   if (fd < 0)
@@ -181,6 +193,7 @@ static int prepareDisc(Target *target, uint8_t compat, const LunaOplDevice *devi
       fhi->file[i].id = -1;
     fhi->file[0].id = fileId;
     fhi->file[0].size = fileSize;
+    remoteSettings = fhi;
     // Keep the server/card-side handle alive across the replacement IOP boot.
     remoteFd = fd;
   } else {
@@ -466,6 +479,13 @@ int launchOplTitle(Target *target, ArgumentList *arguments, const char *cheatPay
     result = prepareDisc(target, compat, device);
   if (!result)
     result = validateCore();
+  int activeCards = 0;
+  if (!result) {
+    activeCards = oplPrepareVmcs(target, arguments, device,
+        payloads[PAYLOAD_VMC].data, payloads[PAYLOAD_VMC].size,
+        discSettings, remoteSettings, vmcFds);
+    if (activeCards < 0) result = activeCards;
+  }
   if (result) {
     DPRINTF("OPL: launch preflight failed: %d\n", result);
     freePayloads();
@@ -488,11 +508,11 @@ int launchOplTitle(Target *target, ArgumentList *arguments, const char *cheatPay
 
   OplModuleTable *table = (OplModuleTable *)OPL_STORAGE_START;
   OplModule *modules = (OplModule *)(OPL_STORAGE_START + sizeof(*table));
-  int ids[7] = {1, 2, 3, 4};
-  const unsigned char *data[7] = {payloads[PAYLOAD_UDNL].data, ioprp,
+  int ids[8] = {1, 2, 3, 4};
+  const unsigned char *data[8] = {payloads[PAYLOAD_UDNL].data, ioprp,
                                  payloads[PAYLOAD_IMGDRV].data,
                                  payloads[PAYLOAD_RESETSPU].data};
-  size_t sizes[7] = {payloads[PAYLOAD_UDNL].size, ioprpSize,
+  size_t sizes[8] = {payloads[PAYLOAD_UDNL].size, ioprpSize,
                           payloads[PAYLOAD_IMGDRV].size,
                           payloads[PAYLOAD_RESETSPU].size};
   int moduleCount = 4;
@@ -501,8 +521,13 @@ int launchOplTitle(Target *target, ArgumentList *arguments, const char *cheatPay
     data[moduleCount] = payloads[PAYLOAD_EXTRA0 + i].data;
     sizes[moduleCount++] = payloads[PAYLOAD_EXTRA0 + i].size;
   }
+  if (activeCards) {
+    ids[moduleCount] = 13; // OPL_MODULE_ID_MCEMU
+    data[moduleCount] = payloads[PAYLOAD_VMC].data;
+    sizes[moduleCount++] = payloads[PAYLOAD_VMC].size;
+  }
   uintptr_t cursor = ((uintptr_t)(modules + moduleCount) + 15) & ~15u;
-  uintptr_t moduleAddresses[7];
+  uintptr_t moduleAddresses[8];
   for (int i = 0; i < moduleCount; i++) {
     if (cursor + sizes[i] >= OPL_STORAGE_LIMIT) {
       free(ioprp);
@@ -558,6 +583,8 @@ int launchOplTitle(Target *target, ArgumentList *arguments, const char *cheatPay
   GetOsdConfigParam(&config->CustomOSDConfigParam);
   prepareOplGsm(arguments, config);
 
+  // MMCE cards switch in hardware and remain available without the file VMC module.
+  mmceMountVMC(target->id);
   result = patchKernel((void *)elf->entry, storageEnd,
                        &config->eeloadCopy, &config->initUserMemory);
   if (result) {
