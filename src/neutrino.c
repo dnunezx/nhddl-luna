@@ -4,6 +4,8 @@
 #include "devices/init.h"
 #include "dprintf.h"
 #include "neutrino.h"
+#include "opl_ata.h"
+#include "opl_devices.h"
 #include "ui/ambient.h"
 #include "options.h"
 #include "cheat_storage.h"
@@ -67,7 +69,10 @@ int assembleArgv(ArgumentList *arguments, char **argv[]) {
 
   *argv[0] = NEUTRINO_ELF_PATH;
   while (curArg != NULL) {
-    if (!curArg->isDisabled &&
+    if (!curArg->isDisabled && strcmp(curArg->arg, "luna_core") != 0 &&
+        strcmp(curArg->arg, "luna_opl_compat") != 0 &&
+        strcmp(curArg->arg, "luna_opl_gsm") != 0 &&
+        strcmp(curArg->arg, "luna_opl_field_flip") != 0 &&
         strcmp(curArg->arg, "luna_neutrino_disable_igr") != 0) {
       argSize = strlen(curArg->arg) + (curArg->value ? strlen(curArg->value) : 0) + 3; // + \0, = and -
       char *value = calloc(sizeof(char), argSize);
@@ -110,6 +115,17 @@ void launchTitleWithCheatProgress(Target *target, ArgumentList *arguments,
   if (!launchTitleArgumentsFit(target, arguments, payload)) {
     DPRINTF("ERROR: launch arguments exceed the kernel handoff buffer\n");
     return;
+  }
+  // LUNA metadata is not a Neutrino command-line option. A missing or disabled
+  // setting keeps the existing Neutrino default.
+  Argument *core = getArgument(arguments, "luna_core");
+  if (core != NULL) {
+    if (lunaOplDevice(target->device->mode) != NULL &&
+        !core->isDisabled && core->value != NULL &&
+        strcmp(core->value, "opl") == 0) {
+      int result = launchOplTitle(target, arguments, payload, progress, userdata);
+      DPRINTF("OPL launch unavailable (%d); using Neutrino\n", result);
+    }
   }
   // Append arguments
   char *bsdValue;

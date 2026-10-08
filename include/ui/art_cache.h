@@ -70,6 +70,9 @@ void updateCollectionCoverResidency(int flowOffset);
 void updatePSBBNCoverResidency(int flowOffset);
 void refreshOrbsLogos(TargetList *titles, int selectedTitleIdx);
 void serviceScrollArt(void);
+void refreshScrollBackground(Target *target, int fastScrolling, uint32_t now);
+GSTEXTURE *getScrollBackgroundTexture(void);
+void releaseScrollBackground(void);
 void releaseOrbsArt(void);
 
 #endif

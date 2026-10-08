@@ -20,6 +20,15 @@ typedef enum {
   LIBRARY_BACKGROUND_COUNT
 } LibraryBackground;
 
+typedef enum {
+  SCROLL_BACKGROUND_SYSTEM,
+  SCROLL_BACKGROUND_GAME_ART,
+  SCROLL_BACKGROUND_COUNT
+} ScrollBackground;
+
+void setScrollBackground(ScrollBackground background);
+ScrollBackground getScrollBackground(void);
+
 void resetGlassVisuals(uint32_t startMs);
 void initSystemConfigCapture(void);
 void initGlassStarAtlas(void);

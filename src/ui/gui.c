@@ -411,6 +411,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   ambientSetEnabled(ambientEnabled);
   classicArtOverlap = loadClassicArtOverlap(curTarget);
   setClassicArtOverlap(classicArtOverlap);
+  setScrollBackground(loadScrollBackground(curTarget));
 
   favoriteFlags = calloc((size_t)titles->total, sizeof(*favoriteFlags));
   if (favoriteFlags == NULL) {
@@ -651,6 +652,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         int visualFocus = orbsVisualCacheIndex(flowOffset);
         orbsVisualTitleIdx = lunaNavWrap(titles->total,
             selectedTitleIdx + visualFocus - ORBS_LOGO_CACHE_FOCUS);
+        if (getScrollBackground() == SCROLL_BACKGROUND_GAME_ART)
+          refreshScrollBackground(getTargetByIdx(titles, orbsVisualTitleIdx),
+                                   scrollFast.active, now);
         if (!scrollFast.active) {
           refreshOrbsLogos(flowTitles, flowSelectedTitleIdx);
           serviceScrollArt();
@@ -1059,8 +1063,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       classicArtSubmittedIdx = -1;
       if (view == UI_VIEW_ORBIT)
         resetAmbientOrbsOrbit(uiNowMs());
-      if (previousView == UI_VIEW_ORBS || view == UI_VIEW_ORBS)
-        resetAmbientOrbsScroll();
       scrollFast = (LunaScrollFast){0};
       collectionScan = (LunaCollectionScan){0};
       psbbnRepeat = (LunaNavRepeatState){0};

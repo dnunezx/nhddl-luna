@@ -14,6 +14,10 @@ static const char enabledViewsPath[] = "/enabledViews.txt";
 static const char enabledViewsTempPath[] = "/enabledViews.txt.tmp";
 static const char classicLayoutPath[] = "/classicLayout.txt";
 static const char classicLayoutTempPath[] = "/classicLayout.txt.tmp";
+static const char scrollBackgroundPath[] = "/scrollBackground.txt";
+static const char scrollBackgroundTempPath[] = "/scrollBackground.txt.tmp";
+static const char *const scrollBackgroundNames[SCROLL_BACKGROUND_COUNT] = {
+    "system", "game-art"};
 static const char backgroundPath[] = "/background.txt";
 static const char backgroundTempPath[] = "/background.txt.tmp";
 static const char orbsThemePath[] = "/orbsTheme.txt";
@@ -546,6 +550,63 @@ int saveEnabledLibraryViews(Target *target, uint32_t enabledViews) {
   if (file == NULL)
     return -EIO;
   int writeResult = fprintf(file, "%lu\n", (unsigned long)enabledViews);
+  int closeResult = fclose(file);
+  if (writeResult < 0 || closeResult) {
+    remove(tempPath);
+    return -EIO;
+  }
+  if (commitConfigFile(tempPath, path))
+    return -EIO;
+  return 0;
+}
+
+ScrollBackground loadScrollBackground(Target *target) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  const char *paths[] = {scrollBackgroundTempPath, scrollBackgroundPath};
+  char path[PATH_MAX];
+  char value[24];
+
+  if (device == NULL || device->mountpoint == NULL)
+    return SCROLL_BACKGROUND_SYSTEM;
+  for (int i = 0; i < 2; i++) {
+    if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
+      continue;
+    FILE *file = fopen(path, "r");
+    if (file == NULL)
+      continue;
+    int readable = fgets(value, sizeof(value), file) != NULL;
+    fclose(file);
+    if (!readable)
+      continue;
+    value[strcspn(value, "\r\n")] = '\0';
+    for (int preset = 0; preset < SCROLL_BACKGROUND_COUNT; preset++)
+      if (!strcmp(value, scrollBackgroundNames[preset]))
+        return (ScrollBackground)preset;
+  }
+  return SCROLL_BACKGROUND_SYSTEM;
+}
+
+int saveScrollBackground(Target *target, ScrollBackground preset) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  char directory[PATH_MAX];
+  char path[PATH_MAX];
+  char tempPath[PATH_MAX];
+  struct stat st;
+  FILE *file;
+
+  if (device == NULL || device->mountpoint == NULL ||
+      preset < SCROLL_BACKGROUND_SYSTEM || preset >= SCROLL_BACKGROUND_COUNT)
+    return -EINVAL;
+  if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
+      buildConfigFilePath(path, sizeof(path), device->mountpoint, scrollBackgroundPath) ||
+      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, scrollBackgroundTempPath))
+    return -ENAMETOOLONG;
+  if (stat(directory, &st) == -1 && mkdir(directory, 0777))
+    return -EIO;
+  file = fopen(tempPath, "w");
+  if (file == NULL)
+    return -EIO;
+  int writeResult = fprintf(file, "%s\n", scrollBackgroundNames[preset]);
   int closeResult = fclose(file);
   if (writeResult < 0 || closeResult) {
     remove(tempPath);

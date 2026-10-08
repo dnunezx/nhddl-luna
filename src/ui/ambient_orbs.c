@@ -32,11 +32,6 @@
 #define ORB_SELECTION_PULSE_MS 1100
 #define ORB_SIZE_PULSE_MS 2400
 #define ORB_SELECTION_EVENT_COUNT 12
-#define SCROLL_LETTER_MORPH_MS 420
-#define SCROLL_GLYPH_MORPH_MS 140
-#define SCROLL_GLYPH_DEPTH_X 9.0f
-#define SCROLL_GLYPH_DEPTH_Y 8.0f
-
 static uint32_t glassStartMs;
 static uint32_t orbitStartMs;
 static uint32_t splashStartMs;
@@ -81,18 +76,6 @@ static int orbSelectionEventNext;
 static int orbSelectionEventCount;
 static int orbObservedSelection = -1;
 
-static uint32_t scrollOrbClockMs;
-static uint32_t scrollFormationClockMs;
-static uint32_t scrollOrbLastFrameMs;
-static int scrollOrbClockInitialized;
-static uint32_t scrollLetterStartMs;
-static float scrollLetterFrom;
-static int scrollLetterTarget;
-static int scrollLetterInitialized;
-static char scrollLetterGlyph;
-static char scrollLetterPreviousGlyph;
-static uint32_t scrollGlyphStartMs;
-
 typedef struct {
   float x;
   float y;
@@ -109,7 +92,6 @@ static const int glassSin[32] = {0,   25,  49,  71,  90,  106, 117, 125, 127, 12
                                  0,  -25, -49, -71, -90, -106, -117, -125, -127, -125, -117, -106, -90, -71, -49, -25};
 
 static float orbWave(uint32_t phase);
-static void resetScrollFormation(void);
 
 static uint32_t glassPhase(uint32_t elapsedMs, uint32_t periodMs, uint32_t offsetMs) {
   return (uint32_t)((((uint64_t)(elapsedMs + offsetMs)) << 16) / periodMs);
@@ -147,7 +129,9 @@ void resetAmbientOrbs(uint32_t startMs) {
   systemConfigClockReady = 0;
   orbitStartMs = 0;
   splashStartMs = 0;
-  resetAmbientOrbsScroll();
+  orbObservedSelection = -1;
+  orbSelectionEventNext = 0;
+  orbSelectionEventCount = 0;
 }
 
 void setAmbientOrbsShapes(uint32_t enabledShapes, uint32_t now) {
@@ -351,18 +335,6 @@ void resetAmbientOrbsSplash(uint32_t now) {
   splashStartMs = now - glassStartMs;
 }
 
-void resetAmbientOrbsScroll(void) {
-  scrollOrbClockInitialized = 0;
-  scrollFormationClockMs = 0;
-  resetScrollFormation();
-  scrollLetterInitialized = 0;
-  scrollLetterGlyph = 0;
-  scrollLetterPreviousGlyph = 0;
-  orbObservedSelection = -1;
-  orbSelectionEventNext = 0;
-  orbSelectionEventCount = 0;
-}
-
 static uint32_t glassElapsedMs(uint32_t now) {
   return now - glassStartMs;
 }
@@ -419,68 +391,6 @@ static float orbSelectionPulse(uint32_t elapsedMs) {
       strongest = pulse;
   }
   return strongest;
-}
-
-static float scrollOrbEase(float progress) {
-  if (progress <= 0.0f)
-    return 0.0f;
-  if (progress >= 1.0f)
-    return 1.0f;
-  return progress * progress * (3.0f - 2.0f * progress);
-}
-
-static float scrollLetterBlendAt(uint32_t elapsedMs) {
-  if (!scrollLetterInitialized)
-    return 0.0f;
-  if (elapsedMs < scrollLetterStartMs)
-    return scrollLetterFrom;
-  const float progress = (elapsedMs - scrollLetterStartMs) /
-                         (float)SCROLL_LETTER_MORPH_MS;
-  return scrollLetterFrom +
-         (scrollLetterTarget - scrollLetterFrom) * scrollOrbEase(progress);
-}
-
-static float scrollGlyphBlendAt(uint32_t elapsedMs) {
-  if (elapsedMs < scrollGlyphStartMs)
-    return 0.0f;
-  return scrollOrbEase((elapsedMs - scrollGlyphStartMs) /
-                       (float)SCROLL_GLYPH_MORPH_MS);
-}
-
-static char scrollTitleInitial(const char *title) {
-  while (*title) {
-    const char c = *title++;
-    if (c >= 'A' && c <= 'Z')
-      return c;
-    if (c >= 'a' && c <= 'z')
-      return c - 'a' + 'A';
-    if (c >= '0' && c <= '9')
-      return '#';
-  }
-  return '#';
-}
-
-static void setScrollLetterMode(int fastScroll, char glyph,
-                                uint32_t elapsedMs) {
-  if (!scrollLetterInitialized) {
-    scrollLetterStartMs = elapsedMs;
-    scrollLetterFrom = 0.0f;
-    scrollLetterTarget = 0;
-    scrollLetterGlyph = glyph;
-    scrollLetterPreviousGlyph = glyph;
-    scrollGlyphStartMs = elapsedMs;
-    scrollLetterInitialized = 1;
-  }
-  if (glyph != scrollLetterGlyph) {
-    scrollLetterPreviousGlyph = scrollLetterGlyph;
-    scrollLetterGlyph = glyph;
-    scrollGlyphStartMs = elapsedMs;
-  }
-  if (fastScroll != scrollLetterTarget) {
-    scrollLetterFrom = scrollLetterBlendAt(elapsedMs);
-    scrollLetterStartMs = elapsedMs;
-    scrollLetterTarget = fastScroll;
-  }
 }
 
 static uint32_t orbAnimationMs(uint32_t elapsedMs, uint32_t movementMs) {
@@ -549,56 +459,6 @@ static const OrbLogoStroke orbLogoStrokes[ORB_COUNT] = {
   {572, 47, 710, 59}
 };
 
-// Each group of four digits is one stroke on a 5 by 7 letter grid.
-static const char *const scrollAlphabetPaths[27] = {
-    "0620 2046 1343",                         // A
-    "0006 0030 3041 4133 3303 3345 4536 3606", // B
-    "4130 3010 1001 0105 0516 1636 3645", // C
-    "0006 0030 3041 4145 4536 3606",       // D
-    "0006 0040 0333 0646",                   // E
-    "0006 0040 0333",                        // F
-    "4130 3010 1001 0105 0516 1636 3645 4543 4323", // G
-    "0006 4046 0343",                        // H
-    "0040 2026 0646",                        // I
-    "0040 4045 4536 3616 1605",            // J
-    "0006 4003 0346",                        // K
-    "0006 0646",                             // L
-    "0600 0023 2340 4046",                  // M
-    "0600 0046 4640",                       // N
-    "0130 3041 4145 4536 3616 1605 0501", // O
-    "0006 0030 3041 4133 3303",            // P
-    "0130 3041 4145 4536 3616 1605 0501 2446", // Q
-    "0006 0030 3041 4133 3303 2346",       // R
-    "4130 3010 1001 0102 0213 1333 3344 4445 4536 3616 1605", // S
-    "0040 2026",                             // T
-    "0005 0516 1636 3645 4045",            // U
-    "0026 2640",                             // V
-    "0006 0614 1426 2634 3446 4640",       // W
-    "0046 4006",                             // X
-    "0023 4023 2326",                        // Y
-    "0040 4006 0646",                        // Z
-    "1016 3036 0242 0444"                   // #
-};
-
-static const char *scrollGlyphPath(char glyph) {
-  return scrollAlphabetPaths[glyph >= 'A' && glyph <= 'Z' ?
-                             glyph - 'A' : 26];
-}
-
-static int nextScrollGlyphStroke(const char **cursor, int *x1, int *y1,
-                                  int *x2, int *y2) {
-  while (**cursor == ' ')
-    (*cursor)++;
-  if (!**cursor)
-    return 0;
-  *x1 = (*cursor)[0] - '0';
-  *y1 = (*cursor)[1] - '0';
-  *x2 = (*cursor)[2] - '0';
-  *y2 = (*cursor)[3] - '0';
-  *cursor += 4;
-  return 1;
-}
-
 typedef struct {
   uint32_t cycle;
   uint32_t phaseStartMs;
@@ -615,12 +475,6 @@ typedef struct {
   OrbShape lastShape;
   int initialized;
 } OrbFormation;
-
-static OrbFormation scrollFormation;
-
-static void resetScrollFormation(void) {
-  scrollFormation.initialized = 0;
-}
 
 static OrbShape pickEnabledOrbShape(uint32_t mask, OrbShape previous,
                                      uint32_t choice) {
@@ -657,8 +511,7 @@ static OrbFormation *orbFormationAt(uint32_t elapsedMs, int formationMode) {
   static OrbFormation sharedFormation;
   static OrbFormation orbitFormation;
   static OrbFormation splashFormation;
-  OrbFormation *formation = formationMode == 3 ? &scrollFormation :
-                            formationMode == 2 ? &splashFormation :
+  OrbFormation *formation = formationMode == 2 ? &splashFormation :
                             formationMode == 1 ? &orbitFormation : &sharedFormation;
   const uint32_t epochMs = formationMode == 2 ? splashStartMs :
                            formationMode == 1 ? orbitStartMs : 0;
@@ -1087,65 +940,6 @@ static void orbFormationPosition(const OrbFormation *formation, int index,
     *depth = fromDepth + (toDepth - fromDepth) * blend;
   }
   *opacity = 1.0f;
-}
-
-static void scrollGlyphPoint(char glyph, int index, uint32_t animationMs,
-                              int centerX, int centerY, int radiusX,
-                              int radiusY, float *x, float *y, float *depth) {
-  const char *cursor = scrollGlyphPath(glyph);
-  int x1, y1, x2, y2;
-  int strokeCount = 0;
-  while (nextScrollGlyphStroke(&cursor, &x1, &y1, &x2, &y2))
-    strokeCount++;
-  const int wantedStroke = index % strokeCount;
-  cursor = scrollGlyphPath(glyph);
-  for (int stroke = 0; nextScrollGlyphStroke(&cursor, &x1, &y1, &x2, &y2);
-       stroke++) {
-    if (stroke == wantedStroke)
-      break;
-  }
-  // Each orb sweeps one stroke back and forth; the short afterimages write
-  // the letter without leaving a permanent geometric outline.
-  const uint32_t phase = glassPhase(animationMs,
-                                    1080U + (uint32_t)(index % 3) * 90U,
-                                    (uint32_t)index * 211U);
-  const float along = 0.5f + orbWave(phase) / 254.0f;
-  const float gridX = x1 + (x2 - x1) * along;
-  const float gridY = y1 + (y2 - y1) * along;
-  *x = centerX + (gridX - 2.0f) * radiusX * 1.35f / 4.0f;
-  *y = centerY + (gridY - 3.0f) * radiusY * 1.45f / 6.0f;
-  const float near = 0.5f + orbWave(glassPhase(animationMs, 1800,
-                                               (uint32_t)index * 173U)) /
-                                254.0f;
-  *x += (1.0f - near) * SCROLL_GLYPH_DEPTH_X;
-  *y += (1.0f - near) * SCROLL_GLYPH_DEPTH_Y;
-  *depth = 70.0f + (near * 2.0f - 1.0f) * 18.0f;
-}
-
-static void blendScrollLetterOrb(int index, float letterBlend,
-                                 float glyphBlend, uint32_t animationMs,
-                                 int centerX, int centerY, int radiusX,
-                                 int radiusY, float *x, float *y,
-                                 float *depth, float *opacity) {
-  if (letterBlend <= 0.0f)
-    return;
-  float letterX, letterY, letterDepth;
-  scrollGlyphPoint(scrollLetterGlyph, index, animationMs,
-                   centerX, centerY, radiusX, radiusY,
-                   &letterX, &letterY, &letterDepth);
-  if (scrollLetterPreviousGlyph != scrollLetterGlyph && glyphBlend < 1.0f) {
-    float oldX, oldY, oldDepth;
-    scrollGlyphPoint(scrollLetterPreviousGlyph, index, animationMs,
-                     centerX, centerY, radiusX, radiusY,
-                     &oldX, &oldY, &oldDepth);
-    letterX = oldX + (letterX - oldX) * glyphBlend;
-    letterY = oldY + (letterY - oldY) * glyphBlend;
-    letterDepth = oldDepth + (letterDepth - oldDepth) * glyphBlend;
-  }
-  *x += (letterX - *x) * letterBlend;
-  *y += (letterY - *y) * letterBlend;
-  *depth += (letterDepth - *depth) * letterBlend;
-  *opacity += (1.0f - *opacity) * letterBlend;
 }
 
 static void drawOrbTrailSegment(float oldX, float oldY, float newX, float newY,
@@ -1608,7 +1402,7 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
                                uint32_t elapsedMs, uint32_t formationMs,
                                uint32_t movementMs, int formationSpeed,
                                int movementSpeed, int glowScale, int trailZ,
-                               int scrollFocusX, int formationMode) {
+                               int formationMode) {
   orbBackgroundColorsActive = formationMode == 0;
   if (formationMode != 2 && ambientOrbsTheme == ORBS_THEME_PS2_ORIGINAL) {
     drawOriginalOrbs(centerX, centerY, radiusX, radiusY,
@@ -1626,8 +1420,7 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
   const float playtimeWeight =
       (formation->from == ORB_SHAPE_PLAYTIME ? 1.0f - blend : 0.0f) +
       (formation->to == ORB_SHAPE_PLAYTIME ? blend : 0.0f);
-  const float trailWeight = playtimeWeight *
-      (scrollFocusX ? 1.0f - scrollLetterBlendAt(elapsedMs) : 1.0f);
+  const float trailWeight = playtimeWeight;
   const int trailSegments = ORB_TRAIL_SEGMENTS +
       (int)((ORB_PLAYTIME_TRAIL_SEGMENTS - ORB_TRAIL_SEGMENTS) *
             trailWeight + 0.5f);
@@ -1635,8 +1428,6 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
       (uint32_t)((ORB_PLAYTIME_TRAIL_STEP_MS - ORB_TRAIL_STEP_MS) *
                  trailWeight);
   OrbMotion motion[ORB_PLAYTIME_TRAIL_SEGMENTS + 1];
-  float letterBlend[ORB_PLAYTIME_TRAIL_SEGMENTS + 1] = {0};
-  float glyphBlend[ORB_PLAYTIME_TRAIL_SEGMENTS + 1] = {0};
   uint32_t animationTime[ORB_PLAYTIME_TRAIL_SEGMENTS + 1];
   float positionsX[ORB_COUNT], positionsY[ORB_COUNT];
   float depths[ORB_COUNT], opacities[ORB_COUNT];
@@ -1648,22 +1439,12 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
                                       movementMs - movementAge : 0;
     animationTime[sample] = orbAnimationMs(sampleMs, sampleMovementMs);
     motion[sample] = orbMotion(animationTime[sample]);
-    if (scrollFocusX) {
-      letterBlend[sample] = scrollLetterBlendAt(sampleMs);
-      glyphBlend[sample] = scrollGlyphBlendAt(sampleMs);
-    }
   }
   for (int i = 0; i < ORB_COUNT; i++) {
     orbFormationPosition(formation, i, formationMs, animationTime[0], &motion[0],
                          centerX, centerY, radiusX, radiusY,
                          &positionsX[i], &positionsY[i],
                          &depths[i], &opacities[i]);
-    if (scrollFocusX) {
-      blendScrollLetterOrb(i, letterBlend[0], glyphBlend[0], animationTime[0],
-                           centerX, centerY, radiusX, radiusY,
-                           &positionsX[i], &positionsY[i],
-                           &depths[i], &opacities[i]);
-    }
   }
 
   // (Cs - 0) * As + Cd: overlapping halos merge into a brighter light.
@@ -1671,9 +1452,8 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 2, 0, 1, 0), 0);
   // Existing tails show motion. These longer tails grow along each shape's
   // contours and retract during the transition to the next formation.
-  const float baseStrength = 1.0f - letterBlend[0];
-  const float fromExtent = (1.0f - blend) * baseStrength;
-  const float toExtent = blend * baseStrength;
+  const float fromExtent = 1.0f - blend;
+  const float toExtent = blend;
   const int edgeAlpha = (int)(0x40 * (1.0f + selectionPulse * 0.25f));
   const int logoAlpha = (int)((formationMode == 2 ? 0x18 : 0x50) *
                               (1.0f + selectionPulse * 0.25f));
@@ -1700,13 +1480,9 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
   if (formation->to == ORB_SHAPE_LUNA)
     drawOrbLogoWordmark(centerX, centerY, logoScale, trailZ,
                         (int)(logoAlpha * toExtent), toExtent);
-  const float logoStrength = letterBlend[0] +
+  const float logoStrength =
       (formation->from == ORB_SHAPE_LUNA ? fromExtent : 0.0f) +
       (formation->to == ORB_SHAPE_LUNA ? toExtent : 0.0f);
-  const float baseTrailVisibility = 1.0f - letterBlend[0];
-  float letterTrailVisibility = letterBlend[0];
-  if (scrollLetterPreviousGlyph != scrollLetterGlyph)
-    letterTrailVisibility *= glyphBlend[0];
   for (int i = 0; i < ORB_COUNT; i++) {
     const float x = positionsX[i];
     const float y = positionsY[i];
@@ -1715,9 +1491,7 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
     float newX = x;
     float newY = y;
     float newOpacity = opacity;
-    for (int segment = 1; segment <= trailSegments &&
-                          (baseTrailVisibility > 0.01f ||
-                           letterTrailVisibility > 0.01f); segment++) {
+    for (int segment = 1; segment <= trailSegments; segment++) {
       float oldX, oldY, oldDepth, oldOpacity;
       const uint32_t age = segment * trailStepMs * formationSpeed;
       orbFormationPosition(formation, i,
@@ -1725,24 +1499,14 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
                            animationTime[segment],
                            &motion[segment], centerX, centerY, radiusX, radiusY,
                            &oldX, &oldY, &oldDepth, &oldOpacity);
-      if (scrollFocusX) {
-        blendScrollLetterOrb(i, letterBlend[segment], glyphBlend[segment],
-                             animationTime[segment], centerX, centerY,
-                             radiusX, radiusY,
-                             &oldX, &oldY, &oldDepth, &oldOpacity);
-      }
       const int oldOuterAlpha = (int)((4 + (trailSegments - segment) * 28 /
-                                      trailSegments) * oldOpacity *
-                                      baseTrailVisibility);
+                                      trailSegments) * oldOpacity);
       const int newOuterAlpha = (int)((4 + (trailSegments - segment + 1) * 28 /
-                                      trailSegments) * newOpacity *
-                                      baseTrailVisibility);
+                                      trailSegments) * newOpacity);
       const int oldInnerAlpha = (int)((5 + (trailSegments - segment) * 45 /
-                                      trailSegments) * oldOpacity *
-                                      baseTrailVisibility);
+                                      trailSegments) * oldOpacity);
       const int newInnerAlpha = (int)((5 + (trailSegments - segment + 1) * 45 /
-                                      trailSegments) * newOpacity *
-                                      baseTrailVisibility);
+                                      trailSegments) * newOpacity);
       const int oldOuterWidth = 3 + (trailSegments - segment) * 6 / trailSegments;
       const int newOuterWidth = 3 + (trailSegments - segment + 1) * 6 / trailSegments;
       const int oldInnerWidth = 2 + (trailSegments - segment) * 3 / trailSegments;
@@ -1763,27 +1527,6 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
                                           ORBS_COLOR_PART_TAILS),
                             orbLightColor(0xA0, 0xD8, 0xFF, newInnerAlpha,
                                           ORBS_COLOR_PART_TAILS));
-      if (letterTrailVisibility > 0.01f) {
-        const float fade = (trailSegments - segment + 1) /
-                           (float)trailSegments;
-        const int outerAlpha = (int)(0x1E * fade * letterTrailVisibility *
-                                     oldOpacity);
-        const int innerAlpha = (int)(0x42 * fade * letterTrailVisibility *
-                                     newOpacity);
-        drawOrbTrailSegment(oldX, oldY, newX, newY,
-                            3.0f * fade, 4.0f * fade, trailZ,
-                            orbLightColor(0x48, 0x90, 0xD8, outerAlpha,
-                                          ORBS_COLOR_PART_TAILS),
-                            orbLightColor(0x70, 0xB8, 0xF0, innerAlpha,
-                                          ORBS_COLOR_PART_TAILS));
-        drawOrbGlowDisc(newX, newY, 4.0f + fade * 3.0f, trailZ,
-                        orbLightColor(0x98, 0xD8, 0xFF,
-                                      (int)(0x24 * fade *
-                                            letterTrailVisibility * newOpacity),
-                                      ORBS_COLOR_PART_ORBS),
-                        orbLightColor(0x98, 0xD8, 0xFF, 0,
-                                      ORBS_COLOR_PART_ORBS));
-      }
       newX = oldX;
       newY = oldY;
       newOpacity = oldOpacity;
@@ -1814,15 +1557,6 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
     if (coreAlpha > 0x80)
       coreAlpha = 0x80;
 
-    if (letterBlend[0] > 0.0f)
-      drawOrbGlowDisc(x + SCROLL_GLYPH_DEPTH_X * 0.75f,
-                      y + SCROLL_GLYPH_DEPTH_Y * 0.75f,
-                      haloRadius * 0.62f, trailZ,
-                      orbLightColor(0x30, 0x68, 0xA8,
-                                    (int)(coreAlpha * letterBlend[0] * 0.28f),
-                                    ORBS_COLOR_PART_ORBS),
-                      orbLightColor(0x30, 0x68, 0xA8, 0,
-                                    ORBS_COLOR_PART_ORBS));
     if (ambientOrbsAppearance == ORBS_APPEARANCE_PS2_ORIGINAL &&
         originalMasksLoaded) {
       const float originalSize = 1.0f / (1.0f + depth / 640.0f);
@@ -1860,7 +1594,7 @@ int drawAmbientOrbsBackground(uint32_t now) {
                           width, height, 0, black, black, black, black);
   drawAmbientOrbs(width * 65 / 100, height * 52 / 100,
                   width * 20 / 100, height * 30 / 100,
-                   elapsedMs, elapsedMs, elapsedMs, 1, 1, 100, 0, 0, 0);
+                   elapsedMs, elapsedMs, elapsedMs, 1, 1, 100, 0, 0);
   return 1;
 }
 
@@ -1868,7 +1602,7 @@ void drawAmbientOrbsOrbit(int centerX, int centerY, int radiusX,
                           int radiusY, uint32_t now, int trailZ) {
   const uint32_t elapsedMs = glassElapsedMs(now);
   drawAmbientOrbs(centerX, centerY, radiusX, radiusY, elapsedMs,
-                   elapsedMs, elapsedMs, 1, 1, 100, trailZ, 0, 1);
+                   elapsedMs, elapsedMs, 1, 1, 100, trailZ, 1);
 }
 
 void drawAmbientOrbsSystemConfig(uint64_t clockMs, uint32_t now,
@@ -1912,27 +1646,5 @@ void drawAmbientOrbsSplash(int centerX, int centerY, int radiusX,
                            int radiusY, uint32_t now, int trailZ) {
   const uint32_t elapsedMs = glassElapsedMs(now);
   drawAmbientOrbs(centerX, centerY, radiusX, radiusY, elapsedMs,
-                   elapsedMs, elapsedMs, 1, 1, 100, trailZ, 0, 2);
-}
-
-void drawAmbientOrbsScroll(int centerX, int centerY, int radiusX,
-                           int radiusY, uint32_t elapsedMs,
-                           int fastScroll, const char *title,
-                           int trailZ, int scrollFocusX) {
-  setScrollLetterMode(fastScroll, scrollTitleInitial(title), elapsedMs);
-  if (!scrollOrbClockInitialized) {
-    scrollOrbClockMs = elapsedMs;
-    scrollFormationClockMs = 0;
-    scrollOrbClockInitialized = 1;
-  } else {
-    scrollOrbClockMs += (elapsedMs - scrollOrbLastFrameMs) *
-                        (fastScroll ? 3U : 1U);
-    if (!fastScroll)
-      scrollFormationClockMs += elapsedMs - scrollOrbLastFrameMs;
-  }
-  scrollOrbLastFrameMs = elapsedMs;
-  drawAmbientOrbs(centerX, centerY, radiusX, radiusY, elapsedMs,
-                   scrollFormationClockMs, scrollOrbClockMs,
-                   fastScroll ? 0 : 1, fastScroll ? 3 : 1, 100,
-                   trailZ, scrollFocusX, 3);
+                   elapsedMs, elapsedMs, 1, 1, 100, trailZ, 2);
 }

@@ -154,11 +154,19 @@ static int scrollArtDoneSema = -1;
 static volatile int scrollArtStopping;
 static uint8_t scrollArtStack[16384] __attribute__((aligned(16)));
 static volatile uint32_t scrollArtGeneration;
+static GSTEXTURE scrollBackgroundTexture;
+static char scrollBackgroundPath[255];
+static char scrollBackgroundLoadedPath[255];
+static uint32_t scrollBackgroundDueMs;
+static int scrollBackgroundResolved;
+static int scrollBackgroundFast;
 static struct {
   volatile int state; // 0: idle, 1: decoding, 2: ready
+  int background;
   int targetIdx;
   uint32_t generation;
   char path[255];
+  char fallbackPath[255];
   GSTEXTURE texture;
   int result;
 } scrollArtJob;
@@ -687,12 +695,13 @@ static PSBBNPixel *createArtThumbnail(const PSBBNPixel *source, int width, int h
   return thumbnail;
 }
 
-// Scroll logos share GS VRAM with two framebuffers, the depth buffer,
+// Scroll artwork shares GS VRAM with two framebuffers, the depth buffer,
 // the font, and the System Configuration capture. gsKit's texture manager
 // loops forever if asked to bind a texture larger than its entire pool.
-static int fitScrollLogoToVram(GSTEXTURE *texture) {
-  const int maxWidth = 256;
-  const int maxHeight = 128;
+static int fitScrollArtToVram(GSTEXTURE *texture, int background) {
+  const int maxWidth = background ? 512 : 256;
+  const int maxHeight = background ? 384 : 128;
+  const u32 reserve = background ? 256U * 1024U : 65536U;
   const u32 available = 4U * 1024U * 1024U - gsGlobal->CurrentPointer;
   int width = texture->Width;
   int height = texture->Height;
@@ -707,7 +716,7 @@ static int fitScrollLogoToVram(GSTEXTURE *texture) {
   if (width < 1) width = 1;
   if (height < 1) height = 1;
   while (width > 1 && height > 1 &&
-         gsKit_texture_size(width, height, GS_PSM_CT32) + 65536U > available) {
+         gsKit_texture_size(width, height, GS_PSM_CT32) + reserve > available) {
     width /= 2;
     height /= 2;
   }
@@ -1090,6 +1099,7 @@ void releaseGridTexture(GSTEXTURE *texture) {
 void releaseOrbsArt(void) {
   scrollArtGeneration++;
   serviceScrollArt(); // Drop a completed result before its slots are released.
+  releaseScrollBackground();
   for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++) {
     if (orbsLogoTextures[i] != NULL)
       releaseGridTexture(orbsLogoTextures[i]);
@@ -1117,10 +1127,74 @@ static int queueScrollArt(Target *target, int targetIdx) {
   if (orbsLogoPath(target, scrollArtJob.path, sizeof(scrollArtJob.path)) < 0)
     return -1;
   scrollArtJob.targetIdx = targetIdx;
+  scrollArtJob.background = 0;
+  scrollArtJob.fallbackPath[0] = '\0';
   scrollArtJob.generation = scrollArtGeneration;
   scrollArtJob.state = 1;
   SignalSema(scrollArtWakeSema);
   return 1;
+}
+
+void releaseScrollBackground(void) {
+  scrollArtGeneration++;
+  releaseGridTexture(&scrollBackgroundTexture);
+  memset(&scrollBackgroundTexture, 0, sizeof(scrollBackgroundTexture));
+  scrollBackgroundPath[0] = scrollBackgroundLoadedPath[0] = '\0';
+  scrollBackgroundResolved = 0;
+  scrollBackgroundFast = 0;
+}
+
+GSTEXTURE *getScrollBackgroundTexture(void) {
+  if (scrollBackgroundFast || scrollBackgroundTexture.Mem == NULL ||
+      strcmp(scrollBackgroundLoadedPath, scrollBackgroundPath))
+    return NULL;
+  return &scrollBackgroundTexture;
+}
+
+void refreshScrollBackground(Target *target, int fastScrolling, uint32_t now) {
+  char path[255];
+  struct DeviceMapEntry *device = target != NULL ? target->device : NULL;
+  if (device != NULL && device->metadev != NULL)
+    device = device->metadev;
+  if (device == NULL || device->mountpoint == NULL || target->id == NULL) {
+    if (scrollBackgroundPath[0] || scrollBackgroundTexture.Mem != NULL)
+      releaseScrollBackground();
+    return;
+  }
+  int length = snprintf(path, sizeof(path), "%s/ART/%s_BG.png",
+                        device->mountpoint, target->id);
+  if (length < 0 || length >= (int)sizeof(path)) {
+    if (scrollBackgroundPath[0] || scrollBackgroundTexture.Mem != NULL)
+      releaseScrollBackground();
+    return;
+  }
+  if (strcmp(path, scrollBackgroundPath)) {
+    snprintf(scrollBackgroundPath, sizeof(scrollBackgroundPath), "%s", path);
+    scrollBackgroundResolved = 0;
+    scrollBackgroundDueMs = now + 180;
+  }
+  scrollBackgroundFast = fastScrolling;
+  if (fastScrolling) {
+    scrollBackgroundDueMs = now + 180;
+    return;
+  }
+  if (scrollBackgroundResolved || !strcmp(path, scrollBackgroundLoadedPath) ||
+      (int32_t)(now - scrollBackgroundDueMs) < 0 || scrollArtJob.state != 0)
+    return;
+  if (scrollArtThreadId < 0) {
+    scrollBackgroundResolved = 1;
+    return;
+  }
+  // The same worker decodes logos and backgrounds; GS uploads stay on the UI.
+  scrollArtJob.background = 1;
+  snprintf(scrollArtJob.path, sizeof(scrollArtJob.path), "%s", path);
+  length = snprintf(scrollArtJob.fallbackPath, sizeof(scrollArtJob.fallbackPath),
+                    "%s%s/%s_BG.png", device->mountpoint, orbsArtPath, target->id);
+  if (length < 0 || length >= (int)sizeof(scrollArtJob.fallbackPath))
+    scrollArtJob.fallbackPath[0] = '\0';
+  scrollArtJob.generation = scrollArtGeneration;
+  scrollArtJob.state = 1;
+  SignalSema(scrollArtWakeSema);
 }
 
 static void loadOrbsLogo(TargetList *titles, int targetIdx, int cacheIdx) {
@@ -1201,9 +1275,18 @@ static void scrollArtWorker(void) {
     GSTEXTURE decoded = {0};
     decoded.Delayed = 1;
     scrollArtJob.result = decodePNGTextureRGBA(gsGlobal, &decoded, scrollArtJob.path);
+    if (scrollArtJob.result != 0 && scrollArtJob.background &&
+        scrollArtJob.fallbackPath[0] != '\0') {
+      free(decoded.Mem);
+      free(decoded.Clut);
+      memset(&decoded, 0, sizeof(decoded));
+      decoded.Delayed = 1;
+      scrollArtJob.result = decodePNGTextureRGBA(gsGlobal, &decoded,
+                                                scrollArtJob.fallbackPath);
+    }
     if (scrollArtJob.result == 0 && decoded.Mem != NULL &&
         decoded.Width > 0 && decoded.Height > 0 &&
-        fitScrollLogoToVram(&decoded) == 0) {
+        fitScrollArtToVram(&decoded, scrollArtJob.background) == 0) {
       decoded.Filter = GS_FILTER_LINEAR;
       decoded.Delayed = 1;
       decoded.Vram = 0;
@@ -1250,20 +1333,36 @@ void serviceScrollArt(void) {
     return;
   __asm__ __volatile__("" ::: "memory");
   if (scrollArtJob.generation == scrollArtGeneration) {
-    static const uint8_t priority[ORBS_LOGO_CACHE_COUNT] = {3, 2, 4, 1, 5, 0, 6};
-    for (int p = 0; p < ORBS_LOGO_CACHE_COUNT; p++) {
-      int i = priority[p];
-      if (orbsLogoTargets[i] != scrollArtJob.targetIdx || orbsLogoResolved[i])
-        continue;
-      releaseGridTexture(orbsLogoTextures[i]);
-      if (scrollArtJob.result == 0) {
-        *orbsLogoTextures[i] = scrollArtJob.texture;
-        memset(&scrollArtJob.texture, 0, sizeof(scrollArtJob.texture));
-        orbsLogoLoaded[i] = 1;
-        bindTextureSafe(gsGlobal, orbsLogoTextures[i]);
+    if (scrollArtJob.background) {
+      // A filtered-list index can refer to a different game; match its path.
+      if (!strcmp(scrollArtJob.path, scrollBackgroundPath)) {
+        releaseGridTexture(&scrollBackgroundTexture);
+        memset(&scrollBackgroundTexture, 0, sizeof(scrollBackgroundTexture));
+        scrollBackgroundLoadedPath[0] = '\0';
+        if (scrollArtJob.result == 0) {
+          scrollBackgroundTexture = scrollArtJob.texture;
+          memset(&scrollArtJob.texture, 0, sizeof(scrollArtJob.texture));
+          snprintf(scrollBackgroundLoadedPath, sizeof(scrollBackgroundLoadedPath),
+                    "%s", scrollArtJob.path);
+        }
+        scrollBackgroundResolved = 1;
       }
-      orbsLogoResolved[i] = 1;
-      break;
+    } else {
+      static const uint8_t priority[ORBS_LOGO_CACHE_COUNT] = {3, 2, 4, 1, 5, 0, 6};
+      for (int p = 0; p < ORBS_LOGO_CACHE_COUNT; p++) {
+        int i = priority[p];
+        if (orbsLogoTargets[i] != scrollArtJob.targetIdx || orbsLogoResolved[i])
+          continue;
+        releaseGridTexture(orbsLogoTextures[i]);
+        if (scrollArtJob.result == 0) {
+          *orbsLogoTextures[i] = scrollArtJob.texture;
+          memset(&scrollArtJob.texture, 0, sizeof(scrollArtJob.texture));
+          orbsLogoLoaded[i] = 1;
+          bindTextureSafe(gsGlobal, orbsLogoTextures[i]);
+        }
+        orbsLogoResolved[i] = 1;
+        break;
+      }
     }
   }
   free(scrollArtJob.texture.Mem);
@@ -2313,6 +2412,7 @@ void artCacheShutdown(void) {
   stopOrbitArtWorker();
   stopGridArtWorker();
   stopScrollArtWorker();
+  releaseScrollBackground();
   collectionArtReuseClear(&collectionReuseCache);
   memset(collectionCoverKeys, 0, sizeof(collectionCoverKeys));
   memset(&collectionArtStats, 0, sizeof(collectionArtStats));

@@ -25,6 +25,10 @@ int saveClassicArtOverlap(Target *target, int overlap);
 LibraryBackground loadLibraryBackground(Target *target);
 int saveLibraryBackground(Target *target, LibraryBackground background);
 
+// Scroll follows the shared background unless Game Art is selected.
+ScrollBackground loadScrollBackground(Target *target);
+int saveScrollBackground(Target *target, ScrollBackground background);
+
 // Orb behavior defaults to LUNA when no valid choice has been saved.
 AmbientOrbsTheme loadAmbientOrbsTheme(Target *target);
 int saveAmbientOrbsTheme(Target *target, AmbientOrbsTheme theme);

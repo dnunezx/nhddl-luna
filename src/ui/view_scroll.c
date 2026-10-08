@@ -14,6 +14,7 @@
 
 static GlassColorPreset glassColorPreset = GLASS_COLOR_ORIGINAL;
 static LibraryBackground libraryBackground = LIBRARY_BACKGROUND_STARS;
+static ScrollBackground scrollBackground = SCROLL_BACKGROUND_SYSTEM;
 static u32 fogPixels[128 * 128] __attribute__((aligned(128)));
 static u32 bumpPixels[64 * 64] __attribute__((aligned(128)));
 static GSTEXTURE fogTexture;
@@ -387,6 +388,18 @@ LibraryBackground getLibraryBackground(void) {
   return libraryBackground;
 }
 
+void setScrollBackground(ScrollBackground background) {
+  if (background < SCROLL_BACKGROUND_SYSTEM || background >= SCROLL_BACKGROUND_COUNT)
+    background = SCROLL_BACKGROUND_SYSTEM;
+  if (scrollBackground != background)
+    releaseScrollBackground();
+  scrollBackground = background;
+}
+
+ScrollBackground getScrollBackground(void) {
+  return scrollBackground;
+}
+
 void setGlassColorPreset(GlassColorPreset preset) {
   glassColorPreset = (preset >= GLASS_COLOR_ORIGINAL && preset < GLASS_COLOR_COUNT)
                         ? preset : GLASS_COLOR_ORIGINAL;
@@ -436,6 +449,18 @@ uint64_t glassMissingCoverDiamondColor(int alpha) {
 static uint32_t glassStartMs = 0;
 
 typedef struct {
+  char letter;
+  int index;
+} ScrollRailMarker;
+
+static const TargetList *scrollRailTitles;
+static int scrollRailTotal;
+static ScrollRailMarker scrollRailMarkers[27];
+static int scrollRailMarkerCount;
+static int scrollRailLetterFade;
+static uint32_t scrollRailFrameMs;
+
+typedef struct {
   float x;
   float y;
   int depth;
@@ -470,6 +495,9 @@ void drawOrbitalDisc(int centerX, int centerY, int radius, int z, uint64_t cente
 
 void resetGlassVisuals(uint32_t startMs) {
   glassStartMs = startMs;
+  scrollRailTitles = NULL;
+  scrollRailLetterFade = 0;
+  scrollRailFrameMs = startMs;
   resetAmbientOrbs(startMs);
 }
 
@@ -1571,13 +1599,13 @@ int orbsVisualCacheIndex(int flowOffset) {
   return closest;
 }
 
-static void drawOrbsLogo(GSTEXTURE *texture, float x, float y,
-                         float width, float height, int brightness) {
+static int drawScrollTexture(GSTEXTURE *texture, float x, float y,
+                              float width, float height, int brightness, int z) {
   int previousAlphaTest = gsGlobal->Test->ATST;
   int previousAlphaReference = gsGlobal->Test->AREF;
   int previousAlphaFail = gsGlobal->Test->AFAIL;
   if (!bindTextureSafe(gsGlobal, texture))
-    return;
+    return 0;
   gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
   gsGlobal->Test->ATST = 2;
   gsGlobal->Test->AREF = 0x80;
@@ -1586,13 +1614,14 @@ static void drawOrbsLogo(GSTEXTURE *texture, float x, float y,
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
   gsKit_prim_sprite_texture(gsGlobal, texture, x, y, 0.0f, 0.0f,
                             x + width, y + height,
-                            texture->Width - 1, texture->Height - 1, 6,
+                            texture->Width - 1, texture->Height - 1, z,
                             GS_SETREG_RGBA(brightness, brightness, brightness, 0x80));
   gsGlobal->Test->ATST = previousAlphaTest;
   gsGlobal->Test->AREF = previousAlphaReference;
   gsGlobal->Test->AFAIL = previousAlphaFail;
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+  return 1;
 }
 
 static void scrollWheelGeometry(int position, int centerY, int listHeight,
@@ -1609,6 +1638,134 @@ static void scrollWheelGeometry(int position, int centerY, int listHeight,
                    (1000.0f + distance * 0.23f);
 }
 
+static char scrollRailInitial(const char *title) {
+  // Group numeric titles under # and ignore leading punctuation.
+  while (*title) {
+    const char c = *title++;
+    if (c >= 'A' && c <= 'Z')
+      return c;
+    if (c >= 'a' && c <= 'z')
+      return c - 'a' + 'A';
+    if (c >= '0' && c <= '9')
+      return '#';
+  }
+  return '#';
+}
+
+static void drawScrollArtworkWindow(GSTEXTURE *texture, int listTop,
+                                    int listBottom, int logoCenterX,
+                                    int entryProgress) {
+  if (texture == NULL || texture->Width <= 0 || texture->Height <= 0)
+    return;
+
+  // Leave room for the full-size focused logo and the frame on either side.
+  const int left = keepoutArea + 12;
+  const int right = logoCenterX - 116 - 24;
+  const int availableHeight = listBottom - listTop - 24;
+  float artWidth = right - left;
+  float artHeight = artWidth * texture->Height / texture->Width;
+  if (artHeight > availableHeight) {
+    artHeight = availableHeight;
+    artWidth = artHeight * texture->Width / texture->Height;
+  }
+  if (artWidth <= 0 || artHeight <= 0)
+    return;
+
+  const int x = left + (right - left - (int)artWidth) / 2;
+  const int y = (listTop + listBottom - (int)artHeight) / 2;
+  const int x2 = x + (int)artWidth;
+  const int y2 = y + (int)artHeight;
+  gsKit_prim_sprite(gsGlobal, x - 2, y, x2 + 10, y2 + 12, 3,
+                    glassPresetColor(0x00, 0x02, 0x08, 0x38));
+  drawGlassPanel(x - 6, y - 6, x2 + 6, y2 + 6, 4);
+  drawScrollTexture(texture, x, y, artWidth, artHeight,
+                     (0x80 * entryProgress) / 1000, 5);
+}
+
+static void drawScrollPositionRail(TargetList *titles, int visualTitleIdx,
+                                   int fastScroll, int entryProgress,
+                                   int listTop, int listBottom, uint32_t now) {
+  if (titles->total <= 0)
+    return;
+
+  if (scrollRailTitles != titles || scrollRailTotal != titles->total) {
+    // Cache only the first occurrence of each initial in the active list.
+    // Favorites borrow targets, so use their indexed order rather than next.
+    uint32_t seen = 0;
+    scrollRailTitles = titles;
+    scrollRailTotal = titles->total;
+    scrollRailMarkerCount = 0;
+    scrollRailLetterFade = 0;
+    scrollRailFrameMs = now;
+    for (int i = 0; i < titles->total; i++) {
+      char letter = scrollRailInitial(getTargetByIdx(titles, i)->name);
+      uint32_t bit = 1U << (letter == '#' ? 26 : letter - 'A');
+      if (seen & bit)
+        continue;
+      seen |= bit;
+      scrollRailMarkers[scrollRailMarkerCount++] = (ScrollRailMarker){letter, i};
+    }
+  }
+
+  uint32_t elapsed = now - scrollRailFrameMs;
+  scrollRailFrameMs = now;
+  if (elapsed > 100)
+    elapsed = 100;
+  // Letters fade in and out over 160 ms; the quiet track stays visible.
+  scrollRailLetterFade += (fastScroll ? 1 : -1) * (int)(elapsed * 1000U / 160U);
+  if (scrollRailLetterFade < 0) scrollRailLetterFade = 0;
+  if (scrollRailLetterFade > 1000) scrollRailLetterFade = 1000;
+
+  const int lineHeight = getFontLineHeight();
+  const int x = gsGlobal->Width - keepoutArea - 5;
+  const int top = listTop + lineHeight / 2 + 8;
+  const int bottom = listBottom - lineHeight / 2 - 8;
+  const int span = bottom - top;
+  const int denominator = titles->total > 1 ? titles->total - 1 : 1;
+  const int thumbY = titles->total > 1
+      ? top + (int)((int64_t)visualTitleIdx * span / denominator)
+      : (top + bottom) / 2;
+  const int letterAlpha = scrollRailLetterFade * entryProgress / 1000;
+  const char activeLetter = scrollRailInitial(getTargetByIdx(titles, visualTitleIdx)->name);
+
+  gsKit_prim_sprite(gsGlobal, x - 1, top, x + 1, bottom + 1, 7,
+                    glassLightColor(0x8A, 0xB4, 0xCC, 0x24 * entryProgress / 1000));
+  gsKit_prim_sprite(gsGlobal, x - 3, top, x + 3, top + 1, 7,
+                    glassLightColor(0x8A, 0xB4, 0xCC, 0x30 * entryProgress / 1000));
+  gsKit_prim_sprite(gsGlobal, x - 3, bottom, x + 3, bottom + 1, 7,
+                    glassLightColor(0x8A, 0xB4, 0xCC, 0x30 * entryProgress / 1000));
+
+  if (letterAlpha > 0) {
+    int previousLabelY = top - lineHeight - 4;
+    for (int i = 0; i < scrollRailMarkerCount; i++) {
+      const ScrollRailMarker *marker = &scrollRailMarkers[i];
+      const int y = top + (int)((int64_t)marker->index * span / denominator);
+      gsKit_prim_sprite(gsGlobal, x - 5, y, x + 2, y + 1, 7,
+                        glassLightColor(0x94, 0xC4, 0xDC, 0x48 * letterAlpha / 1000));
+      // Keep every section tick, but thin labels in densely packed sections.
+      if (marker->letter == activeLetter || abs(y - thumbY) < lineHeight + 4 ||
+          y - previousLabelY < lineHeight + 4)
+        continue;
+      char label[2] = {marker->letter, '\0'};
+      drawTextWindow(x - 35, y - lineHeight / 2, x - 9,
+                     y - lineHeight / 2 + lineHeight, 8,
+                     glassLightColor(0xB0, 0xCC, 0xDC, 0x62 * letterAlpha / 1000),
+                     ALIGN_CENTER, label);
+      previousLabelY = y;
+    }
+    char label[2] = {activeLetter, '\0'};
+    drawTextWindow(x - 35, thumbY - lineHeight / 2, x - 9,
+                   thumbY - lineHeight / 2 + lineHeight, 8,
+                   glassLightColor(0xE0, 0xF0, 0xFF, 0x80 * letterAlpha / 1000),
+                   ALIGN_CENTER, label);
+  }
+
+  gsKit_prim_sprite(gsGlobal, x - 5, thumbY - 10, x + 5, thumbY + 10, 7,
+                    glassLightColor(0x98, 0xD8, 0xF4, 0x14 * entryProgress / 1000));
+  gsKit_prim_sprite(gsGlobal, x - 2, thumbY - 6, x + 2, thumbY + 6, 8,
+                    glassLightColor(0xC0, 0xE8, 0xFF, 0x68 * entryProgress / 1000));
+}
+
 void drawOrbsView(TargetList *titles, int selectedTitleIdx,
                   int flowOffset, int visualFocus, int fastScroll,
                   int entryProgress, uint32_t now,
@@ -1618,17 +1775,18 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
   const int listTop = headerHeight + 12;
   const int listBottom = height - footerHeight - 12;
   const int centerY = (listTop + listBottom) / 2;
-  const int logoCenterX = width - 153;
+  const int logoCenterX = width - 177;
   const int logoEntryOffset = (1000 - entryProgress) * 72 / 1000;
   const int logoEntryBrightness = 350 + entryProgress * 650 / 1000;
   const int visualTitleIdx = lunaNavWrap(titles->total,
       selectedTitleIdx + visualFocus - ORBS_LOGO_CACHE_FOCUS);
-  const uint32_t elapsedMs = glassElapsedMs(now);
   char title[255];
 
+  GSTEXTURE *background = scrollBackground == SCROLL_BACKGROUND_GAME_ART
+      ? getScrollBackgroundTexture() : NULL;
   drawSharedLibraryBackground(now);
 
-  // Keep the orbit visible and make a quiet area for the logos.
+  // Shade the background to keep the logos readable.
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
   gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 1,
                     glassPresetColor(0x00, 0x02, 0x0C, 0x20));
@@ -1643,6 +1801,9 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
   gsKit_prim_sprite(gsGlobal, 0, height - footerHeight, width, height, 3,
                     glassPresetColor(0x02, 0x05, 0x10, 0x62));
 
+  drawScrollArtworkWindow(background, listTop, listBottom,
+                          logoCenterX, entryProgress);
+
   drawTextWindow(keepoutArea + 10, headerHeight - getFontLineHeight(),
                  width - keepoutArea, 0, 7, FontMainColor, ALIGN_LEFT, lunaText("SCROLL"));
   snprintf(lineBuffer, sizeof(lineBuffer), "%d/%d", visualTitleIdx + 1,
@@ -1650,11 +1811,6 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
   drawTextWindow(width - 116, headerHeight - getFontLineHeight(),
                  width - keepoutArea - 8, 0, 7, FontMainColor,
                  ALIGN_RIGHT, lineBuffer);
-
-  drawAmbientOrbsScroll(width * 27 / 100, centerY, width * 20 / 100,
-                        (listBottom - listTop) * 36 / 100, elapsedMs,
-                        fastScroll, getTargetByIdx(titles, visualTitleIdx)->name,
-                        5, width - 290);
 
   // Draw the far side of the wheel first so nearer titles stay in front.
   int wheelOrder[ORBS_LOGO_CACHE_COUNT];
@@ -1709,9 +1865,9 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
       brightness = brightness * (2300 - distance) / 300;
     brightness = brightness * logoEntryBrightness / 1000;
     if (orbsLogoLoaded[i] && !fastScroll)
-      drawOrbsLogo(orbsLogoTextures[i], rowX - logoWidth / 2.0f,
+      drawScrollTexture(orbsLogoTextures[i], rowX - logoWidth / 2.0f,
                    rowY - logoHeight / 2.0f, logoWidth, logoHeight,
-                   brightness);
+                   brightness, 6);
     else {
       int textWidth = (int)logoWidth - 20;
       formatPSBBNTitle(getTargetByIdx(titles, targetIdx)->name, title, textWidth);
@@ -1725,6 +1881,6 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
                      ALIGN_CENTER, title);
     }
   }
-
-
+  drawScrollPositionRail(titles, visualTitleIdx, fastScroll, entryProgress,
+                         listTop, listBottom, now);
 }

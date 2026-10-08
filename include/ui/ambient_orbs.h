@@ -72,10 +72,4 @@ void resetAmbientOrbsSplash(uint32_t now);
 void drawAmbientOrbsSplash(int centerX, int centerY, int radiusX,
                            int radiusY, uint32_t now, int trailZ);
 
-// The alphabet formation belongs only to Scroll view.
-void resetAmbientOrbsScroll(void);
-void drawAmbientOrbsScroll(int centerX, int centerY, int radiusX,
-                           int radiusY, uint32_t elapsedMs, int fastScroll,
-                           const char *title, int trailZ, int scrollFocusX);
-
 #endif
