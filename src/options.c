@@ -85,23 +85,20 @@ static int writeAll(int fd, const void *buffer, size_t length) {
 }
 
 int commitConfigFile(const char *tempPath, const char *path) {
-  // Some storage drivers cannot replace an existing file with rename.
-  remove(path);
-  if (!rename(tempPath, path))
-    return 0;
-  int renameError = errno;
-  // A failed rename may still leave the complete temporary file available.
+  if (!strcmp(tempPath, path))
+    return -EINVAL;
+  // Keep the complete staged record until the destination is closed. On the
+  // ATA filesystem, remove/rename has left neither file available after a
+  // failed commit. Readers accept the temporary record if a copy is interrupted.
   int source = open(tempPath, O_RDONLY);
   if (source < 0) {
-    DPRINTF("ERROR: Config rename failed (%d), and temp file is missing: %s\n",
-            renameError, tempPath);
+    DPRINTF("ERROR: Could not open staged config (%d): %s\n", errno, tempPath);
     return -EIO;
   }
   int destination = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
   if (destination < 0) {
     close(source);
-    DPRINTF("ERROR: Config rename failed (%d), and copy could not open: %s\n",
-            renameError, path);
+    DPRINTF("ERROR: Could not open config destination (%d): %s\n", errno, path);
     return -EIO;
   }
   char buffer[256];
@@ -119,13 +116,11 @@ int commitConfigFile(const char *tempPath, const char *path) {
     result = -EIO;
   close(source);
   if (result) {
-    DPRINTF("ERROR: Config rename failed (%d), and copy failed: %s\n",
-            renameError, path);
+    DPRINTF("ERROR: Config copy failed: %s (staged record retained)\n", path);
     return result;
   }
   remove(tempPath);
-  DPRINTF("Recovered config save after rename failure (%d): %s\n",
-          renameError, path);
+  DPRINTF("Saved config: %s\n", path);
   return 0;
 }
 
