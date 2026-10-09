@@ -119,6 +119,8 @@ static void prepareFontPageAlpha(GSTEXTURE *page) {
     pixels[i * 4 + 3] = 0x80 - pixels[i * 4 + 3];
 }
 
+UIFont getUIFont(void) { return activeUIFont; }
+
 int setUIFont(UIFont selection) {
   if (selection < UI_FONT_DEJAVU || selection >= UI_FONT_COUNT)
     return -1;
@@ -625,6 +627,42 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
 
   return curY + font->lineHeight;
+}
+
+void drawTextLineScaled(int x, int y, int right, int z, float scale,
+                        uint64_t color, const char *text) {
+  const int previousAlphaTest = gsGlobal->Test->ATST;
+  const int previousAlphaReference = gsGlobal->Test->AREF;
+  const int previousAlphaFail = gsGlobal->Test->AFAIL;
+  float curX = x;
+  beginFontDraw();
+  const char *cursor = text;
+  while (*cursor) {
+    uint32_t character = lunaUTF8Next(&cursor);
+    if (character == '\n') break;
+    const BMFontChar *glyph = getGlyph(character);
+    if (!glyph) continue;
+    float left = curX + glyph->xoffset * scale;
+    float top = y + glyph->yoffset * scale;
+    if (left + glyph->width * scale > right) break;
+    gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],
+        left, top, glyph->x, glyph->y,
+        left + glyph->width * scale, top + glyph->height * scale,
+        glyph->x + glyph->width + 1, glyph->y + glyph->height + 1, z, color);
+    curX += glyph->xadvance * scale;
+    if (glyph->kernings && *cursor) {
+      const char *next = cursor;
+      uint32_t nextCharacter = lunaUTF8Next(&next);
+      for (int k = 0; k < glyph->kerningsCount; k++)
+        if (glyph->kernings[k].secondChar == nextCharacter)
+          curX += glyph->kernings[k].amount * scale;
+    }
+  }
+  gsGlobal->Test->ATST = previousAlphaTest;
+  gsGlobal->Test->AREF = previousAlphaReference;
+  gsGlobal->Test->AFAIL = previousAlphaFail;
+  gsKit_set_test(gsGlobal, GS_ATEST_ON);
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
 }
 
 int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *text, int scrollX) {

@@ -1,12 +1,14 @@
 // LUNA visual rendering extracted from gui.c.
 #include "ui/view_internal.h"
 #include "ui/language.h"
+#include "ui/utf8.h"
 #include "ui/view_scroll.h"
 #include "ui/ambient_orbs.h"
 #include "ui/ps2_menu_scene.h"
 #include "options.h"
 #include "dprintf.h"
 #include <gsInline.h>
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1652,34 +1654,253 @@ static char scrollRailInitial(const char *title) {
   return '#';
 }
 
-static void drawScrollArtworkWindow(GSTEXTURE *texture, int listTop,
-                                    int listBottom, int logoCenterX,
-                                    int entryProgress) {
-  if (texture == NULL || texture->Width <= 0 || texture->Height <= 0)
-    return;
+#define SCROLL_PROFILE_LINE_BYTES 320
+#define SCROLL_PROFILE_DESCRIPTION_LINES 16
+#define SCROLL_PROFILE_BADGES 8
+#define SCROLL_PROFILE_BODY_SCALE 0.90f
+#define SCROLL_PROFILE_DETAIL_SCALE 0.80f
+#define SCROLL_PROFILE_BADGE_SCALE 0.70f
+#define SCROLL_PROFILE_LABEL_SCALE 0.65f
+#define SCROLL_PROFILE_FADE_MS 180
 
-  // Leave room for the full-size focused logo and the frame on either side.
-  const int left = keepoutArea + 12;
-  const int right = logoCenterX - 116 - 24;
-  const int availableHeight = listBottom - listTop - 24;
-  float artWidth = right - left;
-  float artHeight = artWidth * texture->Height / texture->Width;
-  if (artHeight > availableHeight) {
-    artHeight = availableHeight;
-    artWidth = artHeight * texture->Width / texture->Height;
+typedef struct {
+  char text[SCROLL_PROFILE_LINE_BYTES];
+  int x, y, width;
+  int players;
+} ScrollProfileBadge;
+
+static struct {
+  const Target *target;
+  char name[255], id[64];
+  LunaGameInfo info;
+  int ready, width, lineHeight, height, badgeCount;
+  int releaseCount, developerCount, descriptionCount;
+  int badgeTop, detailsTop, descriptionTop, developerX;
+  LunaLanguage language;
+  UIFont font;
+  uint32_t selectionMs, infoMs;
+  char release[1][SCROLL_PROFILE_LINE_BYTES];
+  char developer[2][SCROLL_PROFILE_LINE_BYTES];
+  char description[SCROLL_PROFILE_DESCRIPTION_LINES][SCROLL_PROFILE_LINE_BYTES];
+  ScrollProfileBadge badges[SCROLL_PROFILE_BADGES];
+} scrollProfile;
+
+static void scrollProfileEllipsis(char *text, int width, float scale) {
+  size_t length = strlen(text);
+  while (length && (getLineWidth(text) + getLineWidth("...")) * scale > width) {
+    length--;
+    while (length && ((unsigned char)text[length] & 0xc0) == 0x80) length--;
+    text[length] = '\0';
   }
-  if (artWidth <= 0 || artHeight <= 0)
-    return;
+  strcat(text, "...");
+}
 
-  const int x = left + (right - left - (int)artWidth) / 2;
-  const int y = (listTop + listBottom - (int)artHeight) / 2;
-  const int x2 = x + (int)artWidth;
-  const int y2 = y + (int)artHeight;
-  gsKit_prim_sprite(gsGlobal, x - 2, y, x2 + 10, y2 + 12, 3,
-                    glassPresetColor(0x00, 0x02, 0x08, 0x38));
-  drawGlassPanel(x - 6, y - 6, x2 + 6, y2 + 6, 4);
-  drawScrollTexture(texture, x, y, artWidth, artHeight,
-                     (0x80 * entryProgress) / 1000, 5);
+// Cache word-wrapped lines only when selection, metadata, font or bounds change.
+static int scrollProfileWrap(const char *text, int width, float scale,
+                              char lines[][SCROLL_PROFILE_LINE_BYTES], int maxLines) {
+  int count = 0;
+  while (*text && count < maxLines) {
+    while (isspace((unsigned char)*text)) text++;
+    if (!*text) break;
+    char *line = lines[count++];
+    const char *cursor = text, *lastSpace = NULL;
+    size_t length = 0;
+    while (*cursor) {
+      const char *next = cursor;
+      lunaUTF8Next(&next);
+      size_t candidate = next - text;
+      if (candidate >= SCROLL_PROFILE_LINE_BYTES - 4) break;
+      memcpy(line + length, cursor, next - cursor);
+      line[candidate] = '\0';
+      if (getLineWidth(line) * scale > width) { line[length] = '\0'; break; }
+      if (isspace((unsigned char)*cursor)) lastSpace = cursor;
+      length = candidate;
+      cursor = next;
+    }
+    if (*cursor && lastSpace) { length = lastSpace - text; cursor = lastSpace + 1; }
+    if (cursor == text) { lunaUTF8Next(&cursor); length = 0; }
+    while (length && isspace((unsigned char)line[length - 1])) length--;
+    line[length] = '\0';
+    text = cursor;
+    while (isspace((unsigned char)*text)) text++;
+    if (*text && count == maxLines) scrollProfileEllipsis(line, width, scale);
+  }
+  return count;
+}
+
+static int scrollProfileAddBadge(const char *text, int players) {
+  char line[1][SCROLL_PROFILE_LINE_BYTES];
+  if (!scrollProfileWrap(text, scrollProfile.width - 18, SCROLL_PROFILE_BADGE_SCALE,
+                         line, 1)) return 1;
+  int width = (int)ceilf(getLineWidth(line[0]) * SCROLL_PROFILE_BADGE_SCALE) + 18;
+  int x = 0, y = 0;
+  if (scrollProfile.badgeCount) {
+    ScrollProfileBadge *previous = &scrollProfile.badges[scrollProfile.badgeCount - 1];
+    x = previous->x + previous->width + 7;
+    y = previous->y;
+    if (x + width > scrollProfile.width) { x = 0; y++; }
+  }
+  if (y >= 2 || scrollProfile.badgeCount == SCROLL_PROFILE_BADGES) return 0;
+  ScrollProfileBadge *badge = &scrollProfile.badges[scrollProfile.badgeCount++];
+  snprintf(badge->text, sizeof(badge->text), "%s", line[0]);
+  badge->x = x; badge->y = y; badge->width = width; badge->players = players;
+  return 1;
+}
+
+static void layoutScrollProfile(const LunaGameInfo *info, int width, int height) {
+  scrollProfile.width = width;
+  scrollProfile.height = height;
+  scrollProfile.lineHeight = getFontLineHeight();
+  scrollProfile.font = getUIFont();
+  scrollProfile.language = lunaLanguage();
+  const int labelStep = (int)ceilf(getFontLineHeight() * SCROLL_PROFILE_LABEL_SCALE);
+  const int detailStep = (int)ceilf(getFontLineHeight() * SCROLL_PROFILE_DETAIL_SCALE);
+  const int bodyStep = (int)ceilf(getFontLineHeight() * SCROLL_PROFILE_BODY_SCALE);
+  const int badgeHeight = (int)ceilf(getFontLineHeight() * SCROLL_PROFILE_BADGE_SCALE) + 10;
+  int y = labelStep + 16;
+  scrollProfile.badgeTop = y;
+  scrollProfile.badgeCount = 0;
+  if (info->players[0]) {
+    char text[128];
+    snprintf(text, sizeof(text), "%s %s", lunaText("Players:"), info->players);
+    scrollProfileAddBadge(text, 1);
+  }
+  const char *genre = info->genre;
+  while (*genre) {
+    while (*genre == ',' || isspace((unsigned char)*genre)) genre++;
+    const char *end = strchr(genre, ',');
+    if (!end) end = genre + strlen(genre);
+    size_t length = end - genre;
+    while (length && isspace((unsigned char)genre[length - 1])) length--;
+    char text[sizeof(info->genre)];
+    memcpy(text, genre, length); text[length] = '\0';
+    if (!scrollProfileAddBadge(text, 0)) {
+      ScrollProfileBadge *last = &scrollProfile.badges[scrollProfile.badgeCount - 1];
+      scrollProfileEllipsis(last->text, last->width - 18, SCROLL_PROFILE_BADGE_SCALE);
+      break;
+    }
+    genre = *end ? end + 1 : end;
+  }
+  if (scrollProfile.badgeCount)
+    y += (scrollProfile.badges[scrollProfile.badgeCount - 1].y + 1) *
+         (badgeHeight + 6) + 9;
+  scrollProfile.detailsTop = y;
+  const int columnWidth = (width - 18) / 2;
+  scrollProfile.releaseCount = scrollProfileWrap(info->release,
+      info->developer[0] ? columnWidth : width, SCROLL_PROFILE_DETAIL_SCALE,
+      scrollProfile.release, 1);
+  scrollProfile.developerX = info->release[0] ? columnWidth + 18 : 0;
+  scrollProfile.developerCount = scrollProfileWrap(info->developer,
+      info->release[0] ? columnWidth : width, SCROLL_PROFILE_DETAIL_SCALE,
+      scrollProfile.developer, 2);
+  int detailRows = scrollProfile.developerCount > scrollProfile.releaseCount
+      ? scrollProfile.developerCount : scrollProfile.releaseCount;
+  if (detailRows) y += labelStep + 5 + detailRows * detailStep + 18;
+  scrollProfile.descriptionTop = y;
+  int maxLines = (height - y - 8) / bodyStep;
+  if (maxLines < 0) maxLines = 0;
+  if (maxLines > SCROLL_PROFILE_DESCRIPTION_LINES) maxLines = SCROLL_PROFILE_DESCRIPTION_LINES;
+  const char *description = info->description;
+  if (!description[0] && !info->release[0] && !info->developer[0] && !info->genre[0] && !info->players[0])
+    description = lunaText("No game information");
+  scrollProfile.descriptionCount = scrollProfileWrap(description, width,
+      SCROLL_PROFILE_BODY_SCALE, scrollProfile.description, maxLines);
+}
+
+static int scrollProfileFade(uint32_t now, uint32_t start) {
+  uint32_t elapsed = now - start;
+  return elapsed >= SCROLL_PROFILE_FADE_MS ? 1000
+      : lunaNavEase((int)(elapsed * 1000U / SCROLL_PROFILE_FADE_MS));
+}
+
+static void drawScrollGameInfo(Target *target, int listTop, int listBottom,
+                               int logoCenterX, int entryProgress, uint32_t now) {
+  if (!target) return;
+  const LunaGameInfo *info = getScrollGameInfo();
+  const LunaGameInfo empty = {0};
+  const int left = keepoutArea + 12, right = logoCenterX - 116 - 24;
+  const int top = listTop + 12, width = right - left;
+  const int height = listBottom - top;
+  if (width < 40 || height < 80) return;
+  const char *name = target->name ? target->name : "";
+  const char *id = target->id ? target->id : "";
+  int changed = scrollProfile.target != target ||
+      strncmp(scrollProfile.name, name, sizeof(scrollProfile.name) - 1) ||
+      strncmp(scrollProfile.id, id, sizeof(scrollProfile.id) - 1);
+  int readyChanged = scrollProfile.ready != (info != NULL);
+  if (changed) {
+    scrollProfile.target = target;
+    snprintf(scrollProfile.name, sizeof(scrollProfile.name), "%s", name);
+    snprintf(scrollProfile.id, sizeof(scrollProfile.id), "%s", id);
+    scrollProfile.selectionMs = now;
+  }
+  if (changed || readyChanged) scrollProfile.infoMs = now;
+  if (changed || readyChanged || memcmp(info ? info : &empty, &scrollProfile.info, sizeof(empty)) ||
+      scrollProfile.width != width || scrollProfile.height != height ||
+      scrollProfile.lineHeight != getFontLineHeight() || scrollProfile.font != getUIFont() ||
+      scrollProfile.language != lunaLanguage()) {
+    scrollProfile.ready = info != NULL;
+    scrollProfile.info = info ? *info : empty;
+    layoutScrollProfile(&scrollProfile.info, width, height);
+  }
+  const int selectionOpacity = entryProgress * scrollProfileFade(now, scrollProfile.selectionMs) / 1000;
+  const int infoOpacity = selectionOpacity * scrollProfileFade(now, scrollProfile.infoMs) / 1000;
+  const int labelStep = (int)ceilf(getFontLineHeight() * SCROLL_PROFILE_LABEL_SCALE);
+  const int detailStep = (int)ceilf(getFontLineHeight() * SCROLL_PROFILE_DETAIL_SCALE);
+  const int bodyStep = (int)ceilf(getFontLineHeight() * SCROLL_PROFILE_BODY_SCALE);
+  const int badgeHeight = (int)ceilf(getFontLineHeight() * SCROLL_PROFILE_BADGE_SCALE) + 10;
+  drawTextLineScaled(left, top, right, 7, SCROLL_PROFILE_LABEL_SCALE,
+      glassLightColor(0x88, 0xAA, 0xC2, 0x70 * selectionOpacity / 1000), id);
+  if (!info) return;
+  for (int i = 0; i < scrollProfile.badgeCount; i++) {
+    ScrollProfileBadge *badge = &scrollProfile.badges[i];
+    int x = left + badge->x;
+    int y = top + scrollProfile.badgeTop + badge->y * (badgeHeight + 6);
+    int x2 = x + badge->width;
+    uint64_t fill = badge->players
+        ? glassPresetColor(0x34, 0x20, 0x58, 0x58 * infoOpacity / 1000)
+        : glassPresetColor(0x12, 0x32, 0x48, 0x58 * infoOpacity / 1000);
+    uint64_t accent = badge->players
+        ? glassLightColor(0xB8, 0x94, 0xE8, 0x70 * infoOpacity / 1000)
+        : glassLightColor(0x74, 0xCA, 0xDE, 0x70 * infoOpacity / 1000);
+    gsKit_prim_sprite(gsGlobal, x + 3, y, x2 - 3, y + badgeHeight, 5, fill);
+    gsKit_prim_sprite(gsGlobal, x, y + 3, x + 3, y + badgeHeight - 3, 5, fill);
+    gsKit_prim_sprite(gsGlobal, x2 - 3, y + 3, x2, y + badgeHeight - 3, 5, fill);
+    gsKit_prim_sprite(gsGlobal, x + 4, y, x2 - 4, y + 2, 6, accent);
+    drawTextLineScaled(x + 9, y + 5, x2 - 9, 7, SCROLL_PROFILE_BADGE_SCALE,
+        glassPresetColor(0xDE, 0xEA, 0xFA, 0x80 * infoOpacity / 1000), badge->text);
+  }
+  const int detailTop = top + scrollProfile.detailsTop;
+  uint64_t labelColor = glassLightColor(0x8A, 0xB2, 0xC8, 0x70 * infoOpacity / 1000);
+  uint64_t valueColor = glassPresetColor(0xD4, 0xE0, 0xF0, 0x80 * infoOpacity / 1000);
+  if (scrollProfile.releaseCount) {
+    int edge = scrollProfile.developerCount ? left + (width - 18) / 2 : right;
+    drawTextLineScaled(left, detailTop, edge, 7, SCROLL_PROFILE_LABEL_SCALE,
+                        labelColor, lunaText("Release:"));
+    drawTextLineScaled(left, detailTop + labelStep + 5, edge, 7,
+                        SCROLL_PROFILE_DETAIL_SCALE, valueColor, scrollProfile.release[0]);
+  }
+  if (scrollProfile.developerCount) {
+    int x = left + scrollProfile.developerX;
+    drawTextLineScaled(x, detailTop, right, 7, SCROLL_PROFILE_LABEL_SCALE,
+                        labelColor, lunaText("Developer:"));
+    for (int i = 0; i < scrollProfile.developerCount; i++)
+      drawTextLineScaled(x, detailTop + labelStep + 5 + i * detailStep, right, 7,
+                          SCROLL_PROFILE_DETAIL_SCALE, valueColor, scrollProfile.developer[i]);
+  }
+  if (scrollProfile.descriptionCount) {
+    int y = top + scrollProfile.descriptionTop;
+    int dividerY = psbbnFieldStableY(y - 8);
+    gsKit_prim_quad_gouraud(gsGlobal, left, dividerY, right, dividerY,
+        left, dividerY + 2, right, dividerY + 2, 5,
+        glassLightColor(0x74, 0xC4, 0xDE, 0x38 * infoOpacity / 1000),
+        glassLightColor(0x74, 0xC4, 0xDE, 0),
+        glassLightColor(0x74, 0xC4, 0xDE, 0x38 * infoOpacity / 1000),
+        glassLightColor(0x74, 0xC4, 0xDE, 0));
+    for (int i = 0; i < scrollProfile.descriptionCount; i++)
+      drawTextLineScaled(left, y + i * bodyStep, right, 7, SCROLL_PROFILE_BODY_SCALE,
+          glassPresetColor(0xCA, 0xD8, 0xE8, 0x80 * infoOpacity / 1000), scrollProfile.description[i]);
+  }
 }
 
 static void drawScrollPositionRail(TargetList *titles, int visualTitleIdx,
@@ -1782,8 +2003,6 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
       selectedTitleIdx + visualFocus - ORBS_LOGO_CACHE_FOCUS);
   char title[255];
 
-  GSTEXTURE *background = scrollBackground == SCROLL_BACKGROUND_GAME_ART
-      ? getScrollBackgroundTexture() : NULL;
   drawSharedLibraryBackground(now);
 
   // Shade the background to keep the logos readable.
@@ -1801,8 +2020,8 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
   gsKit_prim_sprite(gsGlobal, 0, height - footerHeight, width, height, 3,
                     glassPresetColor(0x02, 0x05, 0x10, 0x62));
 
-  drawScrollArtworkWindow(background, listTop, listBottom,
-                          logoCenterX, entryProgress);
+  drawScrollGameInfo(getTargetByIdx(titles, visualTitleIdx), listTop, listBottom,
+                     logoCenterX, entryProgress, now);
 
   drawTextWindow(keepoutArea + 10, headerHeight - getFontLineHeight(),
                  width - keepoutArea, 0, 7, FontMainColor, ALIGN_LEFT, lunaText("SCROLL"));

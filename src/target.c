@@ -48,6 +48,7 @@ Target *copyTarget(Target *src) {
   Target *copy = calloc(1, sizeof(Target));
   if (!copy) return NULL;
   copy->idx = src->idx;
+  copy->platform = src->platform;
 
   copy->fullPath = strdup(src->fullPath);
   copy->name = strdup(src->name);
@@ -62,6 +63,47 @@ Target *copyTarget(Target *src) {
   copy->device = src->device;
 
   return copy;
+}
+
+TargetList *createTargetView(const TargetList *source) {
+  if (!source || source->total < 0) return NULL;
+  TargetList *view = calloc(1, sizeof(*view));
+  if (!view) return NULL;
+  view->borrowed = 1;
+  view->indexCapacity = source->total;
+  if (source->total) {
+    view->byIndex = malloc((size_t)source->total * sizeof(*view->byIndex));
+    if (!view->byIndex) { freeTargetList(view); return NULL; }
+  }
+  return view;
+}
+
+int filterTargetView(TargetList *view, const TargetList *source,
+                     TargetFilter platform, const uint8_t *favorites) {
+  if (!view || !source || view == source || !view->borrowed ||
+      source->borrowed || source->total > view->indexCapacity ||
+      platform < TARGET_MIXED || platform > TARGET_PS1_ONLY) return -EINVAL;
+  view->total = 0;
+  for (const Target *t = source->first; t; t = t->next) {
+    if ((platform == TARGET_PS2_ONLY && t->platform != TARGET_PS2) ||
+        (platform == TARGET_PS1_ONLY && t->platform != TARGET_PS1) ||
+        (favorites && !favorites[t->idx])) continue;
+    view->byIndex[view->total++] = (Target *)t;
+  }
+  view->first = view->total ? view->byIndex[0] : NULL;
+  view->last = view->total ? view->byIndex[view->total - 1] : NULL;
+  return 0;
+}
+
+int targetViewIndex(const TargetList *view, const Target *target) {
+  if (!view || !target) return -1;
+  for (int i = 0; i < view->total; ++i)
+    if (getTargetByIdx((TargetList *)view, i) == target) return i;
+  return -1;
+}
+
+const char *targetFilterLabel(TargetFilter filter) {
+  return filter == TARGET_PS2_ONLY ? "PS2" : filter == TARGET_PS1_ONLY ? "PS1" : "Mix";
 }
 
 // Compare unsigned ASCII bytes without allocating uppercase name copies.

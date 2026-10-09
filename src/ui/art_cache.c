@@ -160,14 +160,21 @@ static char scrollBackgroundLoadedPath[255];
 static uint32_t scrollBackgroundDueMs;
 static int scrollBackgroundResolved;
 static int scrollBackgroundFast;
+static LunaGameInfo scrollGameInfo;
+static char scrollGameInfoPath[255];
+static uint32_t scrollGameInfoDueMs;
+static int scrollGameInfoResolved;
+static int scrollGameInfoFast;
+enum { SCROLL_JOB_LOGO, SCROLL_JOB_BACKGROUND, SCROLL_JOB_INFO };
 static struct {
   volatile int state; // 0: idle, 1: decoding, 2: ready
-  int background;
+  int kind;
   int targetIdx;
   uint32_t generation;
   char path[255];
   char fallbackPath[255];
   GSTEXTURE texture;
+  LunaGameInfo info;
   int result;
 } scrollArtJob;
 
@@ -1096,10 +1103,17 @@ void releaseGridTexture(GSTEXTURE *texture) {
   texture->Clut = NULL;
 }
 
+static void resetScrollGameInfo(void) {
+  memset(&scrollGameInfo, 0, sizeof(scrollGameInfo));
+  scrollGameInfoPath[0] = '\0';
+  scrollGameInfoResolved = scrollGameInfoFast = 0;
+}
+
 void releaseOrbsArt(void) {
   scrollArtGeneration++;
   serviceScrollArt(); // Drop a completed result before its slots are released.
   releaseScrollBackground();
+  resetScrollGameInfo();
   for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++) {
     if (orbsLogoTextures[i] != NULL)
       releaseGridTexture(orbsLogoTextures[i]);
@@ -1127,7 +1141,7 @@ static int queueScrollArt(Target *target, int targetIdx) {
   if (orbsLogoPath(target, scrollArtJob.path, sizeof(scrollArtJob.path)) < 0)
     return -1;
   scrollArtJob.targetIdx = targetIdx;
-  scrollArtJob.background = 0;
+  scrollArtJob.kind = SCROLL_JOB_LOGO;
   scrollArtJob.fallbackPath[0] = '\0';
   scrollArtJob.generation = scrollArtGeneration;
   scrollArtJob.state = 1;
@@ -1186,12 +1200,46 @@ void refreshScrollBackground(Target *target, int fastScrolling, uint32_t now) {
     return;
   }
   // The same worker decodes logos and backgrounds; GS uploads stay on the UI.
-  scrollArtJob.background = 1;
+  scrollArtJob.kind = SCROLL_JOB_BACKGROUND;
   snprintf(scrollArtJob.path, sizeof(scrollArtJob.path), "%s", path);
   length = snprintf(scrollArtJob.fallbackPath, sizeof(scrollArtJob.fallbackPath),
                     "%s%s/%s_BG.png", device->mountpoint, orbsArtPath, target->id);
   if (length < 0 || length >= (int)sizeof(scrollArtJob.fallbackPath))
     scrollArtJob.fallbackPath[0] = '\0';
+  scrollArtJob.generation = scrollArtGeneration;
+  scrollArtJob.state = 1;
+  SignalSema(scrollArtWakeSema);
+}
+
+const LunaGameInfo *getScrollGameInfo(void) {
+  return scrollGameInfoResolved && !scrollGameInfoFast ? &scrollGameInfo : NULL;
+}
+
+void refreshScrollGameInfo(Target *target, int fastScrolling, uint32_t now) {
+  char path[sizeof(scrollGameInfoPath)];
+  struct DeviceMapEntry *device = target ? target->device : NULL;
+  if (device && device->metadev) device = device->metadev;
+  int length = device && device->mountpoint && target->id && target->id[0]
+      ? snprintf(path, sizeof(path), "%s/CFG/%s.cfg", device->mountpoint, target->id)
+      : -1;
+  if (length < 0 || length >= (int)sizeof(path)) {
+    scrollGameInfoPath[0] = '\0';
+    scrollGameInfoResolved = 0;
+    memset(&scrollGameInfo, 0, sizeof(scrollGameInfo));
+    return;
+  }
+  if (strcmp(path, scrollGameInfoPath)) {
+    snprintf(scrollGameInfoPath, sizeof(scrollGameInfoPath), "%s", path);
+    memset(&scrollGameInfo, 0, sizeof(scrollGameInfo));
+    scrollGameInfoResolved = 0;
+    scrollGameInfoDueMs = now + 180;
+  }
+  scrollGameInfoFast = fastScrolling;
+  if (fastScrolling) { scrollGameInfoDueMs = now + 180; return; }
+  if (scrollGameInfoResolved || (int32_t)(now - scrollGameInfoDueMs) < 0 ||
+      scrollArtJob.state != 0 || scrollArtThreadId < 0) return;
+  scrollArtJob.kind = SCROLL_JOB_INFO;
+  snprintf(scrollArtJob.path, sizeof(scrollArtJob.path), "%s", path);
   scrollArtJob.generation = scrollArtGeneration;
   scrollArtJob.state = 1;
   SignalSema(scrollArtWakeSema);
@@ -1272,10 +1320,16 @@ static void scrollArtWorker(void) {
     WaitSema(scrollArtWakeSema);
     if (scrollArtStopping)
       break;
+    if (scrollArtJob.kind == SCROLL_JOB_INFO) {
+      scrollArtJob.result = lunaReadGameInfo(scrollArtJob.path, &scrollArtJob.info);
+      __asm__ __volatile__("" ::: "memory");
+      scrollArtJob.state = 2;
+      continue;
+    }
     GSTEXTURE decoded = {0};
     decoded.Delayed = 1;
     scrollArtJob.result = decodePNGTextureRGBA(gsGlobal, &decoded, scrollArtJob.path);
-    if (scrollArtJob.result != 0 && scrollArtJob.background &&
+    if (scrollArtJob.result != 0 && scrollArtJob.kind == SCROLL_JOB_BACKGROUND &&
         scrollArtJob.fallbackPath[0] != '\0') {
       free(decoded.Mem);
       free(decoded.Clut);
@@ -1286,7 +1340,7 @@ static void scrollArtWorker(void) {
     }
     if (scrollArtJob.result == 0 && decoded.Mem != NULL &&
         decoded.Width > 0 && decoded.Height > 0 &&
-        fitScrollArtToVram(&decoded, scrollArtJob.background) == 0) {
+        fitScrollArtToVram(&decoded, scrollArtJob.kind == SCROLL_JOB_BACKGROUND) == 0) {
       decoded.Filter = GS_FILTER_LINEAR;
       decoded.Delayed = 1;
       decoded.Vram = 0;
@@ -1333,7 +1387,13 @@ void serviceScrollArt(void) {
     return;
   __asm__ __volatile__("" ::: "memory");
   if (scrollArtJob.generation == scrollArtGeneration) {
-    if (scrollArtJob.background) {
+    if (scrollArtJob.kind == SCROLL_JOB_INFO) {
+      // Match device + ID, never a potentially reused Favorites index.
+      if (!strcmp(scrollArtJob.path, scrollGameInfoPath)) {
+        scrollGameInfo = scrollArtJob.info;
+        scrollGameInfoResolved = 1; // Cache missing files as well.
+      }
+    } else if (scrollArtJob.kind == SCROLL_JOB_BACKGROUND) {
       // A filtered-list index can refer to a different game; match its path.
       if (!strcmp(scrollArtJob.path, scrollBackgroundPath)) {
         releaseGridTexture(&scrollBackgroundTexture);
@@ -2413,6 +2473,7 @@ void artCacheShutdown(void) {
   stopGridArtWorker();
   stopScrollArtWorker();
   releaseScrollBackground();
+  resetScrollGameInfo();
   collectionArtReuseClear(&collectionReuseCache);
   memset(collectionCoverKeys, 0, sizeof(collectionCoverKeys));
   memset(&collectionArtStats, 0, sizeof(collectionArtStats));

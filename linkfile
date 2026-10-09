@@ -128,5 +128,9 @@ SECTIONS {
 	/* We set a fixed stack size and the pointer for the stack, letting the remaining memory be the heap. */
 	PROVIDE(_stack_size = 64 * 1024);
 	PROVIDE(_stack = END_MAIN_REGION - _stack_size);
-	PROVIDE(_heap_size = -1);
+	/* PSXCore transfers stage above 16 MiB. Bound dynamic allocation as well as
+	 * static data and the main stack; ordinary frontend builds keep SDK behavior. */
+	ASSERT(!DEFINED(luna_psxcore_heap_limit) || _end + 128 <= END_MAIN_REGION - 64 * 1024,
+	       "PSXCore frontend heap/stack overlap")
+	PROVIDE(_heap_size = DEFINED(luna_psxcore_heap_limit) ? _stack - ALIGN(_end, 128) - 128 : -1);
 }

@@ -20,6 +20,9 @@
 #include "ui/ui.h"
 #include "ui/view_internal.h"
 #include "ui/view_state.h"
+#ifdef LUNA_ENABLE_PSXCORE
+#include "luna_psxcore.h"
+#endif
 #include <dmaKit.h>
 #include <errno.h>
 #include <gsKit.h>
@@ -60,6 +63,7 @@ static int glassColorSetting = GLASS_COLOR_ORIGINAL;
 static int fontSetting = UI_FONT_DEJAVU;
 static uint32_t splashVisibleStartMs;
 static uint32_t libraryReturnFadeStartMs;
+static TargetFilter libraryPlatformFilter = TARGET_MIXED;
 
 const int keepoutArea = 20;
 const int headerHeight = 40;
@@ -82,10 +86,17 @@ static int libraryViewEntryProgress(int entryView, UILibraryView view,
 static void drawLibraryFooter(int canLaunch) {
   const ButtonPrompt prompts[] = {
       {ICON_CIRCLE, lunaText("View")}, {ICON_CROSS, canLaunch ? lunaText("Launch") : NULL},
-      {ICON_START, lunaText("Menu")}, {ICON_R1, lunaText("More")}};
+      {ICON_START, lunaText("Menu")}, {ICON_R1, lunaText("More")},
+      {ICON_R3, targetFilterLabel(libraryPlatformFilter)}};
   drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
                 gsGlobal->Width - 20, gsGlobal->Height, 8, FontMainColor,
-                (PromptBar){NULL, prompts, 4});
+                (PromptBar){NULL, prompts,
+#ifdef LUNA_ENABLE_PSXCORE
+                    5
+#else
+                    4
+#endif
+                });
 }
 
 static void drawQuickMenuText(int x1, int y1, int x2, int y2,
@@ -277,6 +288,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   uint8_t *allFavoriteFlags = NULL;
   TargetList *allTitles = titles;
   TargetList *favoriteTitles = NULL;
+  TargetList *platformTitles = NULL;
   if ((gsGlobal == NULL) && (res = uiInit())) {
     DPRINTF("ERROR: Failed to init UI: %d\n", res);
     goto exit;
@@ -284,6 +296,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
 
   // Init gamepad inputs
   initPad();
+#ifdef LUNA_PSXCORE_DEVELOPMENT
+  lunaPsxDevelopment(1);
+#endif
 
   if (titles->total == 0) {
     res = uiMainMenuLoop(0);
@@ -411,7 +426,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   ambientSetEnabled(ambientEnabled);
   classicArtOverlap = loadClassicArtOverlap(curTarget);
   setClassicArtOverlap(classicArtOverlap);
-  setScrollBackground(loadScrollBackground(curTarget));
 
   favoriteFlags = calloc((size_t)titles->total, sizeof(*favoriteFlags));
   if (favoriteFlags == NULL) {
@@ -424,6 +438,22 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   if (favoriteTitles == NULL) {
     res = -ENOMEM;
     goto exit;
+  }
+  platformTitles = createTargetView(allTitles);
+  if (!platformTitles || filterTargetView(platformTitles, allTitles,
+                                          libraryPlatformFilter, NULL)) {
+    res = -ENOMEM;
+    goto exit;
+  }
+  titles = platformTitles;
+  selectedTitleIdx = targetViewIndex(titles, curTarget);
+  if (selectedTitleIdx < 0) selectedTitleIdx = 0;
+  if (titles->total) curTarget = getTargetByIdx(titles, selectedTitleIdx);
+  else { entryPending = 0; entryView = -1; }
+  // Collection's startup cache was built against the complete library.
+  if (libraryPlatformFilter != TARGET_MIXED) {
+    releasePSBBNCovers();
+    psbbnCoverBaseIdx = -1;
   }
 
   // Classic textures are unnecessary when restoring another view.
@@ -464,7 +494,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       drawSharedLibraryBackground(uiNowMs());
       drawTextWindow(20, headerHeight, gsGlobal->Width - 20,
                      gsGlobal->Height - footerHeight, 6, HeaderTextColor,
-                     ALIGN_CENTER, lunaText("NO FAVORITES YET\nHold R1 to show all games"));
+                     ALIGN_CENTER, favoritesOnly ?
+                         lunaText("NO FAVORITES IN THIS DISPLAY\nSelect changes favorites; R3 changes platform") :
+                         lunaText("NO GAMES IN THIS DISPLAY\nPress R3 to change platform"));
       goto library_view_drawn;
     }
 
@@ -652,9 +684,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         int visualFocus = orbsVisualCacheIndex(flowOffset);
         orbsVisualTitleIdx = lunaNavWrap(titles->total,
             selectedTitleIdx + visualFocus - ORBS_LOGO_CACHE_FOCUS);
-        if (getScrollBackground() == SCROLL_BACKGROUND_GAME_ART)
-          refreshScrollBackground(getTargetByIdx(titles, orbsVisualTitleIdx),
-                                   scrollFast.active, now);
+        serviceScrollArt();
+        refreshScrollGameInfo(getTargetByIdx(titles, orbsVisualTitleIdx),
+                              scrollFast.active, now);
         if (!scrollFast.active) {
           refreshOrbsLogos(flowTitles, flowSelectedTitleIdx);
           serviceScrollArt();
@@ -753,6 +785,13 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     // Keep rendering after options close, while ignoring the Triangle press
     // that closed them until the button is released.
     input = pollInput();
+#ifdef LUNA_PSXCORE_DEVELOPMENT
+    if ((input & (PAD_SELECT | PAD_START)) == (PAD_SELECT | PAD_START)) {
+      lunaPsxDevelopment(0);
+      while (pollInput() & (PAD_SELECT | PAD_START)) usleep(1000);
+      input = 0;
+    }
+#endif
     // A control held during boot is not a fresh library action. Keep consuming
     // it through the restored Collection reveal, then wait for neutral input.
     int libraryEntryReady = !entryPending &&
@@ -836,7 +875,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       orbitRandomButtonHeld = 0;
     }
     if (titles->total == 0)
-      input &= PAD_SELECT | PAD_CIRCLE | PAD_START;
+      input &= PAD_SELECT | PAD_CIRCLE | PAD_START | PAD_R3;
+    if (!(quickPressed & PAD_R3)) input &= ~PAD_R3;
     // Manual Collection entry must finish loading and revealing before Circle
     // can advance again. Presses during entry are consumed, never deferred.
     int circleEntryBlocked = lunaNavEntryInputBlocked(&collectionCirclePending,
@@ -998,16 +1038,32 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     UILibraryView previousView = view;
     int wasCollectionFavorites = 0;
     int libraryListChanged = 0;
+#ifdef LUNA_ENABLE_PSXCORE
+    if (input & PAD_R3) {
+      Target *previousTarget = curTarget;
+      libraryPlatformFilter = (TargetFilter)((libraryPlatformFilter + 1) % 3);
+      filterTargetView(platformTitles, allTitles, libraryPlatformFilter,
+                       favoritesOnly ? allFavoriteFlags : NULL);
+      titles = platformTitles;
+      selectedTitleIdx = targetViewIndex(titles, previousTarget);
+      if (selectedTitleIdx < 0) selectedTitleIdx = 0;
+      if (titles->total) curTarget = getTargetByIdx(titles, selectedTitleIdx);
+      DPRINTF("Library platform=%s total=%d favorites=%d\n",
+              targetFilterLabel(libraryPlatformFilter), titles->total, favoritesOnly);
+      libraryListChanged = 1;
+      goto restart_library_view;
+    } else
+#endif
     if ((input & PAD_SELECT) && (!favoritesTabButtonHeld || quickAction == 0)) {
       favoritesTabButtonHeld = 1;
       int originalIndex = curTarget->idx;
       DPRINTF("Library filter switch begin: view=%d favorites=%d total=%d\n",
               view, favoritesOnly, titles->total);
       favoritesOnly = !favoritesOnly;
-      titles = favoritesOnly ? favoriteTitles : allTitles;
-      selectedTitleIdx = favoritesOnly
-          ? favoriteTargetIndex(favoriteTitles, originalIndex)
-          : originalIndex;
+      filterTargetView(platformTitles, allTitles, libraryPlatformFilter,
+                       favoritesOnly ? allFavoriteFlags : NULL);
+      titles = platformTitles;
+      selectedTitleIdx = targetViewIndex(titles, getTargetByIdx(allTitles, originalIndex));
       if (selectedTitleIdx < 0) selectedTitleIdx = 0;
       curTarget = titles->total > 0 ? getTargetByIdx(titles, selectedTitleIdx)
                                    : getTargetByIdx(allTitles, originalIndex);
@@ -1043,9 +1099,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       entryView = (int)view;
       entryDurationMs = previousView == UI_VIEW_3D && view != previousView
           ? CASE_VIEW_HANDOFF_MS : LIBRARY_VIEW_ENTRY_MS;
-      entryPending = view != UI_VIEW_CLASSIC;
+      entryPending = view != UI_VIEW_CLASSIC && titles->total > 0;
       collectionEntryFade = -1;
-      collectionCirclePending = view == UI_VIEW_PSBBN;
+      collectionCirclePending = view == UI_VIEW_PSBBN && titles->total > 0;
       classicEntryFirstFramePending = view == UI_VIEW_CLASSIC &&
                                       previousView != UI_VIEW_CLASSIC;
       classicEntryListSlideActive = view == UI_VIEW_CLASSIC &&
@@ -1101,6 +1157,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
           (wasCollectionFavorites && view != UI_VIEW_ORBIT) || libraryListChanged)
         psbbnCoverBaseIdx = -1;
       psbbnAnimationTargetIdx = -1;
+      collectionVisualTitleIdx = -1;
+      orbsVisualTitleIdx = -1;
       psbbnOutgoingTitleIdx = -1;
       psbbnAnimationStartOffset = 0;
       psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
@@ -1142,7 +1200,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         quickMenuMessageUntil = uiNowMs() + 2500;
       } else {
         if (favoritesOnly) {
-          titles = favoriteTitles;
+          filterTargetView(platformTitles, allTitles, libraryPlatformFilter, allFavoriteFlags);
+          titles = platformTitles;
           if (selectedTitleIdx >= titles->total)
             selectedTitleIdx = titles->total > 0 ? titles->total - 1 : 0;
           curTarget = titles->total > 0 ? getTargetByIdx(titles, selectedTitleIdx) : originalTarget;
@@ -1213,6 +1272,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         // Something went wrong, main loop must exit immediately
         ambientStop();
         freeTargetList(favoriteTitles);
+        freeTargetList(platformTitles);
         free(allFavoriteFlags);
         return -1;
       }
@@ -1270,6 +1330,7 @@ exit:
   }
   if (favoriteTitles != NULL)
     freeTargetList(favoriteTitles);
+  freeTargetList(platformTitles);
   free(allFavoriteFlags);
   return res;
 }
@@ -1278,8 +1339,50 @@ void uiLaunchTitle(Target *target, ArgumentList *arguments) {
   uiLaunchTitleWithCheats(target, arguments, NULL);
 }
 
+#ifdef LUNA_ENABLE_PSXCORE
+static void drawPsxLaunchMessage(const char *message,const char *footer) {
+  gsKit_TexManager_nextFrame(gsGlobal);
+  gsKit_set_test(gsGlobal,GS_ZTEST_OFF);
+  drawSharedLibraryBackground(uiNowMs());
+  drawTextWindow(keepoutArea+24,gsGlobal->Height/3,
+                 gsGlobal->Width-keepoutArea-24,0,0,HeaderTextColor,ALIGN_HCENTER,message);
+  if(footer && footer[0])
+    drawTextWindow(keepoutArea+24,gsGlobal->Height-footerHeight-30,
+                   gsGlobal->Width-keepoutArea-24,0,0,HeaderTextColor,ALIGN_HCENTER,footer);
+  gsKit_set_test(gsGlobal,GS_ZTEST_ON);
+  gsKit_queue_exec(gsGlobal);gsKit_finish();gsKit_sync_flip(gsGlobal);
+}
+static int psxPrepareProgress(uint64_t completed,uint64_t total) {
+  char message[128];
+  if(total)snprintf(message,sizeof(message),"%s\n%u%% (%u / %u MiB)",
+    lunaText("Checking PS1 save identity..."),(unsigned)(completed*100/total),
+    (unsigned)(completed>>20),(unsigned)(total>>20));
+  else snprintf(message,sizeof(message),"%s",lunaText("Preparing PS1 game..."));
+  drawPsxLaunchMessage(message,lunaText("Press Triangle to cancel"));
+  return (readInput()&PAD_TRIANGLE)!=0;
+}
+static int uiLaunchPs1(Target *target) {
+  char error[192];int createCards=0;
+  for(;;) {
+    if(psxPrepareProgress(0,0))return 0;
+    int result=lunaPsxPrepareTitle(target,createCards,error,sizeof(error),psxPrepareProgress);
+    if(!result)lunaPsxExecute();
+    for(;;) {
+      drawPsxLaunchMessage(error,result==1?NULL:lunaText("Press Triangle to return"));
+      int input=readInput();
+      if(input&PAD_TRIANGLE)return 0;
+      if(result==1 && (input&PAD_SQUARE)){createCards=1;break;}
+      usleep(1000);
+    }
+  }
+}
+#endif
+
 int uiLaunchTitleWithCheats(Target *target, ArgumentList *arguments,
                            const LunaCheatSettings *cheats) {
+#ifdef LUNA_ENABLE_PSXCORE
+  if(target && target->platform==TARGET_PS1)return uiLaunchPs1(target);
+#endif
   int ownedArguments = arguments == NULL;
   if (ownedArguments) arguments = loadLaunchArgumentLists(target);
   char error[192], *payload = NULL;

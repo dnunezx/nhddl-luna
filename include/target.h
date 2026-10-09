@@ -7,6 +7,9 @@
 // Defined in devices.h
 struct DeviceMapEntry;
 
+typedef enum { TARGET_PS2 = 0, TARGET_PS1 = 1 } TargetPlatform;
+typedef enum { TARGET_MIXED = 0, TARGET_PS2_ONLY, TARGET_PS1_ONLY } TargetFilter;
+
 // An entry in TargetList
 typedef struct Target {
   uint16_t idx;           // ISO index (monotonically increasing). Used to uniquely identify the list entry
@@ -14,6 +17,7 @@ typedef struct Target {
   char *name;             // Target name (extracted from file name)
   char *id;               // Title ID
   struct DeviceMapEntry *device; // Device entry
+  TargetPlatform platform;
 
   struct Target *prev; // Previous target in the list
   struct Target *next; // Next target in the list
@@ -44,6 +48,13 @@ void appendTarget(TargetList *result, Target *title);
 int buildTargetIndex(TargetList *result);
 // Sort once, preserving discovery order for equal case-insensitive names.
 int sortTargetList(TargetList *result);
+
+// Borrowed, indexed views retain canonical target IDs and never relink games.
+TargetList *createTargetView(const TargetList *source);
+int filterTargetView(TargetList *view, const TargetList *source,
+                     TargetFilter platform, const uint8_t *favorites);
+int targetViewIndex(const TargetList *view, const Target *target);
+const char *targetFilterLabel(TargetFilter filter);
 
 // Removes and frees Target, decrements total and invalidates the index.
 Target *freeTarget(TargetList *targetList, Target *target);

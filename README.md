@@ -8,6 +8,9 @@ LUNA (Lightweight Unified Neutrino Access) is a visual PS2 loader derived from N
 
 LUNA retains NHDDL's Neutrino-launching core: it scans MMCE, APA or _FAT/exFAT-formatted_ BDM devices for ISO files, lists them, and boots the selected ISO via Neutrino. It adds LUNA branding, five PS2 Glass library views, paired cover/disc artwork, PSBBN artwork, and direct in-game return.
 
+Neutrino remains the default game core. OPL is selectable globally or per game
+for ATA/FAT32/exFAT, APA/HDL, USB, MX4SIO, iLink, MMCE, and UDPFS.
+
 This designation does not replace the physical-console safety gates documented in [`../PROJECT.md`](../PROJECT.md). No Git tag or hosted release is implied by the local RC label.
 
 It displays visual Game ID to trigger per-title settings on the Pixel FX line of products and triggers per-title memory cards on SD2PSX and MemCard PRO2.
@@ -115,6 +118,20 @@ fast-track stops. That final artwork fills the shell in place without replaying
 the page transition.
 
 ### Important notes
+
+Scroll uses the Global background choice and displays game information in the
+left column beside the logo wheel. It reads `CFG/<TITLE_ID>.cfg` from the game's
+metadata drive for release date, developer, genre, player count, and description.
+The selected game's ID leads the profile, with translucent genre/player badges,
+release/developer columns, and a larger wrapped description. Brief selection
+and metadata fades use the existing font and GS primitives.
+It accepts the [PS2 OPL CFG Database](https://github.com/t0mg/PS2-OPL-CFG-Database)
+keys `Release`, `Developer`, `Genre`, `PlayersText`, and `Description`, falling
+back to `Players` (including `players/1`) when `PlayersText` is empty. Dates are
+shown as supplied by the CFG. Missing fields are omitted; missing or empty CFGs
+show "No game information". Text wraps within the column and ends with an
+ellipsis when it exceeds the available space. Reads run on the Scroll worker
+after navigation settles, and CFG launch settings are never applied or changed.
 
 NHDDL requires a full [Neutrino](https://github.com/rickgaiser/neutrino) installation to be present at one of the following paths:
 - `<NHDDL launch directory>/neutrino.elf` (__might be case-sensitive__ depending on device)

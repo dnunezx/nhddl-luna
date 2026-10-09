@@ -11,6 +11,22 @@ set(EE_BIN_PKD "luna.elf")
 # Enable debug output if requested
 option(ENABLE_PRINTF "Enable printf debugging output" ON)
 option(LUNA_EMULATOR_BUILD "Enable behavior used only by emulator test builds" OFF)
+option(LUNA_ENABLE_PSXCORE "Build with the experimental PSXCore dependency" OFF)
+option(LUNA_PSXCORE_DEVELOPMENT "Enable local PSXCore development launch entry" OFF)
+if(LUNA_PSXCORE_DEVELOPMENT AND NOT LUNA_ENABLE_PSXCORE)
+  message(FATAL_ERROR "LUNA_PSXCORE_DEVELOPMENT requires LUNA_ENABLE_PSXCORE")
+endif()
+set(LUNA_PSXCORE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../psxcore" CACHE PATH
+    "Path to the PSXCore source checkout")
+
+if(LUNA_ENABLE_PSXCORE)
+  if(NOT EXISTS "${LUNA_PSXCORE_SOURCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR
+      "PSXCore is missing. Initialize the private psxcore submodule, set "
+      "LUNA_PSXCORE_SOURCE_DIR, or build with LUNA_ENABLE_PSXCORE=OFF.")
+  endif()
+  add_subdirectory("${LUNA_PSXCORE_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/psxcore")
+endif()
 
 # Source files
 set(SOURCES
@@ -52,6 +68,7 @@ set(SOURCES
   src/ui/view_orbit.c
   src/ui/view_3d.c
   src/ui/view_scroll.c
+    src/ui/game_info.c
   src/ui/ambient_orbs.c
     src/ui/pad.c
 
@@ -114,6 +131,17 @@ endif()
 # Create the main executable
 add_executable(${EE_BIN} ${SOURCES})
 
+if(LUNA_ENABLE_PSXCORE)
+  enable_language(ASM)
+  target_sources(${EE_BIN} PRIVATE src/psxcore_launch.c src/psxcore_transfer.c src/psxcore_transfer.S src/psxcore_library.c src/psxcore_title.c)
+  target_link_libraries(${EE_BIN} PSXCore::core)
+  target_compile_definitions(${EE_BIN} PRIVATE LUNA_ENABLE_PSXCORE=1)
+  target_link_options(${EE_BIN} PRIVATE -Wl,--defsym=luna_psxcore_heap_limit=1)
+  if(LUNA_PSXCORE_DEVELOPMENT)
+    target_compile_definitions(${EE_BIN} PRIVATE LUNA_PSXCORE_DEVELOPMENT=1)
+  endif()
+endif()
+
 # Include directories
 target_include_directories(${EE_BIN}
     PRIVATE
@@ -128,6 +156,7 @@ target_link_options(${EE_BIN}
     PRIVATE
     -T${CMAKE_CURRENT_SOURCE_DIR}/linkfile
 )
+set_property(TARGET ${EE_BIN} APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/linkfile")
 
 # Link libraries
 target_link_libraries(${EE_BIN}

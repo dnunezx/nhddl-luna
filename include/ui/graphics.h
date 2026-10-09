@@ -100,6 +100,7 @@ int reserveUIFontVRAM(void);
 
 // Switches the UI bitmap font; leaves the current font selected on failure.
 int setUIFont(UIFont selection);
+UIFont getUIFont(void);
 
 // Draws the text with specified max dimensions relative to x and y
 // Returns the bottom Y coordinate of the last line that can be used to draw the next text
@@ -110,6 +111,10 @@ int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, c
 // Returns the bottom Y coordinate of the last line that can be used to draw the next text.
 // Use the faster drawText method if window limits are not important.
 int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_t alignment, const char *text);
+
+// A single compact line, clipped to the right edge; uses the active font atlas.
+void drawTextLineScaled(int x, int y, int right, int z, float scale,
+                        uint64_t color, const char *text);
 
 // Draws a single line shifted left within a clipped horizontal window.
 int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *text, int scrollX);

@@ -6,6 +6,10 @@
 #include "ui/ui.h"
 #include "options.h"
 #include "devices/title_id.h"
+#ifdef LUNA_ENABLE_PSXCORE
+#include "luna_psxcore_library.h"
+#include "psxcore_vcd.h"
+#endif
 #include <errno.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -105,6 +109,7 @@ int _findISO(DIR *directory, TargetList *result, struct DeviceMapEntry *device) 
   while ((entry = readdir(directory)) != NULL) {
     // Reset titlePath by ending string on base path
     titlePath[cwdLen] = '\0';
+    if (strlen(entry->d_name) > sizeof(titlePath)-1-(size_t)cwdLen) continue;
 
     // Ignore .files and directories
     if (entry->d_name[0] == '.')
@@ -143,20 +148,30 @@ int _findISO(DIR *directory, TargetList *result, struct DeviceMapEntry *device) 
     default:
       // Make sure file has .iso extension
       fileext = strrchr(entry->d_name, '.');
-      if ((fileext != NULL) && (!strcmp(fileext, ".iso") || !strcmp(fileext, ".ISO"))) {
+      int isVcd = 0;
+#ifdef LUNA_ENABLE_PSXCORE
+      isVcd = device->mode == MODE_ATA && device->index == 0 && np_vcd_filename(entry->d_name);
+#endif
+      if (isVcd || ((fileext != NULL) && (!strcmp(fileext, ".iso") || !strcmp(fileext, ".ISO")))) {
         // Generate full path
         strcat(titlePath, entry->d_name);
 
         // Initialize target
         Target *title = calloc(sizeof(Target), 1);
+        if (!title) { curRecursionLevel--; return -ENOMEM; }
         title->prev = NULL;
         title->next = NULL;
         title->fullPath = strdup(titlePath);
         title->device = device;
+        title->platform = isVcd ? TARGET_PS1 : TARGET_PS2;
 
         // Get file name without the extension
         int nameLength = (int)(fileext - entry->d_name);
         title->name = calloc(sizeof(char), nameLength + 1);
+        if (!title->fullPath || !title->name) {
+          free(title->fullPath); free(title->name); free(title);
+          curRecursionLevel--; return -ENOMEM;
+        }
         strncpy(title->name, entry->d_name, nameLength);
 
         appendTarget(result, title);
@@ -175,12 +190,16 @@ void processTitleID(TargetList *result, struct DeviceMapEntry *device) {
 
   // Load title cache
   TitleIDCache *cache = malloc(sizeof(TitleIDCache));
+  if (!cache) return;
+  int ps2Count = 0;
+  for (Target *t=result->first;t;t=t->next)
+    if (t->device==device && t->platform==TARGET_PS2) ++ps2Count;
   int isCacheUpdateNeeded = 0;
   if (loadTitleIDCache(cache, device)) {
     uiSplashLogString(LEVEL_WARN, "Failed to load title ID cache, all ISOs will be rescanned\n");
     free(cache);
     cache = NULL;
-  } else if (cache->total != result->total) {
+  } else if (cache->total != ps2Count) {
     // Set flag if number of entries is different
     isCacheUpdateNeeded = 1;
   }
@@ -197,6 +216,18 @@ void processTitleID(TargetList *result, struct DeviceMapEntry *device) {
       curTarget = curTarget->next;
       continue;
     }
+#ifdef LUNA_ENABLE_PSXCORE
+    if (curTarget->platform == TARGET_PS1) {
+      char id[12];
+      const char *error = lunaPsxDiscInfo(curTarget->fullPath,id);
+      if (error || !(curTarget->id=strdup(id))) {
+        DPRINTF("PS1 inventory rejected: %s (%s)\n",curTarget->fullPath,error?error:"memory");
+        curTarget=freeTarget(result,curTarget); continue;
+      }
+      DPRINTF("PS1 library disc: %s id=%s\n",curTarget->fullPath,curTarget->id);
+      curTarget=curTarget->next; continue;
+    }
+#endif
 
     // Try to get title ID from cache
     if (cache != NULL) {
@@ -260,7 +291,8 @@ int storeTitleIDCache(TargetList *list, struct DeviceMapEntry *device) {
   int total = 0;
   Target *curTitle = list->first;
   while (curTitle != NULL) {
-    if (strlen(curTitle->id) == 11) {
+    if (curTitle->device == device && curTitle->platform == TARGET_PS2 &&
+        curTitle->id && strlen(curTitle->id) == 11) {
       total++;
     }
     curTitle = curTitle->next;
@@ -318,7 +350,8 @@ int storeTitleIDCache(TargetList *list, struct DeviceMapEntry *device) {
   int mountpointLen = -1;
   while (curTitle != NULL) {
     // Ignore empty entries or entries not belonging to the current device
-    if ((strlen(curTitle->id) < 11) || (curTitle->device != device)) {
+    if (!curTitle->id || (strlen(curTitle->id) < 11) || (curTitle->device != device) ||
+        curTitle->platform != TARGET_PS2) {
       curTitle = curTitle->next;
       continue;
     }

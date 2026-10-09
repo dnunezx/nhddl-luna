@@ -85,7 +85,6 @@ typedef struct {
   uint32_t *enabledOrbShapes;
   uint32_t *enabledViews;
   int pendingOverlap;
-  int pendingScrollBackground;
   int pendingBackground;
   int pendingGlassColor;
   int pendingFont;
@@ -218,8 +217,7 @@ static LunaGameRow gameSectionRow(const OptionsMenuState *state,
 }
 
 #define OPTIONS_VIEW_ART_LAYOUT_ROW UI_VIEW_COUNT
-#define OPTIONS_VIEW_SCROLL_BACKGROUND_ROW (UI_VIEW_COUNT + 1)
-#define OPTIONS_VIEW_ROW_COUNT (UI_VIEW_COUNT + 2)
+#define OPTIONS_VIEW_ROW_COUNT (UI_VIEW_COUNT + 1)
 
 static int optionsHeadingY(void) {
   return headerHeight - getFontLineHeight() + getFontLineHeight() / 4;
@@ -679,8 +677,7 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
       state->coreSetting);
   const int viewsDirty = showDirty &&
                          (state->pendingViews != *state->enabledViews ||
-                          state->pendingOverlap != *state->classicArtOverlap ||
-                          state->pendingScrollBackground != (int)getScrollBackground());
+                          state->pendingOverlap != *state->classicArtOverlap);
   const int orbsDirty = showDirty &&
                         (state->pendingOrbsTheme != *state->orbsThemeSetting ||
                          state->pendingOrbsAppearance != *state->orbsAppearanceSetting ||
@@ -772,8 +769,8 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                    HeaderTextColor, ALIGN_LEFT, lunaText(descriptions[state->selectedGlobal]));
   } else if (state->page == OPTIONS_VIEWS) {
     const int firstY = menuTop + lineHeight + 4;
-    // Leave room for both appearance controls and the description.
-    const int rowStep = (menuBottom - firstY - 3 * lineHeight) / (UI_VIEW_COUNT + 1);
+    // Leave room for List appearance and the description.
+    const int rowStep = (menuBottom - firstY - 3 * lineHeight) / UI_VIEW_COUNT;
     int selectorY = optionsSelectorY(&state->selector, state->page, state->selectedView,
                                      optionsViewRowY(state->selectedView,
                                                      firstY, rowStep, lineHeight));
@@ -796,24 +793,11 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                        state->selectedView == OPTIONS_VIEW_ART_LAYOUT_ROW, selectorY,
                        lunaText("List art layout"),
                        state->pendingOverlap ? lunaText("Overlap") : lunaText("Separate"));
-    drawOptionsTextRow(baseX + 18,
-                       optionsViewRowY(OPTIONS_VIEW_SCROLL_BACKGROUND_ROW,
-                                       firstY, rowStep, lineHeight),
-                       gsGlobal->Width - baseX,
-                       state->selectedView == OPTIONS_VIEW_SCROLL_BACKGROUND_ROW, selectorY,
-                       lunaText("Scroll appearance"),
-                       state->pendingScrollBackground == SCROLL_BACKGROUND_GAME_ART ?
-                           lunaText("Game Art") : lunaText("System"));
     if (state->selectedView == OPTIONS_VIEW_ART_LAYOUT_ROW)
       drawTextWindow(baseX + 18, menuBottom - lineHeight,
                      gsGlobal->Width - baseX, menuBottom, 0,
                      HeaderTextColor, ALIGN_LEFT,
                      lunaText("Choose how cover art sits in List view."));
-    else if (state->selectedView == OPTIONS_VIEW_SCROLL_BACKGROUND_ROW)
-      drawTextWindow(baseX + 18, menuBottom - lineHeight,
-                     gsGlobal->Width - baseX, menuBottom, 0,
-                     HeaderTextColor, ALIGN_LEFT,
-                     lunaText("Game Art adds an artwork window beside the wheel."));
     else {
       const ButtonPrompt cycle[] = {
           {ICON_CIRCLE, lunaText("Cycle views; keep at least one on")}};
@@ -900,6 +884,18 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                           lunaText("Original halo and core masks from the PS2 ROM.") :
                           lunaText("LUNA's soft glass lights and bright cores.")));
     }
+  } else if (state->target->platform == TARGET_PS1) {
+    drawTextWindow(baseX, menuTop, gsGlobal->Width - baseX, 0, 0,
+                   HeaderTextColor, ALIGN_HCENTER, state->titleHeader);
+    drawOptionsSection(menuTop + lineHeight * 2, "PlayStation", 0);
+    drawOptionsTextRow(baseX, menuTop + lineHeight * 4, gsGlobal->Width - baseX,
+                       0, 0, "Game core", "PSXCore");
+    drawOptionsTextRow(baseX, menuTop + lineHeight * 6, gsGlobal->Width - baseX,
+                       0, 0, "Memory cards", "Isolated per disc");
+    drawTextWindow(baseX + 18, menuBottom - lineHeight * 2,
+                   gsGlobal->Width - baseX, gsGlobal->Height - footerHeight, 0,
+                   HeaderTextColor, ALIGN_LEFT,
+                   "PSXCore manages compatibility and saves.\nMissing cards can be created when launching.");
   } else {
     drawTextWindow(baseX, menuTop, gsGlobal->Width - baseX, 0, 0,
                    HeaderTextColor, ALIGN_HCENTER, state->titleHeader);
@@ -983,7 +979,11 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
       }
     }
   }
-  drawOptionsFooter(state->page == OPTIONS_PER_GAME, 0,
+  if (state->page == OPTIONS_PER_GAME && state->target->platform == TARGET_PS1) {
+    const ButtonPrompt prompts[] = {{ICON_SQUARE, "Launch"}, {ICON_TRIANGLE, "Back"}};
+    drawPromptBar(20, gsGlobal->Height-footerHeight, gsGlobal->Width-20,
+                  gsGlobal->Height, 16, HeaderTextColor, (PromptBar){NULL,prompts,2});
+  } else drawOptionsFooter(state->page == OPTIONS_PER_GAME, 0,
                     gameDirty || systemDirty || viewsDirty || orbsDirty,
                     state->page == OPTIONS_ORBS && !optionsOrbsEditable(state),
                     state->page == OPTIONS_ORBS && state->orbsShapesPage ? lunaText("Toggle") :
@@ -1326,9 +1326,7 @@ static int handleViewsInput(OptionsMenuState *state, int input) {
   } else if (input & (PAD_CROSS | PAD_CIRCLE | PAD_LEFT | PAD_RIGHT)) {
     if (state->selectedView == OPTIONS_VIEW_ART_LAYOUT_ROW) {
       state->pendingOverlap = !state->pendingOverlap;
-    } else if (state->selectedView == OPTIONS_VIEW_SCROLL_BACKGROUND_ROW) {
-      state->pendingScrollBackground =
-          (state->pendingScrollBackground + 1) % SCROLL_BACKGROUND_COUNT;
+
     } else {
       uint32_t bit = 1U << lunaViewCycleOrder[state->selectedView];
       if (state->pendingViews != bit)
@@ -1343,14 +1341,6 @@ static int handleViewsInput(OptionsMenuState *state, int input) {
         *state->classicArtOverlap = state->pendingOverlap;
         setClassicArtOverlap(state->pendingOverlap);
       }
-    }
-    if (!state->saveError &&
-        state->pendingScrollBackground != (int)getScrollBackground()) {
-      state->saveErrorLabel = lunaText("Could not save Scroll background");
-      state->saveError = saveScrollBackground(state->target,
-          (ScrollBackground)state->pendingScrollBackground);
-      if (!state->saveError)
-        setScrollBackground((ScrollBackground)state->pendingScrollBackground);
     }
     if (!state->saveError && state->pendingViews != *state->enabledViews) {
       state->saveErrorLabel = lunaText("Could not save enabled views");
@@ -1473,6 +1463,11 @@ static int handleSystemInput(OptionsMenuState *state, int input) {
 
 // Returns 1 for Back, -1 if a test launch unexpectedly returns, or 0 to stay.
 static int handleGameInput(OptionsMenuState *state, int input) {
+  if (state->target->platform == TARGET_PS1) {
+    if (input & PAD_TRIANGLE) return 1;
+    if (input & PAD_SQUARE) return uiLaunchTitleWithCheats(state->target,NULL,NULL);
+    return 0;
+  }
   if (input & PAD_SQUARE) {
     // Launch title without saving arguments
     return uiLaunchTitleWithCheats(state->target, state->titleArguments, &state->cheats);
@@ -1679,7 +1674,6 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
       .enabledOrbShapes = enabledOrbShapes,
       .enabledViews = enabledViews,
       .pendingOverlap = *classicArtOverlap,
-      .pendingScrollBackground = getScrollBackground(),
       .pendingBackground = *ambientOrbsBackgroundSetting,
       .pendingGlassColor = *glassColorSetting,
       .pendingFont = *fontSetting,
@@ -1699,9 +1693,11 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
            target->name, target->id);
 
   // Load arguments from config files
-  state.titleArguments = loadLaunchArgumentLists(state.target);
+  state.titleArguments = target->platform == TARGET_PS1 ? calloc(1,sizeof(ArgumentList)) :
+                                                        loadLaunchArgumentLists(state.target);
+  if (!state.titleArguments) return 0;
   lunaGameOptionsRead(&state.gameOptions, state.titleArguments);
-  if (lunaCheatsLoadSettings(target, &state.cheats)) {
+  if (target->platform != TARGET_PS1 && lunaCheatsLoadSettings(target, &state.cheats)) {
     state.cheatsChanged = 1; // Save can repair an unreadable selection file.
     state.saveError = 1;
     state.saveErrorLabel = lunaText("Could not read cheat settings. Cheats are off; save to reset.");
