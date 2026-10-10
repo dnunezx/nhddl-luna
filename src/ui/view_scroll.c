@@ -1688,6 +1688,25 @@ static void scrollCoverGeometry(int position, int centerX, int centerY,
   *y = centerY - 34.0f * steps;
 }
 
+static void drawScrollPositionBar(int total, int visualTitleIdx, int entryProgress) {
+  if (total <= 0)
+    return;
+  const int left = keepoutArea + 20;
+  const int right = gsGlobal->Width - keepoutArea - 20;
+  const int span = right - left;
+  const int y = gsGlobal->Height - footerHeight - 8;
+  int thumbWidth = total > 5 ? (int)((int64_t)span * 5 / total) : span;
+  if (thumbWidth < 18) thumbWidth = 18;
+  if (thumbWidth > span) thumbWidth = span;
+  const int thumbX = left + (total > 1 ?
+      (int)((int64_t)visualTitleIdx * (span - thumbWidth) / (total - 1)) : 0);
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+  gsKit_prim_sprite(gsGlobal, left, y, right, y + 2, 6,
+                    glassLightColor(0x70, 0x80, 0x8C, 0x14 * entryProgress / 1000));
+  gsKit_prim_sprite(gsGlobal, thumbX, y - 1, thumbX + thumbWidth, y + 3, 8,
+                    glassLightColor(0x88, 0x98, 0xA4, 0x30 * entryProgress / 1000));
+}
+
 void drawOrbsView(TargetList *titles, int selectedTitleIdx,
                   int flowOffset, int visualFocus, int fastScroll,
                   int entryProgress, uint32_t now,
@@ -1708,8 +1727,6 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
   gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 1,
                     glassPresetColor(0x00, 0x02, 0x0C, 0x30));
-  drawTextWindow(keepoutArea + 10, headerHeight - getFontLineHeight(),
-                 width - keepoutArea, 0, 7, FontMainColor, ALIGN_LEFT, lunaText("SCROLL"));
   snprintf(lineBuffer, sizeof(lineBuffer), "%d/%d", visualTitleIdx + 1, titles->total);
   drawTextWindow(width - 116, headerHeight - getFontLineHeight(),
                  width - keepoutArea - 8, 0, 7, FontMainColor, ALIGN_RIGHT, lineBuffer);
@@ -1803,4 +1820,5 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
                      ALIGN_CENTER, title);
     }
   }
+  drawScrollPositionBar(titles->total, visualTitleIdx, entryProgress);
 }

@@ -40,6 +40,7 @@ typedef enum {
 typedef enum {
   GAME_HUB = -1,
   GAME_MEMORY_CARDS,
+  GAME_CORE,
   GAME_COMPATIBILITY,
   GAME_VIDEO,
   GAME_CHEATS,
@@ -167,22 +168,24 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Emulate field flipping when OPL forces a video output mode."};
 
 static const char *const gameSectionLabels[GAME_SECTION_COUNT] = {
-    "Virtual memory cards", "Compatibility", "Video", "Cheats", "Launch & debug"};
+    "Virtual memory cards", "Game core", "Compatibility", "Video", "Cheats", "Launch & debug"};
 static const char *const gameSectionDescriptions[GAME_SECTION_COUNT] = {
     "Enable virtual cards by assigning one to a slot.",
+    "Choose Default to follow the Global game core setting.",
     "Change the active core's compatibility switches.",
     "Adjust this game's video output.",
     "Select individual codes from CHT/<title ID>.cht on this drive.",
     "Set the startup logo and review launch options."};
 static const LunaGameRow gameSectionRows[GAME_SECTION_COUNT][5] = {
     {LUNA_GAME_VMC_SLOT1, LUNA_GAME_VMC_SLOT2},
+    {LUNA_GAME_CORE},
     {LUNA_GAME_FAST_READS, LUNA_GAME_SYNC_READS,
      LUNA_GAME_UNHOOK_SYSCALLS, LUNA_GAME_DVD_DL,
      LUNA_GAME_BUFFER_OVERRUN},
     {LUNA_GAME_VIDEO_MODE, LUNA_GAME_FIELD_FLIP},
     {0},
     {LUNA_GAME_PS2_LOGO, LUNA_GAME_LAUNCH_ARGUMENTS,
-     LUNA_GAME_DEBUG_COLORS, LUNA_GAME_CORE}};
+     LUNA_GAME_DEBUG_COLORS}};
 static const LunaGameRow oplCompatRows[LUNA_OPL_COMPAT_COUNT] = {
     LUNA_GAME_OPL_ACCURATE_READS, LUNA_GAME_OPL_SYNC_READS,
     LUNA_GAME_OPL_UNHOOK_SYSCALLS, LUNA_GAME_OPL_SKIP_VIDEOS,
@@ -191,7 +194,7 @@ static const LunaGameRow neutrinoCompatRows[LUNA_NEUTRINO_COMPAT_ROW_COUNT] = {
     LUNA_GAME_FAST_READS, LUNA_GAME_SYNC_READS,
     LUNA_GAME_UNHOOK_SYSCALLS, LUNA_GAME_DVD_DL,
     LUNA_GAME_BUFFER_OVERRUN, LUNA_GAME_NEUTRINO_DISABLE_IGR};
-static const int gameSectionRowCounts[GAME_SECTION_COUNT] = {4, 6, 2, 3, 4};
+static const int gameSectionRowCounts[GAME_SECTION_COUNT] = {4, 1, 6, 2, 3, 3};
 
 static int gameUsesOpl(const OptionsMenuState *state) {
   return lunaOplDevice(state->target->device->mode) != NULL && state->gameOptions.oplCore;
@@ -203,8 +206,6 @@ static int gameSectionRowCount(const OptionsMenuState *state, GameSection sectio
   if (section == GAME_COMPATIBILITY)
     return gameUsesOpl(state) ? LUNA_OPL_COMPAT_COUNT :
                                LUNA_NEUTRINO_COMPAT_ROW_COUNT;
-  if (section == GAME_LAUNCH && lunaOplDevice(state->target->device->mode) == NULL)
-    return 3;
   return gameSectionRowCounts[section];
 }
 
@@ -477,11 +478,7 @@ static int gameLaunchEnabled(const OptionsMenuState *state) {
                strcmp(name, "gsm") && strcmp(name, "mc0") &&
                strcmp(name, "mc1") && strcmp(name, "luna_neutrino_disable_igr") &&
                strcmp(name, "luna_opl_compat") && strcmp(name, "luna_opl_gsm") &&
-               strcmp(name, "luna_opl_field_flip")) {
-      if (!strcmp(name, "luna_core")) {
-        enabled += !argument->isGlobal;
-        continue;
-      }
+               strcmp(name, "luna_opl_field_flip") && strcmp(name, "luna_core")) {
       // Other arguments belong to Launch arguments, including disabled overrides.
       enabled += !argument->isDisabled || !argument->isGlobal;
     }
@@ -737,7 +734,7 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                                      optionsGlobalRowY(state->selectedGlobal, firstY, rowStep, lineHeight));
     drawOptionsSection(menuTop, lunaText("Appearance"), 0);
     drawOptionsTextRow(baseX, firstY, gsGlobal->Width - baseX,
-                       state->selectedGlobal == 0, selectorY, lunaText("Background (Experimental)"),
+                       state->selectedGlobal == 0, selectorY, lunaText("Background"),
                        lunaText(backgroundLabels[state->pendingBackground]));
     static const char *const glassColorLabels[GLASS_COLOR_COUNT] = {
         "Original", "Luminous", "Cosmic"};
@@ -746,11 +743,11 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                        lunaText(glassColorLabels[state->pendingGlassColor]));
     drawOptionsTextRow(baseX, firstY + 2 * rowStep, gsGlobal->Width - baseX,
                        state->selectedGlobal == 2, selectorY, lunaText("Font"),
-                       state->pendingFont == UI_FONT_PSBBN ? "PSBBN" : "DejaVu Sans");
+                       state->pendingFont == UI_FONT_PSBBN ? "PSBBN" : "DejaVu");
     drawOptionsTextRow(baseX, firstY + 3 * rowStep, gsGlobal->Width - baseX,
                        state->selectedGlobal == 3, selectorY, lunaText("PS1 case style"),
                        lunaText(state->pendingPs1CaseStyle == PS1_CASE_SQUARE ?
-                                "Square (jewel case)" : "Tall"));
+                                "Jewel case" : "Tall"));
     drawOptionsSection(firstY + 4 * rowStep, lunaText("Game defaults"), 0);
     drawOptionsTextRow(baseX, optionsGlobalRowY(4, firstY, rowStep, lineHeight),
                        gsGlobal->Width - baseX, state->selectedGlobal == 4, selectorY,
@@ -771,8 +768,8 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
         "Default PS2 startup logo setting for every game.",
         "Default game core for every supported device.",
         "Play ambient music while browsing."};
-    drawTextWindow(baseX + 18, menuBottom - lineHeight,
-                   gsGlobal->Width - baseX, menuBottom, 0,
+    drawTextWindow(baseX + 18, menuBottom,
+                   gsGlobal->Width - baseX, gsGlobal->Height - footerHeight, 0,
                    HeaderTextColor, ALIGN_LEFT, lunaText(descriptions[state->selectedGlobal]));
   } else if (state->page == OPTIONS_VIEWS) {
     const int firstY = menuTop + lineHeight + 4;
@@ -801,15 +798,15 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                        lunaText("List art layout"),
                        state->pendingOverlap ? lunaText("Overlap") : lunaText("Separate"));
     if (state->selectedView == OPTIONS_VIEW_ART_LAYOUT_ROW)
-      drawTextWindow(baseX + 18, menuBottom - lineHeight,
-                     gsGlobal->Width - baseX, menuBottom, 0,
+      drawTextWindow(baseX + 18, menuBottom,
+                     gsGlobal->Width - baseX, gsGlobal->Height - footerHeight, 0,
                      HeaderTextColor, ALIGN_LEFT,
                      lunaText("Choose how cover art sits in List view."));
     else {
       const ButtonPrompt cycle[] = {
           {ICON_CIRCLE, lunaText("Cycle views; keep at least one on")}};
-      drawPromptBar(baseX + 18, menuBottom - lineHeight,
-                    gsGlobal->Width - baseX, menuBottom, 0,
+      drawPromptBar(baseX + 18, menuBottom,
+                    gsGlobal->Width - baseX, gsGlobal->Height - footerHeight, 0,
                     HeaderTextColor, (PromptBar){NULL, cycle, 1});
     }
   } else if (state->page == OPTIONS_ORBS) {
@@ -872,9 +869,9 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                            gsGlobal->Width - baseX, *selected == row,
                            selectorY, lunaText(label), lunaText(value));
       }
-      drawTextWindow(baseX, menuBottom - 2 * lineHeight,
-                     gsGlobal->Width - baseX, menuBottom, 0,
-                     HeaderTextColor, ALIGN_HCENTER,
+      drawTextWindow(baseX + 18, menuBottom,
+                     gsGlobal->Width - baseX, gsGlobal->Height - footerHeight, 0,
+                     HeaderTextColor, ALIGN_LEFT,
                      state->orbsShapesPage ?
                          lunaText("Choose shapes for LUNA. All off keeps playtime.") :
                      state->selectedOrbsRow == shapeFirst ?
@@ -910,6 +907,9 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
     const int gameStep = lineHeight + lineHeight / 2;
     const int firstY = contentTop + lineHeight + 4;
     if (state->gameSection == GAME_HUB) {
+      const int availableStep = (menuBottom - firstY - lineHeight - 8) /
+                                (GAME_SECTION_COUNT - 1);
+      const int hubStep = availableStep < gameStep ? availableStep : gameStep;
       char compatSummary[24], launchSummary[24];
       int compatEnabled = 0;
       int compatCount = gameUsesOpl(state) ?
@@ -931,15 +931,16 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
         snprintf(launchSummary, sizeof(launchSummary), lunaText("Default"));
       const char *const summaries[GAME_SECTION_COUNT] = {
           gameVMCEnabled(state->titleArguments) ? lunaText("Enabled") : lunaText("Disabled"),
+          lunaGameOptionsValue(&state->gameOptions, LUNA_GAME_CORE),
           compatSummary,
           lunaGameOptionsValue(&state->gameOptions,
               gameUsesOpl(state) ? LUNA_GAME_OPL_VIDEO_MODE : LUNA_GAME_VIDEO_MODE),
           state->cheats.enabled ? lunaText("Enabled") : lunaText("Disabled"), launchSummary};
       drawOptionsSection(contentTop, lunaText("Game settings"), 0);
       int selectorY = optionsSelectorY(&state->selector, state->page,
-          state->selectedGameHubRow, firstY + state->selectedGameHubRow * gameStep);
+          state->selectedGameHubRow, firstY + state->selectedGameHubRow * hubStep);
       for (int row = 0; row < GAME_SECTION_COUNT; row++)
-        drawOptionsTextRow(baseX, firstY + row * gameStep,
+        drawOptionsTextRow(baseX, firstY + row * hubStep,
                            gsGlobal->Width - baseX,
                            row == state->selectedGameHubRow, selectorY,
                            lunaText(gameSectionLabels[row]), summaries[row]);
@@ -1000,6 +1001,7 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                     state->page == OPTIONS_PER_GAME && state->gameSection == GAME_HUB ?
                         (state->selectedGameHubRow == GAME_MEMORY_CARDS ?
                             (gameVMCEnabled(state->titleArguments) ? lunaText("Manage") : lunaText("Enable")) :
+                         state->selectedGameHubRow == GAME_CORE ? lunaText("Change") :
                             lunaText("Open")) :
                     state->page == OPTIONS_PER_GAME &&
                     state->gameSection == GAME_VIDEO_OUT ? lunaText("Select") :
@@ -1513,6 +1515,13 @@ static int handleGameInput(OptionsMenuState *state, int input) {
                                    GAME_SECTION_COUNT - 1) % GAME_SECTION_COUNT;
     else if (input & PAD_DOWN)
       state->selectedGameHubRow = (state->selectedGameHubRow + 1) % GAME_SECTION_COUNT;
+    else if (state->selectedGameHubRow == GAME_CORE &&
+             (input & (PAD_CROSS | PAD_CIRCLE | PAD_LEFT | PAD_RIGHT))) {
+      if (lunaOplDevice(state->target->device->mode) != NULL &&
+          lunaGameOptionsCycleCore(&state->gameOptions, state->titleArguments,
+                                   state->coreSetting, (input & PAD_LEFT) ? -1 : 1))
+        state->titleArgumentsChanged = 1;
+    }
     else if (input & (PAD_CROSS | PAD_CIRCLE)) {
       state->gameSection = (GameSection)state->selectedGameHubRow;
       state->selectedGameRow = 0;
@@ -1654,10 +1663,6 @@ static int handleGameInput(OptionsMenuState *state, int input) {
         lunaGameOptionsCyclePS2Logo(&state->gameOptions,
                                     state->titleArguments,
                                     state->logoSetting, direction) :
-        selectedRow == LUNA_GAME_CORE ?
-        lunaGameOptionsCycleCore(&state->gameOptions,
-                                 state->titleArguments,
-                                 state->coreSetting, direction) :
         lunaGameOptionsChange(&state->gameOptions, state->titleArguments,
                               selectedRow, direction);
     if (changed)

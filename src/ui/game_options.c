@@ -334,7 +334,7 @@ const char *lunaGameOptionsValue(const LunaGameOptions *options, LunaGameRow row
     return options->debugColors ? lunaText("On") : lunaText("Off");
   if (row == LUNA_GAME_CORE)
     return options->coreInherited ?
-        (options->oplCore ? lunaText("Inherit (OPL)") : lunaText("Inherit (Neutrino)")) :
+        (options->oplCore ? lunaText("Default (OPL)") : lunaText("Default (Neutrino)")) :
         (options->oplCore ? "OPL" : "Neutrino");
   return ">";
 }
