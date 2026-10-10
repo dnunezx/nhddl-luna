@@ -95,10 +95,15 @@ the Physical card choice remains available.
 In every library view, hold **R1** to open the quick menu. While holding R1,
 **Cross** switches between Show Favorites and Show All, **Circle** adds or
 removes the selected game from Favorites, and **Triangle** opens Options.
-**R3** starts Random in Orbit. Releasing R1 without choosing an action closes the menu.
+In builds with PS1 support, **L3** switches the game library between Mix, PS2,
+and PS1; the quick menu shows the current filter. **R3** starts Random in Orbit.
+Releasing R1 without choosing an action closes the menu.
 Without R1, **Cross** launches, **Circle** changes views, **Triangle** opens
-Options, and **Select** switches the favorites filter.
-The footer uses one row: View, Launch, Menu, More.
+Options, **Select** switches the favorites filter, and **L3** switches the game
+library in builds with PS1 support. L3 switches once per press, including when
+the current library filter is empty.
+The footer uses one row: View, Launch, Menu, More. The L3 prompt appears only
+in the quick menu.
 
 Press **Triangle** to open the options menu. **Per-game settings** opens the
 selected game's launch controls; **Global settings** contains **Classic art

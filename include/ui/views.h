@@ -6,10 +6,15 @@
 #include <gsKit.h>
 #include <stdint.h>
 
+typedef enum { PS1_CASE_TALL, PS1_CASE_SQUARE } Ps1CaseStyle;
+void setPs1CaseStyle(Ps1CaseStyle style);
+Ps1CaseStyle getPs1CaseStyle(void);
+
 void calculateCoverArtGeometry(void);
 void setClassicArtOverlap(int overlap);
 // titles is the active indexed list; flags use canonical Target.idx even in Favorites.
 void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPage,
+                   const Target *displayedArtTarget,
                    GSTEXTURE *selectedTitleCover, GSTEXTURE *selectedTitleDisc,
                    const uint8_t *favoriteFlags, int favoritesOnly, int coverPending,
                    int listEntryProgress,

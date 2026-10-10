@@ -653,10 +653,28 @@ static uint64_t glassColor(int red, int green, int blue, int alpha, int brightne
 }
 
 void drawGlassDiamond(int centerX, int centerY, int radius, int z, uint64_t color) {
-  gsKit_prim_line(gsGlobal, centerX, centerY - radius, centerX + radius, centerY, z, color);
-  gsKit_prim_line(gsGlobal, centerX + radius, centerY, centerX, centerY + radius, z, color);
-  gsKit_prim_line(gsGlobal, centerX, centerY + radius, centerX - radius, centerY, z, color);
-  gsKit_prim_line(gsGlobal, centerX - radius, centerY, centerX, centerY - radius, z, color);
+  if (radius <= 0)
+    return;
+
+  // Mirror integer pixel spans instead of rasterizing diagonal triangle edges:
+  // their edge-inclusion rules can give opposite sides different coverage.
+  // Three horizontal pixels give roughly two pixels perpendicular to a 45-
+  // degree side. Every span is disjoint, so alpha stays uniform at the tips.
+  for (int row = 0; row < radius * 2; ++row) {
+    const int mirroredRow = row < radius ? row : radius * 2 - 1 - row;
+    const int outerWidth = mirroredRow + 1;
+    const int innerWidth = outerWidth - 3;
+    const int y = centerY - radius + row;
+    if (innerWidth <= 0) {
+      gsKit_prim_sprite(gsGlobal, centerX - outerWidth, y,
+                        centerX + outerWidth, y + 1, z, color);
+    } else {
+      gsKit_prim_sprite(gsGlobal, centerX - outerWidth, y,
+                        centerX - innerWidth, y + 1, z, color);
+      gsKit_prim_sprite(gsGlobal, centerX + innerWidth, y,
+                        centerX + outerWidth, y + 1, z, color);
+    }
+  }
 }
 
 void drawGlassPanelWithFillAlpha(int x1, int y1, int x2, int y2, int z, int fillAlpha) {

@@ -65,6 +65,21 @@ static uint32_t splashVisibleStartMs;
 static uint32_t libraryReturnFadeStartMs;
 static TargetFilter libraryPlatformFilter = TARGET_MIXED;
 
+enum {
+  QUICK_SHOW_FAVORITES,
+  QUICK_TOGGLE_FAVORITE,
+  QUICK_OPTIONS,
+#ifdef LUNA_ENABLE_PSXCORE
+  QUICK_SWITCH_GAMES,
+#endif
+  QUICK_RANDOM,
+  QUICK_ACTION_COUNT
+};
+
+static int libraryQuickActionCount(UILibraryView view) {
+  return view == UI_VIEW_ORBIT ? QUICK_ACTION_COUNT : QUICK_RANDOM;
+}
+
 const int keepoutArea = 20;
 const int headerHeight = 40;
 const int footerHeight = 60;
@@ -86,17 +101,10 @@ static int libraryViewEntryProgress(int entryView, UILibraryView view,
 static void drawLibraryFooter(int canLaunch) {
   const ButtonPrompt prompts[] = {
       {ICON_CIRCLE, lunaText("View")}, {ICON_CROSS, canLaunch ? lunaText("Launch") : NULL},
-      {ICON_START, lunaText("Menu")}, {ICON_R1, lunaText("More")},
-      {ICON_R3, targetFilterLabel(libraryPlatformFilter)}};
+      {ICON_START, lunaText("Menu")}, {ICON_R1, lunaText("More")}};
   drawPromptBar(20, gsGlobal->Height - footerHeight + 8,
                 gsGlobal->Width - 20, gsGlobal->Height, 8, FontMainColor,
-                (PromptBar){NULL, prompts,
-#ifdef LUNA_ENABLE_PSXCORE
-                    5
-#else
-                    4
-#endif
-                });
+                (PromptBar){NULL, prompts, 4});
 }
 
 static void drawQuickMenuText(int x1, int y1, int x2, int y2,
@@ -113,12 +121,25 @@ static void drawLibraryQuickMenu(int progress, int closing, UILibraryView view,
                                  int total, const char *title) {
   if (progress <= 0)
     return;
+#ifdef LUNA_ENABLE_PSXCORE
+  char switchGamesLabel[128];
+  snprintf(switchGamesLabel, sizeof(switchGamesLabel), lunaText("Switch Games: %s"),
+           targetFilterLabel(libraryPlatformFilter));
+#endif
   const char *labels[] = {
       favoritesOnly ? lunaText("Show All") : lunaText("Show Favorites"),
       isFavorite ? lunaText("Remove from Favorites") : lunaText("Add to Favorites"),
-      lunaText("Options"), lunaText("Random")};
-  const IconType icons[] = {ICON_CROSS, ICON_CIRCLE, ICON_TRIANGLE, ICON_R3};
-  int count = view == UI_VIEW_ORBIT ? 4 : 3;
+      lunaText("Options"),
+#ifdef LUNA_ENABLE_PSXCORE
+      switchGamesLabel,
+#endif
+      lunaText("Random")};
+  const IconType icons[] = {ICON_CROSS, ICON_CIRCLE, ICON_TRIANGLE,
+#ifdef LUNA_ENABLE_PSXCORE
+                            ICON_L3,
+#endif
+                            ICON_R3};
+  int count = libraryQuickActionCount(view);
   int rowHeight = getFontLineHeight() + 10;
   int height = (count + 1) * rowHeight + 16;
   int slide = 354 * (1000 - lunaNavEase(progress)) / 1000;
@@ -149,7 +170,11 @@ static void drawLibraryQuickMenu(int progress, int closing, UILibraryView view,
                  total > 0 ? title : lunaText("No favorites yet"));
   for (int i = 0; i < count; i++) {
     int y = top + (i + 1) * rowHeight + 8;
-    int enabled = i == 0 || (total > 0 && (i != 3 || total > 1));
+    int enabled = i == QUICK_SHOW_FAVORITES ||
+#ifdef LUNA_ENABLE_PSXCORE
+                  i == QUICK_SWITCH_GAMES ||
+#endif
+                  (total > 0 && (i != QUICK_RANDOM || total > 1));
     drawIconWindow(left + 16, y, 0, y + rowHeight, 0,
                    enabled ? FontMainColor : HeaderTextColor, ALIGN_VCENTER, icons[i]);
     drawQuickMenuText(left + 16 + getIconWidth(icons[i]) + 10, y,
@@ -338,6 +363,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   int classicNavHeld = 0;
   int classicDisplayedCoverAvailable = 0;
   int classicDisplayedDiscAvailable = 0;
+  const Target *classicDisplayedArtTarget = NULL;
   int classicEntryListSlideActive = 0;
   uint32_t classicEntryListSlideStartMs = 0;
   uint32_t classicEntryListSlideDurationMs = CLASSIC_LIST_ENTRY_SLIDE_MS;
@@ -420,6 +446,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   glassColorSetting = loadGlassColorPreset(curTarget);
   setGlassColorPreset((GlassColorPreset)glassColorSetting);
   fontSetting = loadUIFont(curTarget);
+  setPs1CaseStyle(loadPs1CaseStyle(curTarget));
   if (setUIFont((UIFont)fontSetting))
     fontSetting = UI_FONT_DEJAVU;
   ambientEnabled = loadAmbientSoundEnabled(curTarget);
@@ -462,6 +489,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     isDiscUninitialized = loadDiscArt(curTarget->device, curTarget->id);
     classicDisplayedCoverAvailable = !isCoverUninitialized;
     classicDisplayedDiscAvailable = !isDiscUninitialized;
+    classicDisplayedArtTarget = curTarget;
     if (classicDisplayedDiscAvailable)
       bindTextureSafe(gsGlobal, discTexture);
   }
@@ -556,6 +584,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         isDiscUninitialized = loadDiscArt(curTarget->device, curTarget->id);
         classicDisplayedCoverAvailable = !isCoverUninitialized;
         classicDisplayedDiscAvailable = !isDiscUninitialized;
+        classicDisplayedArtTarget = curTarget;
         classicArtRequestedIdx = -1;
         // Upload artwork before text is queued so VRAM reuse cannot replace glyphs.
         if (classicDisplayedCoverAvailable)
@@ -570,6 +599,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       if (serviceClassicArt(&coverAvailable, &discAvailable)) {
         classicDisplayedCoverAvailable = coverAvailable;
         classicDisplayedDiscAvailable = discAvailable;
+        classicDisplayedArtTarget = curTarget;
         isCoverUninitialized = !coverAvailable;
         isDiscUninitialized = !discAvailable;
         classicArtRequestedIdx = -1;
@@ -714,6 +744,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
               (int)(elapsed * 1000U / classicEntryListSlideDurationMs));
       }
       drawTitleList(titles, selectedTitleIdx, maxTitlesPerPage,
+                    classicDisplayedArtTarget,
                     (classicDisplayedCoverAvailable && !favoritesEmpty) ? coverTexture : NULL,
                     (classicDisplayedDiscAvailable && !favoritesEmpty) ? discTexture : NULL,
                     favoriteFlags, favoritesOnly, coverPending && !favoritesEmpty,
@@ -821,12 +852,15 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     int quickWasOpen = quickMenu.open;
     int quickPressed = input & ~quickPreviousInput;
     quickPreviousInput = input;
-    int quickShortcut = (quickPressed & PAD_CROSS) ? 0 :
-                        (quickPressed & PAD_CIRCLE) ? 1 :
-                        (quickPressed & PAD_TRIANGLE) ? 2 :
-                        (view == UI_VIEW_ORBIT && (quickPressed & PAD_R3)) ? 3 : -1;
+    int quickShortcut = (quickPressed & PAD_CROSS) ? QUICK_SHOW_FAVORITES :
+                        (quickPressed & PAD_CIRCLE) ? QUICK_TOGGLE_FAVORITE :
+                        (quickPressed & PAD_TRIANGLE) ? QUICK_OPTIONS :
+#ifdef LUNA_ENABLE_PSXCORE
+                        (quickPressed & PAD_L3) ? QUICK_SWITCH_GAMES :
+#endif
+                        (view == UI_VIEW_ORBIT && (quickPressed & PAD_R3)) ? QUICK_RANDOM : -1;
     quickAction = lunaQuickMenuUpdate(&quickMenu, (input & PAD_R1) != 0,
-                                     input != 0, view == UI_VIEW_ORBIT ? 4 : 3,
+                                     input != 0, libraryQuickActionCount(view),
                                      quickShortcut, uiNowMs());
     if (!quickWasOpen && (quickMenu.open || quickAction >= 0)) {
       // Freeze the visible title, including during a scan or cover glide.
@@ -856,7 +890,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       circleButtonHeld = 0;
       // Wait for all chord buttons to be released before handing control
       // to Options, so the same press cannot edit that screen.
-      if (quickAction == 2) {
+      if (quickAction == QUICK_OPTIONS) {
         quickDeferredAction = quickAction;
         continue;
       }
@@ -866,17 +900,24 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       }
       if (quickAction < 0)
         continue;
-      if (quickAction != 0 && titles->total == 0)
+      if (quickAction != QUICK_SHOW_FAVORITES &&
+#ifdef LUNA_ENABLE_PSXCORE
+          quickAction != QUICK_SWITCH_GAMES &&
+#endif
+          titles->total == 0)
         continue;
-      input = quickAction == 0 ? PAD_SELECT :
-              quickAction == 2 ? PAD_TRIANGLE :
-              quickAction == 3 ? PAD_SQUARE : 0;
+      input = quickAction == QUICK_SHOW_FAVORITES ? PAD_SELECT :
+              quickAction == QUICK_OPTIONS ? PAD_TRIANGLE :
+#ifdef LUNA_ENABLE_PSXCORE
+              quickAction == QUICK_SWITCH_GAMES ? PAD_L3 :
+#endif
+              quickAction == QUICK_RANDOM ? PAD_SQUARE : 0;
       favoriteButtonHeld = 0;
       orbitRandomButtonHeld = 0;
     }
     if (titles->total == 0)
-      input &= PAD_SELECT | PAD_CIRCLE | PAD_START | PAD_R3;
-    if (!(quickPressed & PAD_R3)) input &= ~PAD_R3;
+      input &= PAD_SELECT | PAD_CIRCLE | PAD_START | PAD_L3;
+    if (!(quickPressed & PAD_L3)) input &= ~PAD_L3;
     // Manual Collection entry must finish loading and revealing before Circle
     // can advance again. Presses during entry are consumed, never deferred.
     int circleEntryBlocked = lunaNavEntryInputBlocked(&collectionCirclePending,
@@ -1039,7 +1080,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     int wasCollectionFavorites = 0;
     int libraryListChanged = 0;
 #ifdef LUNA_ENABLE_PSXCORE
-    if (input & PAD_R3) {
+    if (input & PAD_L3) {
       Target *previousTarget = curTarget;
       libraryPlatformFilter = (TargetFilter)((libraryPlatformFilter + 1) % 3);
       filterTargetView(platformTitles, allTitles, libraryPlatformFilter,
@@ -1054,7 +1095,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       goto restart_library_view;
     } else
 #endif
-    if ((input & PAD_SELECT) && (!favoritesTabButtonHeld || quickAction == 0)) {
+    if ((input & PAD_SELECT) && (!favoritesTabButtonHeld || quickAction == QUICK_SHOW_FAVORITES)) {
       favoritesTabButtonHeld = 1;
       int originalIndex = curTarget->idx;
       DPRINTF("Library filter switch begin: view=%d favorites=%d total=%d\n",
@@ -1117,6 +1158,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       }
       classicArtRequestedIdx = -1;
       classicArtSubmittedIdx = -1;
+      classicDisplayedArtTarget = NULL;
       if (view == UI_VIEW_ORBIT)
         resetAmbientOrbsOrbit(uiNowMs());
       scrollFast = (LunaScrollFast){0};
@@ -1183,7 +1225,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       if (libraryListChanged)
         DPRINTF("Library filter switch done: view=%d favorites=%d total=%d\n",
                 view, favoritesOnly, titles->total);
-    } else if ((quickAction == 1 || (view == UI_VIEW_CLASSIC && (input & PAD_SQUARE))) &&
+    } else if ((quickAction == QUICK_TOGGLE_FAVORITE || (view == UI_VIEW_CLASSIC && (input & PAD_SQUARE))) &&
                !favoriteButtonHeld && titles->total > 0) {
       int originalIndex = curTarget->idx;
       int wasFavorite = allFavoriteFlags[originalIndex] != 0;

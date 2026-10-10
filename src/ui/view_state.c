@@ -34,6 +34,8 @@ static const char glassColorPath[] = "/glassColor.txt";
 static const char glassColorTempPath[] = "/glassColor.txt.tmp";
 static const char uiFontPath[] = "/uiFont.txt";
 static const char uiFontTempPath[] = "/uiFont.txt.tmp";
+static const char ps1CaseStylePath[] = "/ps1CaseStyle.txt";
+static const char ps1CaseStyleTempPath[] = "/ps1CaseStyle.txt.tmp";
 static const char ambientSoundPath[] = "/ambientSound.txt";
 static const char ambientSoundTempPath[] = "/ambientSound.txt.tmp";
 static const char *const viewNames[UI_VIEW_ID_LIMIT] = {
@@ -731,6 +733,55 @@ int saveUIFont(Target *target, UIFont selection) {
   if (commitConfigFile(tempPath, path))
     return -EIO;
   DPRINTF("Saved UI font %s to %s\n", uiFontNames[selection], path);
+  return 0;
+}
+
+Ps1CaseStyle loadPs1CaseStyle(Target *target) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  const char *paths[] = {ps1CaseStyleTempPath, ps1CaseStylePath};
+  char path[PATH_MAX], value[24];
+  if (device == NULL || device->mountpoint == NULL)
+    return PS1_CASE_TALL;
+  for (int i = 0; i < 2; i++) {
+    if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
+      continue;
+    FILE *file = fopen(path, "r");
+    if (file == NULL) continue;
+    int readable = fgets(value, sizeof(value), file) != NULL;
+    fclose(file);
+    if (!readable) continue;
+    value[strcspn(value, "\r\n")] = '\0';
+    if (!strcmp(value, "tall") || !strcmp(value, "square")) {
+      DPRINTF("Loaded PS1 case style %s from %s\n", value, path);
+      return !strcmp(value, "square") ? PS1_CASE_SQUARE : PS1_CASE_TALL;
+    }
+  }
+  return PS1_CASE_TALL;
+}
+
+int savePs1CaseStyle(Target *target, Ps1CaseStyle style) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  char directory[PATH_MAX], path[PATH_MAX], tempPath[PATH_MAX];
+  struct stat st;
+  if (device == NULL || device->mountpoint == NULL ||
+      (style != PS1_CASE_TALL && style != PS1_CASE_SQUARE))
+    return -EINVAL;
+  if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
+      buildConfigFilePath(path, sizeof(path), device->mountpoint, ps1CaseStylePath) ||
+      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, ps1CaseStyleTempPath))
+    return -ENAMETOOLONG;
+  if (stat(directory, &st) == -1 && mkdir(directory, 0777))
+    return -EIO;
+  FILE *file = fopen(tempPath, "w");
+  if (file == NULL) return -EIO;
+  int written = fprintf(file, "%s\n", style == PS1_CASE_SQUARE ? "square" : "tall");
+  int closed = fclose(file);
+  if (written < 0 || closed) {
+    remove(tempPath);
+    return -EIO;
+  }
+  if (commitConfigFile(tempPath, path)) return -EIO;
+  DPRINTF("Saved PS1 case style %s to %s\n", style == PS1_CASE_SQUARE ? "square" : "tall", path);
   return 0;
 }
 

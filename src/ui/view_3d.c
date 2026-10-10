@@ -9,6 +9,20 @@ static int pageComplete[GRID_PAGE_BUFFERS];
 static int nextSlots[GRID_PAGE_BUFFERS];
 static int selectedArtIdx;
 static LunaCasePage casePage;
+static Ps1CaseStyle ps1CaseStyle = PS1_CASE_TALL;
+static Ps1CaseStyle caseGridStyle = PS1_CASE_TALL;
+
+void setPs1CaseStyle(Ps1CaseStyle style) {
+  ps1CaseStyle = style == PS1_CASE_SQUARE ? PS1_CASE_SQUARE : PS1_CASE_TALL;
+}
+
+Ps1CaseStyle getPs1CaseStyle(void) {
+  return ps1CaseStyle;
+}
+
+static int isJewelCase(const Target *target) {
+  return ps1CaseStyle == PS1_CASE_SQUARE && target->platform == TARGET_PS1;
+}
 static int casePageDirection = 1;
 
 #define CASE_FOCUS_MS 180U
@@ -177,6 +191,7 @@ static void updateCaseFocus(int pageBase, int selectedSlot, uint32_t now) {
 
 void resetCaseGrid(void) {
   releaseGridCovers();
+  caseGridStyle = ps1CaseStyle;
   setGridCaseArtwork(1);
   for (int i = 0; i < GRID_PAGE_BUFFERS; i++) {
     pageBases[i] = -1;
@@ -298,20 +313,22 @@ static void drawCaseContact(float x, float foot, float width, float height,
 static void drawCase(float x, float y, float width, float height,
                      GSTEXTURE *cover, int selected, int resolved, int large,
                      int rowZ, float turn, float shimmerPhase, float visibility,
-                     float pose) {
+                     float pose, int jewel) {
   caseDrawOpacity = (int)(0x80 * visibility);
   turn *= pose;
   float retreat = 1.0f - pose;
   CaseGeometry g = {x + width * 0.5f, y + height, width, height,
-                    width * (14.0f / 135.0f),
+                    width * (jewel ? 10.0f / 142.0f : 14.0f / 135.0f),
                     0.819152f + 0.180848f * turn - 0.150021f * retreat,
                     0.573576f * (1.0f - turn) + 0.169569f * retreat,
                     0.906308f + 0.093692f * turn - 0.140264f * retreat,
                     0.422618f * (1.0f - turn) + 0.220170f * retreat};
   // At thumbnail size, retain enough thickness to distinguish the two faces.
-  if (g.depth < 5.0f) g.depth = 5.0f;
-  float radius = width * 0.025f, bevel = width * 0.009f;
-  if (radius < 1.1f) radius = 1.1f;
+  float minDepth = jewel ? 3.0f : 5.0f;
+  if (g.depth < minDepth) g.depth = minDepth;
+  float radius = width * (jewel ? 0.012f : 0.025f);
+  float bevel = width * (jewel ? 0.018f : 0.009f);
+  if (radius < (jewel ? 0.6f : 1.1f)) radius = jewel ? 0.6f : 1.1f;
   if (bevel < 0.65f) bevel = 0.65f;
   int z = rowZ;
   uint64_t black = GS_SETREG_RGBA(0x12, 0x13, 0x16, 0x80);
@@ -346,7 +363,8 @@ static void drawCase(float x, float y, float width, float height,
   caseFace(back, z, GS_SETREG_RGBA(0x0A, 0x0B, 0x0D, 0x80));
   for (int i = 0; i < 4; i++) {
     int j = i + 1;
-    uint64_t lit = i < 2 ? GS_SETREG_RGBA(0x60, 0x63, 0x6A, 0x80) :
+    uint64_t lit = jewel ? GS_SETREG_RGBA(0xA0, 0xB0, 0xBC, 0x80) :
+                      i < 2 ? GS_SETREG_RGBA(0x60, 0x63, 0x6A, 0x80) :
                             GS_SETREG_RGBA(0x32, 0x35, 0x3D, 0x80);
     caseQuad(front[i], front[j], back[i], back[j], z + 1,
         lit, GS_SETREG_RGBA(0x16, 0x18, 0x1E, 0x80));
@@ -371,15 +389,36 @@ static void drawCase(float x, float y, float width, float height,
   for (int i = 0; i < 8; i++) {
     int j = (i + 1) & 7;
     int light = edgeLight[i];
+    if (jewel) light += 65;
     caseQuad(front[i], front[j], inner[i], inner[j], z + 4,
         GS_SETREG_RGBA(light, light + 1, light + 3, 0x80), black);
   }
-  float paperX = width * (2.5f / 135.0f);
-  float paperY = height * (3.0f / 190.0f);
-  float paperWidth = width * (130.0f / 135.0f);
-  float paperHeight = height * (184.0f / 190.0f);
+  float paperX = width * (jewel ? 0.08f : 2.5f / 135.0f);
+  float paperY = height * (jewel ? 0.05f : 3.0f / 190.0f);
+  float paperWidth = width * (jewel ? 0.90f : 130.0f / 135.0f);
+  float paperHeight = height * (jewel ? 0.90f : 184.0f / 190.0f);
+  if (jewel) {
+    // The dark hinged tray and rigid clear lid distinguish a jewel case.
+    for (int rib = 0; rib < 3; rib++) {
+      float ribX = width * (0.025f + rib * 0.017f);
+      a = projectCase(&g, ribX, height * 0.04f, 0);
+      b = projectCase(&g, ribX, height * 0.96f, 0);
+      gsKit_prim_line(gsGlobal, a.x, a.y, b.x, b.y, z + 5,
+          caseColor(GS_SETREG_RGBA(0x78, 0x84, 0x90, 0x60)));
+    }
+  }
   if (cover != NULL) {
-    drawCaseTexture(&g, cover, paperX, paperY, paperWidth, paperHeight, z + 5);
+    // Jewel cases map the regular cover across the full square insert.
+    float artWidth = paperWidth, artHeight = paperHeight;
+    if (!jewel) {
+      artHeight = artWidth * cover->Height / cover->Width;
+      if (artHeight > paperHeight) {
+        artHeight = paperHeight;
+        artWidth = artHeight * cover->Width / cover->Height;
+      }
+    }
+    drawCaseTexture(&g, cover, paperX + (paperWidth - artWidth) * 0.5f,
+        paperY + (paperHeight - artHeight) * 0.5f, artWidth, artHeight, z + 5);
   } else {
     a = projectCase(&g, paperX, paperY, 0);
     b = projectCase(&g, paperX + paperWidth, paperY, 0);
@@ -421,6 +460,7 @@ static void drawCase(float x, float y, float width, float height,
   caseDrawOpacity = 0x80;
 }
 void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs) {
+  if (caseGridStyle != ps1CaseStyle) resetCaseGrid();
   drawSharedLibraryBackground(frameNowMs);
   if (titles->total <= 0)
     return;
@@ -508,6 +548,9 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
       float zoom = 1.0f + CASE_FOCUS_ZOOM * caseFocus[slot];
       float caseHeight = height * rowScale * zoom * (0.82f + 0.18f * entry);
       float caseWidth = caseHeight * CASE_ASPECT;
+      int jewel = isJewelCase(getTargetByIdx(titles, pageBase + slot));
+      // Share the tall case's width and shelf foot, including selection zoom.
+      if (jewel) caseHeight = caseWidth;
       float x = centerX + (column - (CASE_GRID_COLUMNS - 1) * 0.5f) *
           cellWidth * rowScale - caseWidth / 2 + pageOffset * pageTravel / 1000.0f;
       float y = foot - caseHeight;
@@ -516,7 +559,7 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
           selected, gridPageSlotReady(buffer, slot), 0,
           selected ? 68 : 8 + row * 16, caseTurn[slot],
           selected && !caseExitActive && casePage.stage == CASE_PAGE_IDLE ? shimmerPhase : -1.0f,
-          entry * pageVisibility / 1000.0f, entry);
+          entry * pageVisibility / 1000.0f, entry, jewel);
     }
   }
   if (casePage.stage != CASE_PAGE_IDLE)
@@ -568,6 +611,9 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
     previewWidth = right - infoLeft - 14;
     previewHeight = previewWidth / CASE_ASPECT;
   }
+  float previewAreaHeight = previewHeight;
+  int jewel = isJewelCase(target);
+  if (jewel) previewHeight = previewWidth;
   int slot = selectedTitleIdx - pageBase;
   GSTEXTURE *preview = selectedArtIdx == selectedTitleIdx && selectedReady == 1 &&
       gridSelectedLoaded[0] ? gridSelectedTextures[0] :
@@ -578,14 +624,15 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
     float drawnWidth = previewWidth * previewScale;
     float drawnHeight = previewHeight * previewScale;
     drawCase(infoLeft + (right - infoLeft - drawnWidth) / 2,
-        previewTop + (previewHeight - drawnHeight) +
+        previewTop + (previewAreaHeight - previewHeight) * 0.5f +
+            (previewHeight - drawnHeight) +
             (1.0f - previewEntry) * 28.0f,
         drawnWidth, drawnHeight, preview, 0, selectedReady >= 0, 1, 72,
         caseTurn[slot], caseExitActive || casePage.stage != CASE_PAGE_IDLE ? -1.0f : shimmerPhase,
-        previewEntry * pagePreviewVisibility, previewEntry);
+        previewEntry * pagePreviewVisibility, previewEntry, jewel);
   }
   snprintf(lineBuffer, sizeof(lineBuffer), "%d / %d", selectedTitleIdx + 1, titles->total);
-  drawTextWindow(infoLeft, previewTop + previewHeight + previewWidth * 0.16f + 10, right, 0,
+  drawTextWindow(infoLeft, previewTop + previewAreaHeight + previewWidth * 0.16f + 10, right, 0,
       6, infoColor, ALIGN_HCENTER, lineBuffer);
   snprintf(lineBuffer, sizeof(lineBuffer), "%d / %d",
       pageBase / CASE_GRID_PAGE_SIZE + 1,

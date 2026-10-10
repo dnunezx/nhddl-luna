@@ -748,6 +748,19 @@ static PSBBNPixel *createPSBBNThumbnail(const PSBBNPixel *source, int width, int
   return createArtThumbnail(source, width, height, size, size);
 }
 
+// Keep the source aspect in every cached case thumbnail. Style changes then
+// reuse the same pixels; the renderer fits them into the chosen case insert.
+static void caseThumbnailSize(int sourceWidth, int sourceHeight, int *width, int *height) {
+  *width = CASE_THUMBNAIL_WIDTH;
+  *height = (int)((int64_t)sourceHeight * *width / sourceWidth);
+  if (*height > CASE_THUMBNAIL_HEIGHT) {
+    *height = CASE_THUMBNAIL_HEIGHT;
+    *width = (int)((int64_t)sourceWidth * *height / sourceHeight);
+  }
+  if (*width < 1) *width = 1;
+  if (*height < 1) *height = 1;
+}
+
 static size_t collectionTextureBytes(int width, int height) {
   return gsKit_texture_size(width, height, GS_PSM_CT32);
 }
@@ -1443,9 +1456,17 @@ static int gridArtworkPath(Target *target, char *path, size_t capacity) {
   return length >= 0 && length < (int)capacity ? 0 : -1;
 }
 
+static int gridArtworkMissing(const char *path) {
+  FILE *file = fopen(path, "rb");
+  if (file == NULL) return 1;
+  fclose(file);
+  return 0;
+}
+
 static int findGridThumbnail(const char *path) {
   for (int i = 0; i < GRID_THUMBNAIL_CACHE_COUNT; i++) {
-    if (gridThumbnailCache[i].state && !strcmp(gridThumbnailCache[i].path, path))
+    if (gridThumbnailCache[i].state && gridThumbnailCache[i].caseArtwork == gridCaseArtwork &&
+        !strcmp(gridThumbnailCache[i].path, path))
       return i;
   }
   return -1;
@@ -1483,15 +1504,9 @@ static void rememberGridThumbnail(const char *path, const PSBBNPixel *pixels,
   entry->caseArtwork = gridCaseArtwork;
 }
 
-static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXTURE *texture, int thumbnail) {
-  if (device->metadev)
-    device = device->metadev;
-
+static int loadGridCoverArt(Target *target, GSTEXTURE *texture, int thumbnail) {
   releaseGridTexture(texture);
-  if (gridCaseArtwork)
-    snprintf(artPathBuffer, 255, "%s/ART/%s_COV.png", device->mountpoint, titleID);
-  else
-    snprintf(artPathBuffer, 255, "%s%s/%s.png", device->mountpoint, psbbnArtPath, titleID);
+  if (gridArtworkPath(target, artPathBuffer, 255)) return -1;
   if (thumbnail) {
     int cached = findGridThumbnail(artPathBuffer);
     if (cached >= 0) {
@@ -1500,9 +1515,11 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
       if (entry->state == 2)
         return -1;
       size_t bytes = (size_t)entry->width * entry->height * sizeof(PSBBNPixel);
-      texture->Mem = memalign(128, bytes);
+      size_t textureBytes = gsKit_texture_size(entry->width, entry->height, GS_PSM_CT32);
+      texture->Mem = memalign(128, textureBytes);
       if (texture->Mem == NULL)
         return -1;
+      memset(texture->Mem, 0, textureBytes);
       memcpy(texture->Mem, entry->pixels, bytes);
       texture->Width = entry->width;
       texture->Height = entry->height;
@@ -1514,15 +1531,12 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
       return 0;
     }
   }
-  if (thumbnail ? decodePNGTextureRGBA(gsGlobal, texture, artPathBuffer) : loadPNGTextureRGBA(gsGlobal, texture, artPathBuffer)) {
+  if (decodePNGTextureRGBA(gsGlobal, texture, artPathBuffer)) {
     if (thumbnail) {
       // A missing file stays a placeholder on later visits; other read or
       // decode failures may be retried after the page buffer is replaced.
-      FILE *file = fopen(artPathBuffer, "rb");
-      if (file == NULL)
+      if (gridArtworkMissing(artPathBuffer))
         rememberGridThumbnail(artPathBuffer, NULL, 0, 0);
-      else
-        fclose(file);
       releaseGridTexture(texture);
     }
     return -1;
@@ -1532,6 +1546,8 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
   if (thumbnail) {
     int width = gridCaseArtwork ? CASE_THUMBNAIL_WIDTH : GRID_THUMBNAIL_SIZE;
     int height = gridCaseArtwork ? CASE_THUMBNAIL_HEIGHT : GRID_THUMBNAIL_SIZE;
+    if (gridCaseArtwork)
+      caseThumbnailSize(texture->Width, texture->Height, &width, &height);
     PSBBNPixel *pixels = createArtThumbnail((const PSBBNPixel *)texture->Mem,
         texture->Width, texture->Height, width, height);
     if (pixels == NULL) {
@@ -1549,6 +1565,7 @@ static int loadGridCoverArt(struct DeviceMapEntry *device, char *titleID, GSTEXT
     bindTextureSafe(gsGlobal, texture);
     rememberGridThumbnail(artPathBuffer, pixels, width, height);
   }
+  if (!thumbnail) bindTextureSafe(gsGlobal, texture);
   return 0;
 }
 
@@ -1606,6 +1623,8 @@ static void gridArtWorker(void) {
       if (gridArtJob.thumbnail == 1 || gridArtJob.thumbnail == 3) {
         int width = gridArtJob.thumbnail == 3 ? CASE_THUMBNAIL_WIDTH : GRID_THUMBNAIL_SIZE;
         int height = gridArtJob.thumbnail == 3 ? CASE_THUMBNAIL_HEIGHT : GRID_THUMBNAIL_SIZE;
+        if (gridArtJob.thumbnail == 3)
+          caseThumbnailSize(decoded.Width, decoded.Height, &width, &height);
         PSBBNPixel *pixels = createArtThumbnail((const PSBBNPixel *)decoded.Mem,
             decoded.Width, decoded.Height, width, height);
         if (pixels == NULL) {
@@ -1629,10 +1648,7 @@ static void gridArtWorker(void) {
       gridArtJob.result = -1;
     }
     if (gridArtJob.result != 0) {
-      FILE *file = fopen(gridArtJob.path, "rb");
-      gridArtJob.missingFile = file == NULL;
-      if (file != NULL)
-        fclose(file);
+      gridArtJob.missingFile = gridArtworkMissing(gridArtJob.path);
       free(decoded.Mem);
       free(decoded.Clut);
     }
@@ -1788,8 +1804,7 @@ int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot
       }
       if (findGridThumbnail(path) >= 0) {
         gridCoverLoaded[buffer][slot] =
-            loadGridCoverArt(target->device, target->id,
-                             gridCoverTextures[buffer][slot], 1) == 0;
+            loadGridCoverArt(target, gridCoverTextures[buffer][slot], 1) == 0;
         gridCoverAttempted[buffer][slot] = 1;
         gridCoverResolved[buffer][slot] = 1;
         *didLoadArtwork = 1;
@@ -1820,8 +1835,7 @@ int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot
     if (targetIdx < titles->total) {
       Target *target = getTargetByIdx(titles, targetIdx);
       gridCoverLoaded[buffer][prioritySlot] =
-          (loadGridCoverArt(target->device, target->id,
-                            gridCoverTextures[buffer][prioritySlot], 1) == 0);
+          (loadGridCoverArt(target, gridCoverTextures[buffer][prioritySlot], 1) == 0);
       *didLoadArtwork = 1;
     }
     return 0;
@@ -1838,7 +1852,7 @@ int loadGridPageStep(TargetList *titles, int pageBase, int buffer, int *nextSlot
     if (targetIdx < titles->total) {
       Target *target = getTargetByIdx(titles, targetIdx);
       gridCoverLoaded[buffer][slot] =
-          (loadGridCoverArt(target->device, target->id, gridCoverTextures[buffer][slot], 1) == 0);
+          (loadGridCoverArt(target, gridCoverTextures[buffer][slot], 1) == 0);
       *didLoadArtwork = 1;
       break;
     }
@@ -1874,7 +1888,7 @@ int refreshGridSelectedCover(Target *target, int buffer) {
     SignalSema(gridArtWakeSema);
     return -1;
   }
-  gridSelectedLoaded[buffer] = (loadGridCoverArt(target->device, target->id, gridSelectedTextures[buffer], 0) == 0);
+  gridSelectedLoaded[buffer] = (loadGridCoverArt(target, gridSelectedTextures[buffer], 0) == 0);
   return gridSelectedLoaded[buffer];
 }
 

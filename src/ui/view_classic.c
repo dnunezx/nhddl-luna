@@ -24,6 +24,7 @@ static int discArtY2;
 static int discArtX1;
 static int discArtY1;
 static int classicArtOverlap;
+static int classicSquareCover;
 
 static void drawClassicGlowLayer(int centerX, int centerY, int radiusX, int radiusY,
                                  int z, uint64_t centerColor) {
@@ -186,7 +187,8 @@ void calculateCoverArtGeometry(void) {
 
   if (coverWidth > COVER_ART_MAX_WIDTH)
     coverWidth = COVER_ART_MAX_WIDTH;
-  coverHeight = (coverWidth * COVER_ART_RATIO_H) / COVER_ART_RATIO_W;
+  coverHeight = classicSquareCover ? coverWidth :
+      (coverWidth * COVER_ART_RATIO_H) / COVER_ART_RATIO_W;
   coverArtX2 = gsGlobal->Width - keepoutArea - 10;
   coverArtX1 = coverArtX2 - coverWidth;
   discArtX1 = (coverArtX1 + coverArtX2 - DISC_ART_SIZE) / 2;
@@ -218,6 +220,14 @@ void setClassicArtOverlap(int overlap) {
     calculateCoverArtGeometry();
 }
 
+static void updateClassicCoverGeometry(const Target *target) {
+  int square = target != NULL && target->platform == TARGET_PS1 &&
+               getPs1CaseStyle() == PS1_CASE_SQUARE;
+  if (square != classicSquareCover) {
+    classicSquareCover = square;
+    calculateCoverArtGeometry();
+  }
+}
 
 
 
@@ -305,6 +315,7 @@ static void drawClassicCoverTexture(GSTEXTURE *cover, int z) {
 }
 
 void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPage,
+                   const Target *displayedArtTarget,
                    GSTEXTURE *selectedTitleCover, GSTEXTURE *selectedTitleDisc,
                    const uint8_t *favoriteFlags, int favoritesOnly, int coverPending,
                    int listEntryProgress,
@@ -312,6 +323,9 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
                    const char *nextViewLabel) {
 
   classicDiscLastFrameMs = frameNowMs;
+  // Retained artwork keeps its own case shape until its replacement is adopted.
+  updateClassicCoverGeometry(displayedArtTarget != NULL ? displayedArtTarget :
+                              getTargetByIdx(titles, selectedTitleIdx));
 
   // Favorites already supplies a filtered array and a maintained title count.
   int displayTotal = titles->total;

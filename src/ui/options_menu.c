@@ -88,6 +88,7 @@ typedef struct {
   int pendingBackground;
   int pendingGlassColor;
   int pendingFont;
+  Ps1CaseStyle pendingPs1CaseStyle;
   int pendingAmbient;
   int pendingLogo;
   int pendingCore;
@@ -443,8 +444,8 @@ static void drawVideoOutRows(OptionsMenuState *state, int baseX, int firstY,
 
 static int optionsGlobalRowY(int index, int firstY, int rowStep, int lineHeight) {
   return firstY + index * rowStep +
-         (index >= 3 ? lineHeight : 0) +
-         (index >= 5 ? lineHeight : 0);
+         (index >= 4 ? lineHeight : 0) +
+         (index >= 6 ? lineHeight : 0);
 }
 
 static int optionsViewRowY(int row, int firstY, int rowStep,
@@ -668,13 +669,13 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                                   int transitionProgress, int transitionMode) {
   const int showDirty = transitionMode != 2;
   const int gameDirty = showDirty && (state->titleArgumentsChanged || state->cheatsChanged);
-  const int systemDirty = showDirty && optionsGlobalDirty(
+  const int systemDirty = showDirty && (state->pendingPs1CaseStyle != getPs1CaseStyle() || optionsGlobalDirty(
       state->pendingBackground, state->pendingGlassColor,
       state->pendingFont, state->pendingAmbient, state->pendingLogo,
       state->pendingCore,
       *state->ambientOrbsBackgroundSetting, *state->glassColorSetting,
       *state->fontSetting, *state->ambientEnabled, state->logoSetting,
-      state->coreSetting);
+      state->coreSetting));
   const int viewsDirty = showDirty &&
                          (state->pendingViews != *state->enabledViews ||
                           state->pendingOverlap != *state->classicArtOverlap);
@@ -731,6 +732,7 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
         "Stars & cubes", "Ambient Orbs", "Red Clouds", "Midnight Cubes",
         "System Configuration"};
     const int firstY = menuTop + lineHeight + 4;
+    const int rowStep = (menuBottom - firstY - 3 * lineHeight) / 7;
     int selectorY = optionsSelectorY(&state->selector, state->page, state->selectedGlobal,
                                      optionsGlobalRowY(state->selectedGlobal, firstY, rowStep, lineHeight));
     drawOptionsSection(menuTop, lunaText("Appearance"), 0);
@@ -745,22 +747,27 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
     drawOptionsTextRow(baseX, firstY + 2 * rowStep, gsGlobal->Width - baseX,
                        state->selectedGlobal == 2, selectorY, lunaText("Font"),
                        state->pendingFont == UI_FONT_PSBBN ? "PSBBN" : "DejaVu Sans");
-    drawOptionsSection(firstY + 3 * rowStep, lunaText("Game defaults"), 0);
-    drawOptionsTextRow(baseX, optionsGlobalRowY(3, firstY, rowStep, lineHeight),
-                       gsGlobal->Width - baseX, state->selectedGlobal == 3, selectorY,
-                       lunaText("PlayStation 2 logo"), state->pendingLogo ? lunaText("On") : lunaText("Off"));
+    drawOptionsTextRow(baseX, firstY + 3 * rowStep, gsGlobal->Width - baseX,
+                       state->selectedGlobal == 3, selectorY, lunaText("PS1 case style"),
+                       lunaText(state->pendingPs1CaseStyle == PS1_CASE_SQUARE ?
+                                "Square (jewel case)" : "Tall"));
+    drawOptionsSection(firstY + 4 * rowStep, lunaText("Game defaults"), 0);
     drawOptionsTextRow(baseX, optionsGlobalRowY(4, firstY, rowStep, lineHeight),
                        gsGlobal->Width - baseX, state->selectedGlobal == 4, selectorY,
-                       lunaText("Game core"), state->pendingCore ? "OPL" : "Neutrino");
-    drawOptionsSection(firstY + 5 * rowStep + lineHeight,
-                       lunaText("Audio"), 1);
+                       lunaText("PlayStation 2 logo"), state->pendingLogo ? lunaText("On") : lunaText("Off"));
     drawOptionsTextRow(baseX, optionsGlobalRowY(5, firstY, rowStep, lineHeight),
                        gsGlobal->Width - baseX, state->selectedGlobal == 5, selectorY,
+                       lunaText("Game core"), state->pendingCore ? "OPL" : "Neutrino");
+    drawOptionsSection(firstY + 6 * rowStep + lineHeight,
+                       lunaText("Audio"), 1);
+    drawOptionsTextRow(baseX, optionsGlobalRowY(6, firstY, rowStep, lineHeight),
+                       gsGlobal->Width - baseX, state->selectedGlobal == 6, selectorY,
                        lunaText("Ambient sound"), state->pendingAmbient ? lunaText("On") : lunaText("Off"));
     static const char *const descriptions[] = {
         "Choose a library background; customize Ambient Orbs in Orbs.",
         "Change the tint of the glass interface.",
         "Use LUNA's font or the PSBBN keyboard lettering.",
+        "Choose PS1 covers in List and 3D. PS2 stays tall.",
         "Default PS2 startup logo setting for every game.",
         "Default game core for every supported device.",
         "Play ambient music while browsing."};
@@ -1356,9 +1363,9 @@ static int handleViewsInput(OptionsMenuState *state, int input) {
 
 static int handleSystemInput(OptionsMenuState *state, int input) {
   if (input & PAD_UP) {
-    state->selectedGlobal = (state->selectedGlobal + 5) % 6;
+    state->selectedGlobal = (state->selectedGlobal + 6) % 7;
   } else if (input & PAD_DOWN) {
-    state->selectedGlobal = (state->selectedGlobal + 1) % 6;
+    state->selectedGlobal = (state->selectedGlobal + 1) % 7;
   } else if (input & (PAD_CROSS | PAD_CIRCLE | PAD_LEFT | PAD_RIGHT)) {
     const int direction = (input & PAD_LEFT) ? -1 : 1;
     if (state->selectedGlobal == 0)
@@ -1371,8 +1378,11 @@ static int handleSystemInput(OptionsMenuState *state, int input) {
     else if (state->selectedGlobal == 2)
       state->pendingFont = (state->pendingFont + direction + UI_FONT_COUNT) % UI_FONT_COUNT;
     else if (state->selectedGlobal == 3)
-      state->pendingLogo = !state->pendingLogo;
+      state->pendingPs1CaseStyle = state->pendingPs1CaseStyle == PS1_CASE_TALL ?
+                                 PS1_CASE_SQUARE : PS1_CASE_TALL;
     else if (state->selectedGlobal == 4)
+      state->pendingLogo = !state->pendingLogo;
+    else if (state->selectedGlobal == 5)
       state->pendingCore = !state->pendingCore;
     else
       state->pendingAmbient = !state->pendingAmbient;
@@ -1421,6 +1431,15 @@ static int handleSystemInput(OptionsMenuState *state, int input) {
             state->saveErrorLabel = lunaText("Could not save font");
           }
         }
+      }
+    }
+    if (state->pendingPs1CaseStyle != getPs1CaseStyle()) {
+      int result = savePs1CaseStyle(state->target, state->pendingPs1CaseStyle);
+      if (!result)
+        setPs1CaseStyle(state->pendingPs1CaseStyle);
+      else if (!state->saveError) {
+        state->saveError = result;
+        state->saveErrorLabel = lunaText("Could not save PS1 case style");
       }
     }
     if (state->pendingAmbient != *state->ambientEnabled) {
@@ -1677,6 +1696,7 @@ int uiTitleOptionsLoop(Target *target, int *classicArtOverlap,
       .pendingBackground = *ambientOrbsBackgroundSetting,
       .pendingGlassColor = *glassColorSetting,
       .pendingFont = *fontSetting,
+      .pendingPs1CaseStyle = getPs1CaseStyle(),
       .pendingAmbient = *ambientEnabled,
       .pendingLogo = logoSetting,
       .pendingCore = coreSetting,

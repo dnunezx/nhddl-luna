@@ -6,6 +6,11 @@
 #include "ui/view_scroll.h"
 #include "ui/ambient_orbs.h"
 #include "ui/graphics.h"
+#include "ui/views.h"
+
+// PS1 covers in List and 3D use this preference; absent/invalid state is Tall.
+Ps1CaseStyle loadPs1CaseStyle(Target *target);
+int savePs1CaseStyle(Target *target, Ps1CaseStyle style);
 
 // The selected view is stored with the selected title's metadata on its game drive.
 // Missing or invalid state falls back to Classic.
