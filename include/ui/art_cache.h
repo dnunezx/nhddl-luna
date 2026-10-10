@@ -4,7 +4,6 @@
 
 #include "target.h"
 #include "ui/navigation.h"
-#include "ui/game_info.h"
 #include <gsKit.h>
 #include <stdint.h>
 
@@ -71,8 +70,6 @@ void updateCollectionCoverResidency(int flowOffset);
 void updatePSBBNCoverResidency(int flowOffset);
 void refreshOrbsLogos(TargetList *titles, int selectedTitleIdx);
 void serviceScrollArt(void);
-void refreshScrollGameInfo(Target *target, int fastScrolling, uint32_t now);
-const LunaGameInfo *getScrollGameInfo(void);
 void refreshScrollBackground(Target *target, int fastScrolling, uint32_t now);
 GSTEXTURE *getScrollBackgroundTexture(void);
 void releaseScrollBackground(void);

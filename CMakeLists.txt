@@ -68,7 +68,6 @@ set(SOURCES
   src/ui/view_orbit.c
   src/ui/view_3d.c
   src/ui/view_scroll.c
-    src/ui/game_info.c
   src/ui/ambient_orbs.c
     src/ui/pad.c
 
