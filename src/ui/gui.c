@@ -303,6 +303,9 @@ void closeUI() {
 
 // Main UI loop. Displays the target list.
 int uiLoop(TargetList *titles, int preparedCollectionIdx) {
+#ifdef LUNA_ENABLE_PSXCORE
+  lunaPsxVmcLibrary(titles);
+#endif
   // Reinitialize UI if video mode doesn't match
   if ((LAUNCHER_OPTIONS.vmode != VMODE_NONE) && (gsGlobal->Mode != LAUNCHER_OPTIONS.vmode)) {
     uiInit();
@@ -1404,11 +1407,11 @@ static int psxPrepareProgress(uint64_t completed,uint64_t total) {
   drawPsxLaunchMessage(message,lunaText("Press Triangle to cancel"));
   return (readInput()&PAD_TRIANGLE)!=0;
 }
-static int uiLaunchPs1(Target *target) {
+int uiLaunchPs1Cards(Target *target, const struct LunaPsxVmcSettings *selection) {
   char error[192];int createCards=0;
   for(;;) {
     if(psxPrepareProgress(0,0))return 0;
-    int result=lunaPsxPrepareTitle(target,createCards,error,sizeof(error),psxPrepareProgress);
+    int result=lunaPsxPrepareTitleCardsAutomatic(target,selection,createCards,error,sizeof(error),psxPrepareProgress,uiPs1VmcChooseSaves);
     if(!result)lunaPsxExecute();
     for(;;) {
       drawPsxLaunchMessage(error,result==1?NULL:lunaText("Press Triangle to return"));
@@ -1424,7 +1427,7 @@ static int uiLaunchPs1(Target *target) {
 int uiLaunchTitleWithCheats(Target *target, ArgumentList *arguments,
                            const LunaCheatSettings *cheats) {
 #ifdef LUNA_ENABLE_PSXCORE
-  if(target && target->platform==TARGET_PS1)return uiLaunchPs1(target);
+  if(target && target->platform==TARGET_PS1)return uiLaunchPs1Cards(target,NULL);
 #endif
   int ownedArguments = arguments == NULL;
   if (ownedArguments) arguments = loadLaunchArgumentLists(target);

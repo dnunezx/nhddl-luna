@@ -4,6 +4,7 @@
 #include "ui/view_internal.h"
 #include "ui/ui.h"
 #include "ui/game_options.h"
+#include "ui/file_manager.h"
 #include "opl_devices.h"
 #include "ui/ambient.h"
 #include "ui/pad.h"
@@ -12,6 +13,7 @@
 #include "devices/devices.h"
 #include "vmc_create.h"
 #include "storage.h"
+#include "dprintf.h"
 #include "cheat_storage.h"
 #include <ctype.h>
 #include <dirent.h>
@@ -109,7 +111,12 @@ typedef struct {
   char cheatPath[PATH_MAX + 1];
   int saveError;
   const char *saveErrorLabel;
-  char vmcStatus[96];
+  char vmcStatus[192];
+#ifdef LUNA_ENABLE_PSXCORE
+  LunaPsxVmcSettings ps1Cards;
+  int ps1CardsReady;
+  char ps1SetName[64], ps1SlotStatus[2][32];
+#endif
   OptionsPage page;
   OptionsSelector selector;
   OptionsTabSelector tabSelector;
@@ -131,6 +138,21 @@ static int uiArgumentListLoop(Target *target, ArgumentList *titleArguments,
                               const LunaCheatSettings *cheats);
 static int uiVMCPickerLoop(Target *target, ArgumentList *arguments,
                            LunaGameOptions *gameOptions, int slot);
+
+#ifdef LUNA_ENABLE_PSXCORE
+static void loadPs1Cards(OptionsMenuState *state) {
+  const char *error = uiPs1VmcLoad(state->target, &state->ps1Cards);
+  state->ps1CardsReady = error == NULL;
+  snprintf(state->vmcStatus, sizeof(state->vmcStatus), "%s", error ? error : "");
+  if (error) {
+    snprintf(state->ps1SetName, sizeof(state->ps1SetName), "%s", "Unavailable");
+    for (int slot = 0; slot < 2; ++slot)
+      snprintf(state->ps1SlotStatus[slot], sizeof(state->ps1SlotStatus[slot]), "%s", "Unavailable");
+    DPRINTF("PS1 card settings: path=%s error=%s\n", state->target->fullPath, error);
+  } else uiPs1VmcDescribe(&state->ps1Cards, state->ps1SetName, state->ps1SlotStatus);
+  state->selector.initialized = 0;
+}
+#endif
 
 static const char *const gameRowLabels[LUNA_GAME_ROW_COUNT] = {
     "IOP: Fast reads", "IOP: Sync reads",
@@ -773,8 +795,10 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                    HeaderTextColor, ALIGN_LEFT, lunaText(descriptions[state->selectedGlobal]));
   } else if (state->page == OPTIONS_VIEWS) {
     const int firstY = menuTop + lineHeight + 4;
-    // Leave room for List appearance and the description.
-    const int rowStep = (menuBottom - firstY - 3 * lineHeight) / UI_VIEW_COUNT;
+    // Keep the list compact while leaving room for appearance and its description.
+    const int availableStep = (menuBottom - firstY - 3 * lineHeight) / UI_VIEW_COUNT;
+    const int compactStep = lineHeight + lineHeight / 2;
+    const int rowStep = availableStep < compactStep ? availableStep : compactStep;
     int selectorY = optionsSelectorY(&state->selector, state->page, state->selectedView,
                                      optionsViewRowY(state->selectedView,
                                                      firstY, rowStep, lineHeight));
@@ -889,6 +913,42 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                           lunaText("LUNA's soft glass lights and bright cores.")));
     }
   } else if (state->target->platform == TARGET_PS1) {
+    if (state->gameSection == GAME_HUB) {
+      drawTextWindow(baseX, menuTop, gsGlobal->Width - baseX, 0, 0,
+                     HeaderTextColor, ALIGN_HCENTER, state->titleHeader);
+      const int contentTop = menuTop + lineHeight + 5;
+      const int firstY = contentTop + lineHeight + 4;
+      drawOptionsSection(contentTop, lunaText("Game settings"), 0);
+      int selectorY = optionsSelectorY(&state->selector, state->page,
+                                       GAME_MEMORY_CARDS, firstY);
+      drawOptionsTextRow(baseX, firstY, gsGlobal->Width - baseX,
+                         1, selectorY, lunaText("Virtual memory cards"), NULL);
+      drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
+                     gsGlobal->Height - footerHeight, 0, HeaderTextColor, ALIGN_LEFT,
+                     lunaText("Cards are prepared at launch. Open to manage saves or change automatic behavior."));
+    } else {
+#ifdef LUNA_ENABLE_PSXCORE
+    const char *labels[] = {"Card behavior", "Slot 1", "Slot 2", "Manage cards"};
+    char setLabel[28]; snprintf(setLabel, sizeof(setLabel), "%.24s%s", state->ps1SetName,
+                               strlen(state->ps1SetName) > 24 ? "..." : "");
+    const char *values[] = {setLabel, state->ps1SlotStatus[0], state->ps1SlotStatus[1], NULL};
+    drawTextWindow(baseX, menuTop, gsGlobal->Width - baseX, 0, 0,
+                   HeaderTextColor, ALIGN_HCENTER, state->titleHeader);
+    const int contentTop = menuTop + lineHeight + 5;
+    const int firstY = contentTop + lineHeight + 4;
+    const int available = (menuBottom - firstY - lineHeight) / 3;
+    const int step = available < lineHeight + lineHeight / 2 ? available : lineHeight + lineHeight / 2;
+    drawOptionsSection(contentTop, lunaText("Virtual memory cards"), 0);
+    int selectorY = optionsSelectorY(&state->selector, state->page, state->selectedGameRow,
+                                     firstY + state->selectedGameRow * step);
+    for (int row = 0; row < 4; ++row)
+      drawOptionsTextRow(baseX, firstY + row * step, gsGlobal->Width - baseX,
+          state->selectedGameRow == row, selectorY, lunaText(labels[row]), values[row]);
+    drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
+        gsGlobal->Height - footerHeight, 0, HeaderTextColor, ALIGN_LEFT,
+        state->vmcStatus[0] ? lunaText(state->vmcStatus) :
+        lunaText("Automatic prepares cards at launch and shares them across verified discs of the same game."));
+#else
     drawTextWindow(baseX, menuTop, gsGlobal->Width - baseX, 0, 0,
                    HeaderTextColor, ALIGN_HCENTER, state->titleHeader);
     drawOptionsSection(menuTop + lineHeight * 2, "PlayStation", 0);
@@ -900,6 +960,8 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
                    gsGlobal->Width - baseX, gsGlobal->Height - footerHeight, 0,
                    HeaderTextColor, ALIGN_LEFT,
                    "PSXCore manages compatibility and saves.\nMissing cards can be created when launching.");
+#endif
+    }
   } else {
     drawTextWindow(baseX, menuTop, gsGlobal->Width - baseX, 0, 0,
                    HeaderTextColor, ALIGN_HCENTER, state->titleHeader);
@@ -988,9 +1050,18 @@ static void drawTitleOptionsFrame(OptionsMenuState *state,
     }
   }
   if (state->page == OPTIONS_PER_GAME && state->target->platform == TARGET_PS1) {
-    const ButtonPrompt prompts[] = {{ICON_SQUARE, "Launch"}, {ICON_TRIANGLE, "Back"}};
+    const ButtonPrompt prompts[] = {{ICON_CROSS, state->gameSection == GAME_HUB ? lunaText("Open") : lunaText("Select")}, {ICON_START, lunaText("Save")},
+                                   {ICON_SQUARE, lunaText("Launch")}, {ICON_TRIANGLE, lunaText("Back")}};
+#ifdef LUNA_ENABLE_PSXCORE
+    const ButtonPrompt retryPrompts[] = {{ICON_DPAD, lunaText("Move")},
+                                        {ICON_CROSS, lunaText("Retry")}, {ICON_TRIANGLE, lunaText("Back")}};
+#endif
     drawPromptBar(20, gsGlobal->Height-footerHeight, gsGlobal->Width-20,
-                  gsGlobal->Height, 16, HeaderTextColor, (PromptBar){NULL,prompts,2});
+                  gsGlobal->Height, 16, HeaderTextColor,
+#ifdef LUNA_ENABLE_PSXCORE
+                  state->gameSection != GAME_HUB && !state->ps1CardsReady ? (PromptBar){NULL,retryPrompts,3} :
+#endif
+                  (PromptBar){NULL,prompts,4});
   } else drawOptionsFooter(state->page == OPTIONS_PER_GAME, 0,
                     gameDirty || systemDirty || viewsDirty || orbsDirty,
                     state->page == OPTIONS_ORBS && !optionsOrbsEditable(state),
@@ -1485,8 +1556,75 @@ static int handleSystemInput(OptionsMenuState *state, int input) {
 // Returns 1 for Back, -1 if a test launch unexpectedly returns, or 0 to stay.
 static int handleGameInput(OptionsMenuState *state, int input) {
   if (state->target->platform == TARGET_PS1) {
-    if (input & PAD_TRIANGLE) return 1;
+    if (input & PAD_TRIANGLE) {
+      if (state->gameSection == GAME_HUB) return 1;
+      state->gameSection = GAME_HUB;
+      state->selectedGameRow = 0;
+      state->selector.initialized = 0;
+      return 0;
+    }
+    if (state->gameSection == GAME_HUB) {
+      if (input & (PAD_CROSS | PAD_CIRCLE)) {
+        state->gameSection = GAME_MEMORY_CARDS;
+        state->selectedGameRow = 0;
+        state->selector.initialized = 0;
+#ifdef LUNA_ENABLE_PSXCORE
+        if (!state->ps1CardsReady) loadPs1Cards(state);
+#endif
+        return 0;
+      }
+#ifdef LUNA_ENABLE_PSXCORE
+      if (!state->ps1CardsReady) {
+        if (input & PAD_SQUARE) return uiLaunchPs1Cards(state->target, NULL);
+        return 0;
+      }
+#endif
+      if (!(input & (PAD_START | PAD_SQUARE))) return 0;
+    }
+#ifdef LUNA_ENABLE_PSXCORE
+    // Navigation never depends on successful storage IO.
+    if (input & PAD_UP) { state->selectedGameRow = (state->selectedGameRow + 3) % 4; return 0; }
+    if (input & PAD_DOWN) { state->selectedGameRow = (state->selectedGameRow + 1) % 4; return 0; }
+    if (!state->ps1CardsReady) {
+      if ((input & (PAD_CROSS | PAD_CIRCLE | PAD_START | PAD_SQUARE)) &&
+          uiPs1VmcRetry(state->vmcStatus)) loadPs1Cards(state);
+      return 0;
+    }
+    if (input & PAD_SQUARE) return uiLaunchPs1Cards(state->target, &state->ps1Cards);
+    if (input & PAD_START) {
+      const char *error = lunaPsxVmcSave(&state->ps1Cards);
+      state->saveError = error != NULL;
+      state->saveErrorLabel = error;
+      snprintf(state->vmcStatus, sizeof(state->vmcStatus), "%s", error ? error : "Memory card settings saved.");
+      if (!error) state->titleArgumentsChanged = 0;
+    } else if (input & (PAD_CROSS | PAD_CIRCLE)) {
+      int changed = 0;
+      if (!state->selectedGameRow) changed = uiPs1VmcPolicy(state->target, &state->ps1Cards);
+      else {
+        unsigned oldMode = state->ps1Cards.mode;
+        const char *error = uiPs1VmcPrepare(state->target, &state->ps1Cards);
+        while (error) {
+          snprintf(state->vmcStatus, sizeof(state->vmcStatus), "%s", error);
+          DPRINTF("PS1 manage cards: path=%s row=%d error=%s\n", state->target->fullPath, state->selectedGameRow, error);
+          if (!uiPs1VmcRetry(error)) break;
+          error = uiPs1VmcPrepare(state->target, &state->ps1Cards);
+        }
+        if (!error) {
+          state->vmcStatus[0] = 0;
+          uiPs1VmcManage(&state->ps1Cards, state->selectedGameRow <= 2 ? state->selectedGameRow - 1 : -1);
+        }
+        if (oldMode != state->ps1Cards.mode) changed = 1;
+      }
+      if (changed) {
+        state->titleArgumentsChanged = 1; state->saveError = 0;
+        snprintf(state->vmcStatus, sizeof(state->vmcStatus), "%s", "Card selection changed. Press Start to save.");
+      }
+      uiPs1VmcDescribe(&state->ps1Cards, state->ps1SetName, state->ps1SlotStatus);
+      state->selector.initialized = 0;
+    }
+#else
     if (input & PAD_SQUARE) return uiLaunchTitleWithCheats(state->target,NULL,NULL);
+#endif
     return 0;
   }
   if (input & PAD_SQUARE) {

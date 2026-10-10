@@ -14,6 +14,10 @@ void uiLaunchTitle(Target *target, ArgumentList *arguments);
 // Returns 0 after a recoverable preflight error, -1 if execution returned.
 int uiLaunchTitleWithCheats(Target *target, ArgumentList *arguments,
                            const LunaCheatSettings *cheats);
+#ifdef LUNA_ENABLE_PSXCORE
+struct LunaPsxVmcSettings;
+int uiLaunchPs1Cards(Target *target, const struct LunaPsxVmcSettings *selection);
+#endif
 
 // Splash screen log level types
 typedef enum {

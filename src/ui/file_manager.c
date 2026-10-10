@@ -1924,6 +1924,10 @@ static void uiVMCManagerLoop(void) {
   free(roots);
 }
 
+#ifdef LUNA_ENABLE_PSXCORE
+#include "ps1_vmc.inc"
+#endif
+
 static int unlockFileExplorer(void) {
   static const int code[] = {PAD_CROSS, PAD_SQUARE, PAD_CIRCLE, PAD_CROSS};
   int entered = 0;
@@ -2146,8 +2150,13 @@ int uiMainMenuLoop(int hasLibrary) {
           uiFileManagerLoop();
         }
       }
-      else if (selected == 1)
+      else if (selected == 1) {
+#ifdef LUNA_ENABLE_PSXCORE
+        uiVMCPlatformLoop();
+#else
         uiVMCManagerLoop();
+#endif
+      }
       else if (selected == 2) {
         if (uiStorageLoop() == STORAGE_UI_REFRESH) return STORAGE_UI_REFRESH;
       }
