@@ -714,11 +714,14 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         int visualFocus = orbsVisualCacheIndex(flowOffset);
         orbsVisualTitleIdx = lunaNavWrap(titles->total,
             selectedTitleIdx + visualFocus - ORBS_LOGO_CACHE_FOCUS);
+        refreshScrollCover(getTargetByIdx(titles, orbsVisualTitleIdx),
+                            scrollFast.active, uiNowMs());
         serviceScrollArt();
         if (!scrollFast.active) {
           refreshOrbsLogos(flowTitles, flowSelectedTitleIdx);
           serviceScrollArt();
         }
+        refreshScrollCarouselCovers(flowTitles, flowSelectedTitleIdx, scrollFast.active);
         now = uiNowMs();
         if (entryPending) {
           entryStartMs = now;

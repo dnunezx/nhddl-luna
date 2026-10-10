@@ -154,13 +154,25 @@ static int scrollArtDoneSema = -1;
 static volatile int scrollArtStopping;
 static uint8_t scrollArtStack[16384] __attribute__((aligned(16)));
 static volatile uint32_t scrollArtGeneration;
+static GSTEXTURE scrollCoverTexture;
+static char scrollCoverPath[255];
+static char scrollCoverLoadedPath[255];
+static uint32_t scrollCoverDueMs;
+static int scrollCoverResolved;
+static int scrollCoverFast;
+static struct {
+  GSTEXTURE texture;
+  char path[255];
+  int resolved;
+} scrollCarouselCovers[ORBS_LOGO_CACHE_COUNT];
+static int scrollCarouselSlots[ORBS_LOGO_CACHE_COUNT];
 static GSTEXTURE scrollBackgroundTexture;
 static char scrollBackgroundPath[255];
 static char scrollBackgroundLoadedPath[255];
 static uint32_t scrollBackgroundDueMs;
 static int scrollBackgroundResolved;
 static int scrollBackgroundFast;
-enum { SCROLL_JOB_LOGO, SCROLL_JOB_BACKGROUND };
+enum { SCROLL_JOB_LOGO, SCROLL_JOB_BACKGROUND, SCROLL_JOB_COVER, SCROLL_JOB_CAROUSEL };
 static struct {
   volatile int state; // 0: idle, 1: decoding, 2: ready
   int kind;
@@ -206,7 +218,7 @@ void setGridCaseArtwork(int enabled) {
     startGridArtWorker();
 }
 
-static const char orbsArtPath[] = "/ART/ORBS";
+static const char scrollArtPath[] = "/ART/SCROLL";
 static char artPathBuffer[255];
 
 int artCacheInit(void) {
@@ -699,7 +711,12 @@ static PSBBNPixel *createArtThumbnail(const PSBBNPixel *source, int width, int h
 // Scroll artwork shares GS VRAM with two framebuffers, the depth buffer,
 // the font, and the System Configuration capture. gsKit's texture manager
 // loops forever if asked to bind a texture larger than its entire pool.
-static int fitScrollArtToVram(GSTEXTURE *texture, int background) {
+static int fitScrollArtToVram(GSTEXTURE *texture, int kind) {
+  // The shared PNG decoder already applies Classic's safe VRAM budget.
+  // Preserve that detail for the focal cover; only previews need a second cap.
+  if (kind == SCROLL_JOB_COVER)
+    return 0;
+  const int background = kind == SCROLL_JOB_BACKGROUND;
   const int maxWidth = background ? 512 : 256;
   const int maxHeight = background ? 384 : 128;
   const u32 reserve = background ? 256U * 1024U : 65536U;
@@ -1114,6 +1131,15 @@ void releaseOrbsArt(void) {
   scrollArtGeneration++;
   serviceScrollArt(); // Drop a completed result before its slots are released.
   releaseScrollBackground();
+  releaseGridTexture(&scrollCoverTexture);
+  memset(&scrollCoverTexture, 0, sizeof(scrollCoverTexture));
+  scrollCoverPath[0] = scrollCoverLoadedPath[0] = '\0';
+  scrollCoverResolved = scrollCoverFast = 0;
+  for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++) {
+    releaseGridTexture(&scrollCarouselCovers[i].texture);
+    memset(&scrollCarouselCovers[i], 0, sizeof(scrollCarouselCovers[i]));
+    scrollCarouselSlots[i] = -1;
+  }
   for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++) {
     if (orbsLogoTextures[i] != NULL)
       releaseGridTexture(orbsLogoTextures[i]);
@@ -1131,7 +1157,7 @@ static int orbsLogoPath(Target *target, char *path, size_t capacity) {
   if (device->mountpoint == NULL)
     return -1;
   int length = snprintf(path, capacity, "%s%s/%s_LGO.png",
-                        device->mountpoint, orbsArtPath, target->id);
+                        device->mountpoint, scrollArtPath, target->id);
   return length >= 0 && length < (int)capacity ? 0 : -1;
 }
 
@@ -1147,6 +1173,140 @@ static int queueScrollArt(Target *target, int targetIdx) {
   scrollArtJob.state = 1;
   SignalSema(scrollArtWakeSema);
   return 1;
+}
+
+GSTEXTURE *getScrollCoverTexture(int *resolved) {
+  *resolved = scrollCoverResolved;
+  if (scrollCoverFast || scrollCoverTexture.Mem == NULL ||
+      strcmp(scrollCoverLoadedPath, scrollCoverPath))
+    return NULL;
+  return &scrollCoverTexture;
+}
+
+void refreshScrollCover(Target *target, int fastScrolling, uint32_t now) {
+  char path[255] = {0};
+  struct DeviceMapEntry *device = target != NULL ? target->device : NULL;
+  if (device != NULL && device->metadev != NULL)
+    device = device->metadev;
+  int length = -1;
+  if (device != NULL && device->mountpoint != NULL && target->id != NULL)
+    length = snprintf(path, sizeof(path), "%s/ART/%s_COV.png",
+                       device->mountpoint, target->id);
+  if (length < 0 || length >= (int)sizeof(path)) {
+    releaseGridTexture(&scrollCoverTexture);
+    memset(&scrollCoverTexture, 0, sizeof(scrollCoverTexture));
+    scrollCoverPath[0] = scrollCoverLoadedPath[0] = '\0';
+    scrollCoverResolved = 1;
+    return;
+  }
+  if (strcmp(path, scrollCoverPath)) {
+    snprintf(scrollCoverPath, sizeof(scrollCoverPath), "%s", path);
+    scrollCoverResolved = 0;
+    scrollCoverDueMs = now + SCROLL_COVER_SETTLE_MS;
+  }
+  scrollCoverFast = fastScrolling;
+  if (fastScrolling) {
+    scrollCoverDueMs = now + SCROLL_COVER_SETTLE_MS;
+    return;
+  }
+  if (!strcmp(path, scrollCoverLoadedPath)) {
+    scrollCoverResolved = 1;
+    return;
+  }
+  if (scrollCoverResolved || (int32_t)(now - scrollCoverDueMs) < 0 ||
+      scrollArtJob.state != 0)
+    return;
+  if (scrollArtThreadId < 0) {
+    scrollCoverResolved = 1;
+    return;
+  }
+  scrollArtJob.kind = SCROLL_JOB_COVER;
+  snprintf(scrollArtJob.path, sizeof(scrollArtJob.path), "%s", path);
+  scrollArtJob.fallbackPath[0] = '\0';
+  scrollArtJob.generation = scrollArtGeneration;
+  scrollArtJob.state = 1;
+  SignalSema(scrollArtWakeSema);
+}
+
+static int scrollCarouselPath(Target *target, char *path, size_t capacity) {
+  struct DeviceMapEntry *device = target != NULL ? target->device : NULL;
+  if (device != NULL && device->metadev != NULL)
+    device = device->metadev;
+  if (device == NULL || device->mountpoint == NULL || target->id == NULL)
+    return -1;
+  int length = snprintf(path, capacity, "%s/ART/%s_COV.png", device->mountpoint, target->id);
+  return length >= 0 && length < (int)capacity ? 0 : -1;
+}
+
+GSTEXTURE *getScrollCarouselCover(int cacheIdx, int *resolved) {
+  *resolved = 0;
+  if (cacheIdx < 0 || cacheIdx >= ORBS_LOGO_CACHE_COUNT)
+    return NULL;
+  int slot = scrollCarouselSlots[cacheIdx];
+  if (slot < 0)
+    return NULL;
+  *resolved = scrollCarouselCovers[slot].resolved;
+  return scrollCarouselCovers[slot].texture.Mem != NULL ?
+      &scrollCarouselCovers[slot].texture : NULL;
+}
+
+void refreshScrollCarouselCovers(TargetList *titles, int selectedTitleIdx, int fastScrolling) {
+  char wanted[ORBS_LOGO_CACHE_COUNT][255] = {{0}};
+  for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++) {
+    scrollCarouselSlots[i] = -1;
+    if (titles == NULL || titles->total <= 0)
+      continue;
+    int index = lunaNavWrap(titles->total, selectedTitleIdx + i - ORBS_LOGO_CACHE_FOCUS);
+    if (scrollCarouselPath(getTargetByIdx(titles, index), wanted[i], sizeof(wanted[i])) < 0)
+      wanted[i][0] = '\0';
+  }
+  // Keep texture objects at stable addresses; reuse entries by artwork path,
+  // which also distinguishes equal indexes in different filtered libraries.
+  for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++) {
+    if (!wanted[i][0])
+      continue;
+    for (int slot = 0; slot < ORBS_LOGO_CACHE_COUNT; slot++) {
+      if (!strcmp(wanted[i], scrollCarouselCovers[slot].path)) {
+        scrollCarouselSlots[i] = slot;
+        break;
+      }
+    }
+    if (scrollCarouselSlots[i] >= 0)
+      continue;
+    for (int slot = 0; slot < ORBS_LOGO_CACHE_COUNT; slot++) {
+      int keep = 0;
+      for (int j = 0; j < ORBS_LOGO_CACHE_COUNT; j++)
+        if (wanted[j][0] && !strcmp(wanted[j], scrollCarouselCovers[slot].path))
+          keep = 1;
+      if (keep)
+        continue;
+      releaseGridTexture(&scrollCarouselCovers[slot].texture);
+      memset(&scrollCarouselCovers[slot], 0, sizeof(scrollCarouselCovers[slot]));
+      snprintf(scrollCarouselCovers[slot].path, sizeof(scrollCarouselCovers[slot].path),
+                "%s", wanted[i]);
+      scrollCarouselSlots[i] = slot;
+      break;
+    }
+  }
+  if (fastScrolling || scrollArtJob.state != 0)
+    return;
+  static const uint8_t priority[ORBS_LOGO_CACHE_COUNT] = {3, 2, 4, 1, 5, 0, 6};
+  for (int p = 0; p < ORBS_LOGO_CACHE_COUNT; p++) {
+    int slot = scrollCarouselSlots[priority[p]];
+    if (slot < 0 || scrollCarouselCovers[slot].resolved)
+      continue;
+    if (scrollArtThreadId < 0) {
+      scrollCarouselCovers[slot].resolved = 1;
+      continue;
+    }
+    scrollArtJob.kind = SCROLL_JOB_CAROUSEL;
+    snprintf(scrollArtJob.path, sizeof(scrollArtJob.path), "%s", scrollCarouselCovers[slot].path);
+    scrollArtJob.fallbackPath[0] = '\0';
+    scrollArtJob.generation = scrollArtGeneration;
+    scrollArtJob.state = 1;
+    SignalSema(scrollArtWakeSema);
+    break;
+  }
 }
 
 void releaseScrollBackground(void) {
@@ -1203,7 +1363,7 @@ void refreshScrollBackground(Target *target, int fastScrolling, uint32_t now) {
   scrollArtJob.kind = SCROLL_JOB_BACKGROUND;
   snprintf(scrollArtJob.path, sizeof(scrollArtJob.path), "%s", path);
   length = snprintf(scrollArtJob.fallbackPath, sizeof(scrollArtJob.fallbackPath),
-                    "%s%s/%s_BG.png", device->mountpoint, orbsArtPath, target->id);
+                    "%s%s/%s_BG.png", device->mountpoint, scrollArtPath, target->id);
   if (length < 0 || length >= (int)sizeof(scrollArtJob.fallbackPath))
     scrollArtJob.fallbackPath[0] = '\0';
   scrollArtJob.generation = scrollArtGeneration;
@@ -1220,7 +1380,7 @@ static void loadOrbsLogo(TargetList *titles, int targetIdx, int cacheIdx) {
     device = device->metadev;
   releaseGridTexture(texture);
   snprintf(artPathBuffer, sizeof(artPathBuffer), "%s%s/%s_LGO.png",
-           device->mountpoint, orbsArtPath, target->id);
+           device->mountpoint, scrollArtPath, target->id);
   orbsLogoLoaded[cacheIdx] =
       loadPNGTextureRGBA(gsGlobal, texture, artPathBuffer) == 0;
   if (orbsLogoLoaded[cacheIdx])
@@ -1230,39 +1390,55 @@ static void loadOrbsLogo(TargetList *titles, int targetIdx, int cacheIdx) {
 }
 
 void refreshOrbsLogos(TargetList *titles, int selectedTitleIdx) {
+  int wanted[ORBS_LOGO_CACHE_COUNT];
+  int reuse[ORBS_LOGO_CACHE_COUNT];
+  uint8_t claimed[ORBS_LOGO_CACHE_COUNT] = {0};
+  GSTEXTURE *textures[ORBS_LOGO_CACHE_COUNT];
+  uint8_t loaded[ORBS_LOGO_CACHE_COUNT];
+  uint8_t resolved[ORBS_LOGO_CACHE_COUNT];
+  int targets[ORBS_LOGO_CACHE_COUNT];
+  // Match the entire incoming window before replacing any outgoing entry.
+  // Otherwise a backward step discards the first logo and then every entry
+  // still needed by the following slots, while a forward step happens to work.
   for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++) {
-    int wanted = lunaNavWrap(titles->total,
-                             selectedTitleIdx + i - ORBS_LOGO_CACHE_FOCUS);
-    int match = -1;
-    if (orbsLogoTargets[i] == wanted)
-      continue;
-    for (int j = i + 1; j < ORBS_LOGO_CACHE_COUNT; j++) {
-      if (orbsLogoTargets[j] == wanted) {
-        match = j;
+    wanted[i] = lunaNavWrap(titles->total,
+                            selectedTitleIdx + i - ORBS_LOGO_CACHE_FOCUS);
+    reuse[i] = -1;
+    textures[i] = orbsLogoTextures[i];
+    loaded[i] = orbsLogoLoaded[i];
+    resolved[i] = orbsLogoResolved[i];
+    targets[i] = orbsLogoTargets[i];
+    for (int j = 0; j < ORBS_LOGO_CACHE_COUNT; j++) {
+      if (!claimed[j] && orbsLogoTargets[j] == wanted[i]) {
+        reuse[i] = j;
+        claimed[j] = 1;
         break;
       }
     }
-    if (match >= 0) {
-      GSTEXTURE *texture = orbsLogoTextures[i];
-      uint8_t loaded = orbsLogoLoaded[i];
-      uint8_t resolved = orbsLogoResolved[i];
-      int target = orbsLogoTargets[i];
-      orbsLogoTextures[i] = orbsLogoTextures[match];
-      orbsLogoLoaded[i] = orbsLogoLoaded[match];
-      orbsLogoResolved[i] = orbsLogoResolved[match];
-      orbsLogoTargets[i] = orbsLogoTargets[match];
-      orbsLogoTextures[match] = texture;
-      orbsLogoLoaded[match] = loaded;
-      orbsLogoResolved[match] = resolved;
-      orbsLogoTargets[match] = target;
-    } else {
+  }
+  for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++) {
+    int slot = reuse[i];
+    if (slot < 0) {
+      for (int j = 0; j < ORBS_LOGO_CACHE_COUNT; j++) {
+        if (!claimed[j]) {
+          slot = j;
+          claimed[j] = 1;
+          break;
+        }
+      }
+    }
+    orbsLogoTextures[i] = textures[slot];
+    orbsLogoLoaded[i] = loaded[slot];
+    orbsLogoResolved[i] = resolved[slot];
+    orbsLogoTargets[i] = targets[slot];
+    if (orbsLogoTargets[i] != wanted[i]) {
       if (scrollArtThreadId < 0) {
-        loadOrbsLogo(titles, wanted, i);
+        loadOrbsLogo(titles, wanted[i], i);
       } else {
         releaseGridTexture(orbsLogoTextures[i]);
         orbsLogoLoaded[i] = 0;
         orbsLogoResolved[i] = 0;
-        orbsLogoTargets[i] = wanted;
+        orbsLogoTargets[i] = wanted[i];
       }
     }
   }
@@ -1300,8 +1476,8 @@ static void scrollArtWorker(void) {
     }
     if (scrollArtJob.result == 0 && decoded.Mem != NULL &&
         decoded.Width > 0 && decoded.Height > 0 &&
-        fitScrollArtToVram(&decoded, scrollArtJob.kind == SCROLL_JOB_BACKGROUND) == 0) {
-      decoded.Filter = GS_FILTER_LINEAR;
+        fitScrollArtToVram(&decoded, scrollArtJob.kind) == 0) {
+      decoded.Filter = scrollArtJob.kind == SCROLL_JOB_COVER ? GS_FILTER_NEAREST : GS_FILTER_LINEAR;
       decoded.Delayed = 1;
       decoded.Vram = 0;
       decoded.VramClut = 0;
@@ -1347,7 +1523,33 @@ void serviceScrollArt(void) {
     return;
   __asm__ __volatile__("" ::: "memory");
   if (scrollArtJob.generation == scrollArtGeneration) {
-    if (scrollArtJob.kind == SCROLL_JOB_BACKGROUND) {
+    if (scrollArtJob.kind == SCROLL_JOB_COVER) {
+      if (!strcmp(scrollArtJob.path, scrollCoverPath)) {
+        releaseGridTexture(&scrollCoverTexture);
+        memset(&scrollCoverTexture, 0, sizeof(scrollCoverTexture));
+        scrollCoverLoadedPath[0] = '\0';
+        if (scrollArtJob.result == 0) {
+          scrollCoverTexture = scrollArtJob.texture;
+          memset(&scrollArtJob.texture, 0, sizeof(scrollArtJob.texture));
+          snprintf(scrollCoverLoadedPath, sizeof(scrollCoverLoadedPath),
+                    "%s", scrollArtJob.path);
+        }
+        scrollCoverResolved = 1;
+      }
+    } else if (scrollArtJob.kind == SCROLL_JOB_CAROUSEL) {
+      for (int i = 0; i < ORBS_LOGO_CACHE_COUNT; i++) {
+        if (strcmp(scrollCarouselCovers[i].path, scrollArtJob.path))
+          continue;
+        releaseGridTexture(&scrollCarouselCovers[i].texture);
+        memset(&scrollCarouselCovers[i].texture, 0, sizeof(GSTEXTURE));
+        if (scrollArtJob.result == 0) {
+          scrollCarouselCovers[i].texture = scrollArtJob.texture;
+          memset(&scrollArtJob.texture, 0, sizeof(scrollArtJob.texture));
+        }
+        scrollCarouselCovers[i].resolved = 1;
+        break;
+      }
+    } else if (scrollArtJob.kind == SCROLL_JOB_BACKGROUND) {
       // A filtered-list index can refer to a different game; match its path.
       if (!strcmp(scrollArtJob.path, scrollBackgroundPath)) {
         releaseGridTexture(&scrollBackgroundTexture);
@@ -2427,7 +2629,7 @@ void artCacheShutdown(void) {
   stopOrbitArtWorker();
   stopGridArtWorker();
   stopScrollArtWorker();
-  releaseScrollBackground();
+  releaseOrbsArt();
   collectionArtReuseClear(&collectionReuseCache);
   memset(collectionCoverKeys, 0, sizeof(collectionCoverKeys));
   memset(&collectionArtStats, 0, sizeof(collectionArtStats));

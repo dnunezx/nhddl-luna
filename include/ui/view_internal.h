@@ -29,5 +29,6 @@ int orbitVisibleTitleIndex(void);
 void drawPSBBNCover(GSTEXTURE *cover, float x1, float y1, float size, int cacheIdx,
                     int emphasis, int visibility, int z);
 void formatPSBBNTitle(const char *source, char *destination, int maxWidth);
+void getClassicCoverSize(int square, int *width, int *height);
 
 #endif

@@ -176,19 +176,23 @@ static int classicGlowY(int listStartY, int lineHeight, uint32_t frameNowMs) {
   return listStartY + (row * lineHeight) / CLASSIC_GLOW_ROW_SCALE;
 }
 
+void getClassicCoverSize(int square, int *width, int *height) {
+  *width = gsGlobal->Width * 22 / 100;
+  if (*width > COVER_ART_MAX_WIDTH)
+    *width = COVER_ART_MAX_WIDTH;
+  *height = square ? *width : (*width * COVER_ART_RATIO_H) / COVER_ART_RATIO_W;
+}
+
 void calculateCoverArtGeometry(void) {
   const int top = headerHeight + 8;
   const int bottom = gsGlobal->Height - footerHeight - 8;
   const int availableHeight = bottom - top;
-  int coverWidth = gsGlobal->Width * 22 / 100;
+  int coverWidth;
   int coverHeight;
   int stackHeight;
   int stackTop;
 
-  if (coverWidth > COVER_ART_MAX_WIDTH)
-    coverWidth = COVER_ART_MAX_WIDTH;
-  coverHeight = classicSquareCover ? coverWidth :
-      (coverWidth * COVER_ART_RATIO_H) / COVER_ART_RATIO_W;
+  getClassicCoverSize(classicSquareCover, &coverWidth, &coverHeight);
   coverArtX2 = gsGlobal->Width - keepoutArea - 10;
   coverArtX1 = coverArtX2 - coverWidth;
   discArtX1 = (coverArtX1 + coverArtX2 - DISC_ART_SIZE) / 2;
