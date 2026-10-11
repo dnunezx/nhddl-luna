@@ -58,6 +58,9 @@ void serviceCollectionCoversNavigating(TargetList *titles, int selectedTitleIdx,
 void recordCollectionCoverBind(uint32_t elapsedMs);
 void stopCollectionFarArtWorker(TargetList *titles, int selectedTitleIdx);
 void serviceOrbitCovers(TargetList *titles, int selectedTitleIdx);
+// Rear-slot replacement keeps a small outgoing cover while the new art fades in.
+GSTEXTURE *orbitCoverHandoff(int cacheIdx, uint32_t now, int *outgoingVisibility,
+                           int *incomingVisibility);
 // Entry requires current + six upcoming games; previous-only games do not block.
 int collectionCoversReady(TargetList *titles, int selectedTitleIdx);
 int collectionCoverMissing(int cacheIdx);

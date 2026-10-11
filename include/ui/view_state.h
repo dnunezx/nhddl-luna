@@ -17,6 +17,10 @@ int savePs1CaseStyle(Target *target, Ps1CaseStyle style);
 UILibraryView loadLastLibraryView(Target *target);
 int saveLastLibraryView(Target *target, UILibraryView view);
 
+// Game mode uses the same metadata drive; absent/invalid state defaults to All.
+TargetFilter loadLastGameMode(Target *target);
+int saveLastGameMode(Target *target, TargetFilter filter);
+
 // List, Collections, Orbit, and 3D are enabled without a saved selection.
 uint32_t loadEnabledLibraryViews(Target *target);
 int saveEnabledLibraryViews(Target *target, uint32_t enabledViews);

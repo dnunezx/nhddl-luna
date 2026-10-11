@@ -131,6 +131,93 @@ static volatile int orbitArtStopping;
 static uint8_t orbitArtStack[16384] __attribute__((aligned(16)));
 static uint32_t orbitArtGeneration;
 static PSBBNArtJob orbitArtJob;
+#define ORBIT_COVER_FADE_MS 140U
+#define ORBIT_COVER_HOLD_MS 250U
+typedef struct {
+  GSTEXTURE *owner;
+  GSTEXTURE outgoing;
+  uint32_t capturedMs, readyMs;
+  int ready;
+} OrbitCoverHandoff;
+static OrbitCoverHandoff orbitCoverHandoffs[PSBBN_COVER_CACHE_COUNT];
+
+static void releaseOrbitOutgoing(OrbitCoverHandoff *handoff) {
+  if (handoff->outgoing.Vram != 0)
+    gsKit_TexManager_free(gsGlobal, &handoff->outgoing);
+  free(handoff->outgoing.Mem);
+  memset(&handoff->outgoing, 0, sizeof(handoff->outgoing));
+}
+
+static void clearOrbitCoverHandoffs(void) {
+  for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
+    releaseOrbitOutgoing(&orbitCoverHandoffs[i]);
+    memset(&orbitCoverHandoffs[i], 0, sizeof(orbitCoverHandoffs[i]));
+  }
+}
+
+static void captureOrbitOutgoing(int cacheIdx) {
+  GSTEXTURE *owner = psbbnCoverTextures[cacheIdx];
+  OrbitCoverHandoff *handoff = NULL;
+  // Track the texture object, which moves between slots during navigation.
+  for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
+    if (orbitCoverHandoffs[i].owner == owner) {
+      handoff = &orbitCoverHandoffs[i];
+      break;
+    }
+    if (handoff == NULL && orbitCoverHandoffs[i].owner == NULL)
+      handoff = &orbitCoverHandoffs[i];
+  }
+  if (handoff == NULL)
+    return;
+  releaseOrbitOutgoing(handoff);
+  memset(handoff, 0, sizeof(*handoff));
+  handoff->owner = owner;
+  handoff->capturedMs = uiNowMs();
+  if (!psbbnCoverLoaded[cacheIdx] || collectionCoverThumbnailPixels[cacheIdx] == NULL)
+    return;
+  // A rear cover needs only its 64px thumbnail, independent of the reused slot.
+  size_t bytes = gsKit_texture_size(PSBBN_THUMBNAIL_SIZE, PSBBN_THUMBNAIL_SIZE, GS_PSM_CT32);
+  handoff->outgoing.Mem = memalign(128, bytes);
+  if (handoff->outgoing.Mem == NULL)
+    return;
+  memcpy(handoff->outgoing.Mem, collectionCoverThumbnailPixels[cacheIdx], bytes);
+  handoff->outgoing.Width = handoff->outgoing.Height = PSBBN_THUMBNAIL_SIZE;
+  handoff->outgoing.PSM = GS_PSM_CT32;
+  handoff->outgoing.Filter = GS_FILTER_LINEAR;
+  handoff->outgoing.Delayed = 1;
+}
+
+GSTEXTURE *orbitCoverHandoff(int cacheIdx, uint32_t now, int *outgoingVisibility,
+                           int *incomingVisibility) {
+  *outgoingVisibility = 0;
+  *incomingVisibility = 1000;
+  for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++) {
+    OrbitCoverHandoff *handoff = &orbitCoverHandoffs[i];
+    if (handoff->owner == NULL || handoff->owner != psbbnCoverTextures[cacheIdx])
+      continue;
+    if (!handoff->ready && (psbbnCoverLoaded[cacheIdx] || collectionCoverResolved[cacheIdx])) {
+      handoff->ready = 1;
+      handoff->readyMs = now;
+    }
+    uint32_t elapsed = handoff->ready ? now - handoff->readyMs : 0;
+    int progress = elapsed >= ORBIT_COVER_FADE_MS ? 1000 :
+        (int)(elapsed * 1000U / ORBIT_COVER_FADE_MS);
+    *incomingVisibility = handoff->ready ? progress : 0;
+    uint32_t age = now - handoff->capturedMs;
+    int remaining = age <= ORBIT_COVER_HOLD_MS ? 1000 :
+        age >= ORBIT_COVER_HOLD_MS + ORBIT_COVER_FADE_MS ? 0 :
+        1000 - (int)((age - ORBIT_COVER_HOLD_MS) * 1000U / ORBIT_COVER_FADE_MS);
+    *outgoingVisibility = remaining < 1000 - progress ? remaining : 1000 - progress;
+    if (*outgoingVisibility == 0)
+      releaseOrbitOutgoing(handoff);
+    if (handoff->ready && progress == 1000) {
+      memset(handoff, 0, sizeof(*handoff));
+      return NULL;
+    }
+    return handoff->outgoing.Mem != NULL ? &handoff->outgoing : NULL;
+  }
+  return NULL;
+}
 static int gridArtThreadId = -1;
 static int gridArtWakeSema = -1;
 static int gridArtDoneSema = -1;
@@ -1072,6 +1159,7 @@ static void stopOrbitArtWorker(void) {
 }
 
 void releasePSBBNCovers(void) {
+  clearOrbitCoverHandoffs();
   // Retain nearby artwork last, so a full window exceeds the reuse budget by
   // evicting distant covers rather than the selection and its moving partner.
   static const uint8_t releaseOrder[PSBBN_COVER_CACHE_COUNT] = {9, 8, 7, 0, 6, 1, 5, 2, 4, 3};
@@ -1090,6 +1178,7 @@ void suspendCollectionCovers(void) {
 }
 
 void adoptOrbitCoversForCollection(void) {
+  clearOrbitCoverHandoffs();
   // A pending Orbit decode cannot be adopted. Collection will request that
   // slot itself while keeping finished jackets and known missing files.
   orbitArtGeneration++;
@@ -1574,7 +1663,9 @@ void serviceScrollArt(void) {
           *orbsLogoTextures[i] = scrollArtJob.texture;
           memset(&scrollArtJob.texture, 0, sizeof(scrollArtJob.texture));
           orbsLogoLoaded[i] = 1;
-          bindTextureSafe(gsGlobal, orbsLogoTextures[i]);
+          // refreshOrbsLogos can evict this result before the frame is drawn.
+          // Bind only in drawScrollTexture, after all cache replacements:
+          // inline uploads retain the pixel pointer until queue_exec finishes.
         }
         orbsLogoResolved[i] = 1;
         break;
@@ -2227,6 +2318,11 @@ void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previ
 }
 
 void refreshOrbitCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx) {
+  if (previousTitleIdx >= 0 && titles->total > 0) {
+    int direction = lunaNavDirection(titles->total, previousTitleIdx, selectedTitleIdx);
+    if (lunaNavWrap(titles->total, previousTitleIdx + direction) == selectedTitleIdx)
+      captureOrbitOutgoing(direction > 0 ? 0 : PSBBN_COVER_CACHE_COUNT - 1);
+  }
   if (orbitArtThreadId < 0) {
     refreshPSBBNCovers(titles, selectedTitleIdx, previousTitleIdx, 1);
     return;
@@ -2622,6 +2718,7 @@ void updatePSBBNCoverResidency(int flowOffset) {
 }
 
 void artCacheShutdown(void) {
+  clearOrbitCoverHandoffs();
   stopClassicArtWorker();
   stopCollectionFarArtWorker(NULL, 0);
   stopCollectionArtWorker();

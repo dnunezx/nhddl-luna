@@ -45,6 +45,7 @@
 #define LIBRARY_VIEW_ENTRY_MS 320
 #define CASE_VIEW_HANDOFF_MS 180
 #define QUICK_MENU_SLIDE_MS 200
+#define GAME_MODE_TOAST_MS 1800
 #define COLLECTION_PRELOAD_IDLE_MS 250
 
 void closeUI();
@@ -63,7 +64,10 @@ static int glassColorSetting = GLASS_COLOR_ORIGINAL;
 static int fontSetting = UI_FONT_DEJAVU;
 static uint32_t splashVisibleStartMs;
 static uint32_t libraryReturnFadeStartMs;
-static TargetFilter libraryPlatformFilter = TARGET_MIXED;
+static TargetFilter libraryPlatformFilter = TARGET_ALL;
+#ifdef LUNA_ENABLE_PSXCORE
+static int libraryPlatformFilterLoaded;
+#endif
 
 enum {
   QUICK_SHOW_FAVORITES,
@@ -115,6 +119,22 @@ static void drawQuickMenuText(int x1, int y1, int x2, int y2,
                  alignment, text);
   drawTextWindow(x1, y1, x2, y2, 0, color, alignment, text);
 }
+
+#ifdef LUNA_ENABLE_PSXCORE
+static void drawGameModeToast(void) {
+  const char *label = targetFilterLabel(libraryPlatformFilter);
+  const int left = keepoutArea;
+  const int top = 16;
+  const int bottom = top + getFontLineHeight() + 16;
+  const int textLeft = left + 12;
+  const int right = textLeft + (int)getLineWidth(label) + 12;
+  gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
+  drawGlassPanelWithFillAlpha(left, top, right, bottom, 0, 0x78);
+  drawQuickMenuText(textLeft, top + 8, right - 12, bottom - 8,
+                    FontMainColor, ALIGN_LEFT | ALIGN_VCENTER, label);
+  gsKit_set_test(gsGlobal, GS_ZTEST_ON);
+}
+#endif
 
 static void drawLibraryQuickMenu(int progress, int closing, UILibraryView view,
                                  int favoritesOnly, int isFavorite,
@@ -416,6 +436,12 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     curTarget = getTargetByIdx(titles, restoredIdx);
   }
   view = (UILibraryView)restoredView;
+#ifdef LUNA_ENABLE_PSXCORE
+  if (!libraryPlatformFilterLoaded) {
+    libraryPlatformFilter = loadLastGameMode(curTarget);
+    libraryPlatformFilterLoaded = 1;
+  }
+#endif
   enabledViews = loadEnabledLibraryViews(curTarget);
   if (!(enabledViews & (1U << view)))
     view = lunaNavNextView(view, enabledViews);
@@ -481,7 +507,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   if (titles->total) curTarget = getTargetByIdx(titles, selectedTitleIdx);
   else { entryPending = 0; entryView = -1; }
   // Collection's startup cache was built against the complete library.
-  if (libraryPlatformFilter != TARGET_MIXED) {
+  if (libraryPlatformFilter != TARGET_ALL) {
     releasePSBBNCovers();
     psbbnCoverBaseIdx = -1;
   }
@@ -514,6 +540,10 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   uint32_t collectionPreloadIdleSinceMs = quickMenuFrameMs;
   const char *quickMenuMessage = NULL;
   uint32_t quickMenuMessageUntil = 0;
+#ifdef LUNA_ENABLE_PSXCORE
+  int gameModeToastActive = 0;
+  uint32_t gameModeToastStartMs = 0;
+#endif
   while (1) {
     gsKit_clear(gsGlobal, BGColor);
     gsKit_TexManager_nextFrame(gsGlobal);
@@ -775,6 +805,14 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     drawLibraryQuickMenu(quickMenuProgress, !quickMenu.open, view,
                          favoritesOnly, titles->total > 0 && allFavoriteFlags[favoriteIndex],
                          titles->total, curTarget->name);
+#ifdef LUNA_ENABLE_PSXCORE
+    if (gameModeToastActive) {
+      if ((uint32_t)(quickNow - gameModeToastStartMs) < GAME_MODE_TOAST_MS)
+        drawGameModeToast();
+      else
+        gameModeToastActive = 0;
+    }
+#endif
     if (quickMenuMessage != NULL && (int32_t)(quickMenuMessageUntil - quickNow) > 0) {
       gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
       gsKit_prim_sprite(gsGlobal, 20, headerHeight, gsGlobal->Width - 20,
@@ -1087,6 +1125,10 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     if (input & PAD_L3) {
       Target *previousTarget = curTarget;
       libraryPlatformFilter = (TargetFilter)((libraryPlatformFilter + 1) % 3);
+      if (saveLastGameMode(previousTarget, libraryPlatformFilter))
+        DPRINTF("WARN: Could not save selected game mode\n");
+      gameModeToastActive = 1;
+      gameModeToastStartMs = uiNowMs();
       filterTargetView(platformTitles, allTitles, libraryPlatformFilter,
                        favoritesOnly ? allFavoriteFlags : NULL);
       titles = platformTitles;
@@ -1226,6 +1268,10 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       }
       if (saveLastLibraryView(curTarget, view))
         DPRINTF("WARN: Could not save selected library view\n");
+#ifdef LUNA_ENABLE_PSXCORE
+      if (saveLastGameMode(curTarget, libraryPlatformFilter))
+        DPRINTF("WARN: Could not save selected game mode\n");
+#endif
       if (libraryListChanged)
         DPRINTF("Library filter switch done: view=%d favorites=%d total=%d\n",
                 view, favoritesOnly, titles->total);

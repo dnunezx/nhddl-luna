@@ -10,6 +10,9 @@
 
 static const char lastViewPath[] = "/lastView.txt";
 static const char lastViewTempPath[] = "/lastView.txt.tmp";
+static const char lastGameModePath[] = "/lastGameMode.txt";
+static const char lastGameModeTempPath[] = "/lastGameMode.txt.tmp";
+static const char *const gameModeNames[] = {"all", "ps2", "ps1"};
 static const char enabledViewsPath[] = "/enabledViews.txt";
 static const char enabledViewsTempPath[] = "/enabledViews.txt.tmp";
 static const char classicLayoutPath[] = "/classicLayout.txt";
@@ -135,6 +138,56 @@ int saveLastLibraryView(Target *target, UILibraryView view) {
   }
   DPRINTF("Saved library view %s to %s\n", viewNames[view], path);
   return 0;
+}
+
+TargetFilter loadLastGameMode(Target *target) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  const char *paths[] = {lastGameModeTempPath, lastGameModePath};
+  char path[PATH_MAX], name[24];
+  if (device == NULL || device->mountpoint == NULL)
+    return TARGET_ALL;
+  for (int i = 0; i < 2; i++) {
+    if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[i]))
+      continue;
+    FILE *file = fopen(path, "r");
+    if (file == NULL) continue;
+    int readable = fgets(name, sizeof(name), file) != NULL;
+    int bad = ferror(file);
+    fclose(file);
+    if (!readable || bad) continue;
+    size_t length = strcspn(name, "\r\n");
+    if (name[length] == '\0') continue;
+    name[length] = '\0';
+    for (int filter = TARGET_ALL; filter <= TARGET_PS1_ONLY; filter++) {
+      if (!strcmp(name, gameModeNames[filter]))
+        return (TargetFilter)filter;
+    }
+  }
+  return TARGET_ALL;
+}
+
+int saveLastGameMode(Target *target, TargetFilter filter) {
+  struct DeviceMapEntry *device = viewDevice(target);
+  char directory[PATH_MAX], path[PATH_MAX], tempPath[PATH_MAX];
+  struct stat st;
+  if (device == NULL || device->mountpoint == NULL ||
+      filter < TARGET_ALL || filter > TARGET_PS1_ONLY)
+    return -EINVAL;
+  if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
+      buildConfigFilePath(path, sizeof(path), device->mountpoint, lastGameModePath) ||
+      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, lastGameModeTempPath))
+    return -ENAMETOOLONG;
+  if (stat(directory, &st) == -1 && mkdir(directory, 0777))
+    return -EIO;
+  FILE *file = fopen(tempPath, "w");
+  if (file == NULL) return -EIO;
+  int written = fprintf(file, "%s\n", gameModeNames[filter]);
+  int closed = fclose(file);
+  if (written < 0 || closed) {
+    remove(tempPath);
+    return -EIO;
+  }
+  return commitConfigFile(tempPath, path) ? -EIO : 0;
 }
 
 int loadClassicArtOverlap(Target *target) {

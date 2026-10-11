@@ -82,7 +82,7 @@ int filterTargetView(TargetList *view, const TargetList *source,
                      TargetFilter platform, const uint8_t *favorites) {
   if (!view || !source || view == source || !view->borrowed ||
       source->borrowed || source->total > view->indexCapacity ||
-      platform < TARGET_MIXED || platform > TARGET_PS1_ONLY) return -EINVAL;
+      platform < TARGET_ALL || platform > TARGET_PS1_ONLY) return -EINVAL;
   view->total = 0;
   for (const Target *t = source->first; t; t = t->next) {
     if ((platform == TARGET_PS2_ONLY && t->platform != TARGET_PS2) ||
@@ -103,7 +103,7 @@ int targetViewIndex(const TargetList *view, const Target *target) {
 }
 
 const char *targetFilterLabel(TargetFilter filter) {
-  return filter == TARGET_PS2_ONLY ? "PS2" : filter == TARGET_PS1_ONLY ? "PS1" : "Mix";
+  return filter == TARGET_PS2_ONLY ? "PS2" : filter == TARGET_PS1_ONLY ? "PS1" : "All";
 }
 
 // Compare unsigned ASCII bytes without allocating uppercase name copies.

@@ -405,12 +405,14 @@ static void drawOptionsTextRow(int x, int y, int right, int selected,
   float valueWidth = value ? getLineWidth(value) : 0;
   if (value)
     labelWidth -= (int)valueWidth + 16;
+  if (selected && value)
+    drawPSBBNFocusGlow(right - valueWidth - 12, selectorY, right, right - 12);
   drawText(x + 18, y, 0, labelWidth, 0,
-           selected ? GS_SETREG_RGBA(0xF0, 0xFA, 0xFF, 0x80) : HeaderTextColor,
+           selected ? ColorSelectedText : HeaderTextColor,
            label);
   if (value)
     drawText(right - valueWidth - 12, y, 0, 0, 0,
-             selected ? ColorSelected : FontMainColor, value);
+             selected ? ColorSelectedText : FontMainColor, value);
 }
 
 static void drawCompatibilityTabs(const OptionsMenuState *state, int baseX, int y) {
@@ -420,8 +422,11 @@ static void drawCompatibilityTabs(const OptionsMenuState *state, int baseX, int 
   const int videoOut = state->gameSection == GAME_VIDEO_OUT;
   const int opl = videoOut ? state->videoOutOpl : gameUsesOpl(state);
   const uint64_t disabled = GS_SETREG_RGBA(0x48, 0x4B, 0x50, 0x80);
-  drawText(neutrinoX, y, 0, 0, 0, opl ? disabled : ColorSelected, "Neutrino");
-  drawText(oplX, y, 0, 0, 0, opl ? ColorSelected : disabled, "OPL");
+  int selectedX = opl ? oplX : neutrinoX;
+  int selectedRight = selectedX + (int)getLineWidth(opl ? "OPL" : "Neutrino");
+  drawPSBBNFocusGlow(selectedX, y, selectedRight + 18, selectedRight);
+  drawText(neutrinoX, y, 0, 0, 0, opl ? disabled : ColorSelectedText, "Neutrino");
+  drawText(oplX, y, 0, 0, 0, opl ? ColorSelectedText : disabled, "OPL");
   if (videoOut && lunaOplDevice(state->target->device->mode) != NULL) {
     drawText(neutrinoX - 22, y, 0, 0, 0, HeaderTextColor, "<");
     drawText(oplX + 48, y, 0, 0, 0, HeaderTextColor, ">");

@@ -8,7 +8,7 @@
 struct DeviceMapEntry;
 
 typedef enum { TARGET_PS2 = 0, TARGET_PS1 = 1 } TargetPlatform;
-typedef enum { TARGET_MIXED = 0, TARGET_PS2_ONLY, TARGET_PS1_ONLY } TargetFilter;
+typedef enum { TARGET_ALL = 0, TARGET_PS2_ONLY, TARGET_PS1_ONLY } TargetFilter;
 
 // An entry in TargetList
 typedef struct Target {

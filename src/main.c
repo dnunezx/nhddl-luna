@@ -145,7 +145,7 @@ int main(int argc, char *argv[]) {
     uint32_t enabledViews = loadEnabledLibraryViews(audioTarget);
     if (!(enabledViews & (1U << startupView)))
       startupView = lunaNavNextView(startupView, enabledViews);
-    if (startupView == UI_VIEW_PSBBN) {
+    if (startupView == UI_VIEW_PSBBN && loadLastGameMode(audioTarget) == TARGET_ALL) {
       // Keep the splash until current + six upcoming games are resolved.
       // Previous-only covers can finish after Collection is revealed.
       setCollectionArtForeground(1);

@@ -238,9 +238,24 @@ void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers, int
 
     if (!item->drawable)
       continue;
+    int outgoingVisibility, incomingVisibility;
+    GSTEXTURE *outgoing = orbitCoverHandoff(item->cacheIdx, frameNowMs,
+        &outgoingVisibility, &incomingVisibility);
     brightness = (0x42 + (item->emphasis * 0x3E) / 1000) * item->visibility / 1000;
     alpha = (0x38 + (item->emphasis * 0x48) / 1000) * item->visibility / 1000;
     z = 4 + ((item->depth + 127) * 2) / 254;
+    // Keep temporary old artwork on the rear arc, away from the focused title.
+    if (item->depth < 0) {
+      if (outgoing != NULL && outgoingVisibility > 0)
+        drawOrbitQuadTexture(outgoing, item->quad, z,
+            GS_SETREG_RGBA(brightness, brightness, brightness,
+                           alpha * outgoingVisibility / 1000));
+      item->visibility = item->visibility * incomingVisibility / 1000;
+      alpha = alpha * incomingVisibility / 1000;
+    }
+    // A pending decode is not a missing cover. Do not flash its placeholder.
+    if (!psbbnCoverLoaded[item->cacheIdx] && !collectionCoverMissing(item->cacheIdx))
+      continue;
     backplateAlpha = getGlassColorPreset() == GLASS_COLOR_ORIGINAL
                          ? 0x24 : item->cacheIdx == visualFocus ? 0x18 : 0x10;
 

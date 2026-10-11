@@ -160,6 +160,9 @@ static void drawBrowserRow(int y, int selected, const char *name,
     } else {
       drawPSBBNFocusGlow(left, y, right, right - 12);
     }
+    if (detail != NULL)
+      drawPSBBNFocusGlow(right - detailWidth, selectorY >= 0 ? selectorY : y,
+                          right, right - 12);
   }
   drawTextWindow(left + 18, y, right - detailWidth - 10, y + lineHeight,
                  0, selected ? (selectorY >= 0 ? GS_SETREG_RGBA(0xF0, 0xFA, 0xFF, 0x80)
@@ -167,7 +170,7 @@ static void drawBrowserRow(int y, int selected, const char *name,
                  ALIGN_LEFT, name);
   if (detail != NULL)
     drawTextWindow(right - detailWidth, y, right - 12, y + lineHeight,
-                   0, selected ? ColorSelected : FontMainColor,
+                   0, selected ? ColorSelectedText : FontMainColor,
                    ALIGN_RIGHT, detail);
 }
 
@@ -901,8 +904,13 @@ static void drawFileManagerFrame(const BrowserRoot *roots, int rootCount,
                sideName);
     else
       snprintf(heading, sizeof(heading), "%s", sideName);
+    if (side == active) {
+      int textRight = x1 + (int)getLineWidth(heading);
+      if (textRight > x2 - 12) textRight = x2 - 12;
+      drawPSBBNFocusGlow(x1, 54, x2, textRight);
+    }
     drawTextWindow(x1, 54, x2, 54 + lineHeight, 0,
-                   side == active ? ColorSelected : HeaderTextColor,
+                   side == active ? ColorSelectedText : HeaderTextColor,
                    ALIGN_LEFT, heading);
     drawTextWindow(x1, 79, x2, 79 + lineHeight, 0,
                    glassPresetColor(0x86, 0xA9, 0xBC, 0x60), ALIGN_LEFT,
