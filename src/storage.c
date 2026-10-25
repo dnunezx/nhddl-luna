@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 StorageSettings STORAGE_SETTINGS;
 StorageStatus STORAGE_STATUS[STORAGE_SOURCE_COUNT];
@@ -201,6 +202,22 @@ static void mergeTitles(TargetList *destination, TargetList *source) {
   free(source);
 }
 
+static int hasScannedTarget(const TargetList *list, const Target *old) {
+  int relative = getRelativePathIdx(old->fullPath);
+  const char *path = old->fullPath + (relative < 0 ? 0 : relative);
+  for (Target *t = list->first; t; t = t->next) {
+    int offset = getRelativePathIdx(t->fullPath);
+    if (t->platform == old->platform &&
+        !strcmp(t->fullPath + (offset < 0 ? 0 : offset), path)) return 1;
+    // A newly discovered valid playlist already represents its member images.
+    if (old->platform == TARGET_PS1 && !old->discs && t->discs &&
+        !t->discs->error[0])
+      for (unsigned i = 0; i < t->discs->count; i++)
+        if (!strcasecmp(t->discs->paths[i], path)) return 1;
+  }
+  return 0;
+}
+
 TargetList *storageRefresh(TargetList *previous) {
   TargetList *next = calloc(1, sizeof(*next));
   if (!next) return NULL;
@@ -238,8 +255,10 @@ TargetList *storageRefresh(TargetList *previous) {
     ModeType mode = modes[s];
     if (!(desired.enabled & mode)) continue;
     STORAGE_STATUS[s].error = (failed & mode) ? -EIO : 0;
-    if (!(scan & mode) && !STORAGE_STATUS[s].error)
+    if (!(scan & mode) && !STORAGE_STATUS[s].error) {
       STORAGE_STATUS[s].error = previousStatus[s].error;
+      STORAGE_STATUS[s].incomplete = previousStatus[s].incomplete;
+    }
     for (int i = 0; i < MAX_DEVICES; i++) {
       struct DeviceMapEntry *dev = &deviceModeMap[i];
       if (!dev->mountpoint || dev->mode != mode || !dev->scan) continue;
@@ -251,8 +270,10 @@ TargetList *storageRefresh(TargetList *previous) {
         uiSplashLogString(LEVEL_INFO_NODELAY, lunaText("Scanning %s...\n"), lunaText(names[s]));
         result = dev->scan(part, dev);
       }
+      if (result == -ENOMEM) { freeTargetList(part); goto fail; }
+      if (result == TITLE_SCAN_PARTIAL) STORAGE_STATUS[s].incomplete = 1;
       if (!(scan & mode) || (result && result != -ENOENT)) {
-        if (result) {
+        if (result < 0) {
           uiSplashLogString(LEVEL_WARN, "%s: %s (%d)\n",
                             lunaText(names[s]), lunaText("Scan failed"), result);
           freeTargetList(part);
@@ -262,6 +283,9 @@ TargetList *storageRefresh(TargetList *previous) {
         }
         if (previous) for (Target *t = previous->first; t; t = t->next) {
           if (matchDevice(t->device) != dev) continue;
+          // Prefer freshly read metadata; keep missing old entries until a
+          // complete rescan can establish whether they were actually removed.
+          if (result == TITLE_SCAN_PARTIAL && hasScannedTarget(part, t)) continue;
           Target *copy = copyTarget(t);
           if (!copy) { freeTargetList(part); goto fail; }
           copy->device = dev;

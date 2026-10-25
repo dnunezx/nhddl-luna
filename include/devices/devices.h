@@ -6,7 +6,11 @@
 
 #define MAX_DEVICES 20
 
-// Must scan the device entry for titles and add them to TargetList
+// A partial scan owns validated targets but could not inspect every item.
+#define TITLE_SCAN_PARTIAL 1
+
+// Returns 0 for a complete scan, TITLE_SCAN_PARTIAL for recoverable omissions,
+// or a negative error when results cannot be used (-ENOENT means empty).
 typedef int (*titleScanFunc)(TargetList *result, struct DeviceMapEntry *device);
 // Must sync the device
 typedef void (*syncFunc)();
@@ -43,7 +47,7 @@ const char *getMountedPFSPartition(void);
 //
 
 // Scans given storage device for ISO files and appends valid launch candidates to TargetList
-// Returns 0 if successful, non-zero if no targets were found or an error occurs
+// Uses the complete/partial/error contract of titleScanFunc above.
 // Implemented in devices_iso.c
 int findISO(TargetList *list, struct DeviceMapEntry *device);
 

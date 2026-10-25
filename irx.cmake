@@ -29,16 +29,30 @@ set(LOCAL_IRX_FILES
     udpfs_ioman
 )
 
+file(GLOB_RECURSE MMCEMAN_BUILD_INPUTS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/iop/mmceman/mmceman/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/iop/mmceman/mmceman/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/iop/mmceman/mmceman/*.S"
+    "${CMAKE_CURRENT_SOURCE_DIR}/iop/mmceman/mmceman/Makefile")
+
 # mmceman
+set(MMCEMAN_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/mmceman")
 add_custom_command(
     OUTPUT
         ${CMAKE_CURRENT_BINARY_DIR}/mmceman.irx
-    COMMAND make -C ${CMAKE_CURRENT_SOURCE_DIR}/iop/mmceman/mmceman
+    DEPENDS ${MMCEMAN_BUILD_INPUTS} ${CMAKE_CURRENT_SOURCE_DIR}/irx.cmake
+        ${CMAKE_CURRENT_SOURCE_DIR}/iop/mmceman-eof.cmake
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/iop/mmceman/mmceman ${MMCEMAN_BUILD_DIR}
+    COMMAND ${CMAKE_COMMAND} -DDRIVER_DIR=${MMCEMAN_BUILD_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/iop/mmceman-eof.cmake
+    COMMAND make -C ${MMCEMAN_BUILD_DIR} clean DEBUG=0 LOCAL_UDPTTY=0
+    COMMAND make -C ${MMCEMAN_BUILD_DIR} DEBUG=0 LOCAL_UDPTTY=0
     COMMAND ${CMAKE_COMMAND} -E rename
-        ${CMAKE_CURRENT_SOURCE_DIR}/iop/mmceman/mmceman/irx/mmceman.irx
+        ${MMCEMAN_BUILD_DIR}/irx/mmceman.irx
         ${CMAKE_CURRENT_BINARY_DIR}/mmceman.irx
     WORKING_DIRECTORY
-        ${CMAKE_CURRENT_SOURCE_DIR}/iop/mmceman/mmceman
+        ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Building mmceman"
 )
 

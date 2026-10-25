@@ -2649,6 +2649,9 @@ static int storageRow(int index, char *name, size_t nameSize,
     snprintf(name, nameSize, "%s", storageSourceName(index));
     if (!(settings->enabled & mode)) snprintf(detail, detailSize, lunaText("Disabled"));
     else if (!(STORAGE_SETTINGS.enabled & mode)) snprintf(detail, detailSize, lunaText("Enable pending"));
+    else if (STORAGE_STATUS[index].incomplete ||
+             (STORAGE_STATUS[index].error && STORAGE_STATUS[index].games))
+      snprintf(detail, detailSize, lunaText("Incomplete - %d games"), STORAGE_STATUS[index].games);
     else if (STORAGE_STATUS[index].error) snprintf(detail, detailSize, lunaText("Scan failed"));
     else if (!STORAGE_STATUS[index].devices) snprintf(detail, detailSize, lunaText("No device found"));
     else snprintf(detail, detailSize, lunaText("Ready - %d games"), STORAGE_STATUS[index].games);
@@ -2830,10 +2833,14 @@ int uiMainMenuLoop(int hasLibrary) {
   MainMenuContext menu = {.hasLibrary = hasLibrary};
   BrowserSelector selector = {.selected = -1, .wordOnly = 1};
   while (1) {
-    int scanFailed = 0;
-    for (int source = 0; source < STORAGE_SOURCE_COUNT; source++)
+    int scanFailed = 0, scanIncomplete = 0;
+    for (int source = 0; source < STORAGE_SOURCE_COUNT; source++) {
       if (STORAGE_STATUS[source].error) scanFailed = 1;
-    drawMainMenuFrame(hasLibrary ? lunaText("Main menu") :
+      if (STORAGE_STATUS[source].incomplete ||
+          (STORAGE_STATUS[source].error && STORAGE_STATUS[source].games)) scanIncomplete = 1;
+    }
+    drawMainMenuFrame(scanIncomplete ? lunaText("Some items could not be scanned") :
+                     hasLibrary ? lunaText("Main menu") :
                      scanFailed ? lunaText("Scan failed") : lunaText("No games found"),
                      count, selected, &menu, &selector, 0);
     int input = readInput();

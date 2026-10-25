@@ -15,6 +15,7 @@ typedef struct {
   int devices;
   int games;
   int error;
+  int incomplete;
 } StorageStatus;
 extern StorageSettings STORAGE_SETTINGS;
 extern StorageStatus STORAGE_STATUS[STORAGE_SOURCE_COUNT];
