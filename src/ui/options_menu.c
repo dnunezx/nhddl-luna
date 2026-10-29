@@ -222,18 +222,18 @@ static void drawOptionsTextRow(int x, int y, int right, int selected,
                                const char *value) {
   if (selected)
     drawMenuRowSelector(x, selectorY, right);
-  int labelWidth = right - x - 30;
-  float valueWidth = value ? getLineWidth(value) : 0;
-  if (value)
-    labelWidth -= (int)valueWidth + 16;
+  const int textLeft = x + 18, textRight = right - 18;
+  int valueWidth = value ? (int)ceilf(getLineDrawWidth(value)) : 0;
+  int valueLeft = textRight - valueWidth;
+  int labelRight = value ? valueLeft - 16 : textRight;
   if (selected && value)
-    drawPSBBNFocusGlow(right - valueWidth - 12, selectorY, right, right - 12);
-  drawText(x + 18, y, 0, labelWidth, 0,
+    drawPSBBNFocusGlow(valueLeft, selectorY, right, textRight);
+  uiCubeMenuTextDraw(textLeft, y, labelRight, 0,
            selected ? ColorSelectedText : HeaderTextColor,
-           label);
+           label, 0);
   if (value)
-    drawText(right - valueWidth - 12, y, 0, 0, 0,
-             selected ? ColorSelectedText : FontMainColor, value);
+    uiCubeMenuTextDraw(valueLeft, y, textRight, 0,
+             selected ? ColorSelectedText : FontMainColor, value, 1);
 }
 
 static int gameVMCEnabled(ArgumentList *arguments) {

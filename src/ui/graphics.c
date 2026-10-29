@@ -827,8 +827,43 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
   return curY + font->lineHeight;
 }
 
+static float quickMenuDrawWidth(const char *text) {
+  float pen = 0, extent = 0;
+  const char *cursor = text;
+  while (*cursor) {
+    uint32_t character = lunaUTF8Next(&cursor);
+    if (character == '\n') break;
+    const BMFontChar *glyph = getGlyph(character);
+    if (!glyph) continue;
+    float right = pen + glyph->xoffset + glyph->width;
+    if (right > extent) extent = right;
+    pen += glyph->xadvance;
+  }
+  return extent > pen ? extent : pen;
+}
+
 int drawQuickMenuTextWindow(int x1, int y1, int x2, int y2, int z,
                             uint64_t color, uint8_t alignment, const char *text) {
+  char fitted[512];
+  /* Fit using the same unkerned advances and glyph bounds as 3.1.3. */
+  if (x2 && quickMenuDrawWidth(text) > x2 - x1) {
+    if (quickMenuDrawWidth("...") > x2 - x1) return y1 + font->lineHeight;
+    const char *cursor = text;
+    size_t best = 0;
+    memcpy(fitted, "...", 4);
+    while (*cursor && *cursor != '\n') {
+      lunaUTF8Next(&cursor);
+      size_t length = (size_t)(cursor - text);
+      if (length > sizeof(fitted) - 4) break;
+      memcpy(fitted, text, length);
+      memcpy(fitted + length, "...", 4);
+      if (quickMenuDrawWidth(fitted) > x2 - x1) break;
+      best = length;
+    }
+    memcpy(fitted, text, best);
+    memcpy(fitted + best, "...", 4);
+    text = fitted;
+  }
   const int previous = legacyQuickMenuText;
   legacyQuickMenuText = 1;
   const int bottom = drawTextWindow(x1, y1, x2, y2, z, color, alignment, text);

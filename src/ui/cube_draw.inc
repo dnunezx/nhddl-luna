@@ -149,23 +149,25 @@ void uiCubeSubmenuPageDraw(const LunaCubePage *page,int selected,
       if(width>maxValue)maxValue=width;
     }
   }
-  int content=right-left-16;
+  /* Equal eight-pixel insets inside the existing focus plate. */
+  int textLeft=left+4,textRight=right-18;
+  int content=textRight-textLeft;
   int valueSpace=(int)fminf(maxValue,fmaxf(content/2,content-maxLabel-16));
-  int valueLeft=right-12-valueSpace;
-  int nameRight=valueSpace?valueLeft-16:right-12;
+  int valueLeft=textRight-valueSpace;
+  int nameRight=valueSpace?valueLeft-16:textRight;
   for(int row=first;row<page->count&&row<first+visible;row++) {
     const char *label=lunaText(page->label(page->context,row));
     const char *value=page->value?lunaText(page->value(page->context,row)):NULL;
     uint64_t color=row==selected?bright:ink;
     int rowY=top+(row-first)*step;
-    uiCubeMenuTextDraw(left+4,rowY,nameRight,7,color,label,0);
+    uiCubeMenuTextDraw(textLeft,rowY,nameRight,7,color,label,0);
     if(value&&value[0]) {
       if(page->stackedValues) {
-        uiCubeMenuTextDraw(left+12,rowY+line,right-12,7,color,value,0);
-      } else uiCubeMenuTextDraw(valueLeft,rowY,right-12,7,color,value,1);
+        uiCubeMenuTextDraw(textLeft+8,rowY+line,textRight,7,color,value,0);
+      } else uiCubeMenuTextDraw(valueLeft,rowY,textRight,7,color,value,1);
     }
   }
-  if(page->count==0)drawTextWindow(left+4,top,right,top+line,7,ink,
+  if(page->count==0)drawTextWindow(textLeft,top,textRight,top+line,7,ink,
                                   ALIGN_LEFT,lunaText("Nothing to show"));
   if(opacity>=.999f)drawListScrollbar(right-6,top,top+visible*step,
                                      page->count,first,visible,7);
