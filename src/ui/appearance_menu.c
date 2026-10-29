@@ -51,6 +51,7 @@ static int appearancePreview(AppearanceEditor *s,const LunaAppearance *a) {
   }
   setGlassColorPreset((GlassColorPreset)a->glassColor);
   uiRingSetColor((LunaRingColor)a->ringColor);
+  uiRingSetEffectsColor((LunaRingColor)a->ringEffectsColor);
   setClassicArtOverlap(a->classicOverlap);setPs1CaseStyle((Ps1CaseStyle)a->ps1CaseStyle);
   setCollectionGameList(a->collectionGameList);ambientSetEnabled(a->ambientSound);
   if(a->orbsTheme!=old->orbsTheme)setAmbientOrbsTheme((AmbientOrbsTheme)a->orbsTheme,uiNowMs());
@@ -71,7 +72,7 @@ static const char *appearanceHubDescription(void *context,int row) {
 }
 static int appearanceRowCount(AppearanceEditor *s) {
   if(s->category==AP_VIEWS)return UI_VIEW_COUNT+3;
-  if(s->category==AP_COLORS)return 2;
+  if(s->category==AP_COLORS)return 3;
   if(s->category==AP_EFFECTS)return s->pending.background==LIBRARY_BACKGROUND_SPACE_FLIGHT?2:4+ORB_SHAPE_PLAYTIME;
   return 1;
 }
@@ -79,7 +80,7 @@ static const char *appearanceRowLabel(void *context,int row) {
   AppearanceEditor *s=context;
   switch(s->category) {
     case AP_BACKGROUND:return "Background";
-    case AP_COLORS:return row?"Ring color":"Glass color";
+    case AP_COLORS:return (const char *const[]){"Glass color","Ring color","Menu effects color"}[row];
     case AP_TEXT:return "Font";
     case AP_SOUND:return "Ambient sound";
     case AP_VIEWS:
@@ -96,7 +97,7 @@ static const char *appearanceRowValue(void *context,int row) {
   switch(s->category) {
     case AP_BACKGROUND:return backgrounds[a->background];
     case AP_COLORS:return row?
-      (const char *const[]){"Original","Cyan","Blue","Violet","Rose","Green","White"}[a->ringColor]:
+      (const char *const[]){"Original","Cyan","Blue","Violet","Rose","Green","White"}[row==1?a->ringColor:a->ringEffectsColor]:
       (const char *const[]){"Original","Luminous","Cosmic","Cyber"}[a->glassColor];
     case AP_TEXT:return a->font==UI_FONT_PSBBN?"PSBBN":"DejaVu";
     case AP_SOUND:value=a->ambientSound;break;
@@ -122,7 +123,8 @@ static const char *appearanceRowValue(void *context,int row) {
 static const char *appearanceRowDescription(void *context,int row) {
   AppearanceEditor *s=context;
   if(s->message)return s->message;
-  if(s->category==AP_COLORS&&row==1)return "Changes the Start-menu ring and its fading copies.";
+  if(s->category==AP_COLORS&&row==1)return "Changes the Start-menu ring.";
+  if(s->category==AP_COLORS&&row==2)return "Changes the Start-menu orbs, trails and bursts.";
   if(s->category==AP_EFFECTS) {
     if(s->pending.background==LIBRARY_BACKGROUND_SPACE_FLIGHT)return "Changes save automatically.";
     if(s->pending.background!=LIBRARY_BACKGROUND_ORBS)return "Choose Ambient Orbs or Space Flight under Backgrounds.";
@@ -144,7 +146,8 @@ static void appearanceAdjust(void *context,int row,int direction) {
   switch(s->category) {
     case AP_BACKGROUND:candidate.background=(candidate.background+LIBRARY_BACKGROUND_COUNT+direction)%LIBRARY_BACKGROUND_COUNT;break;
     case AP_COLORS:
-      if(row)candidate.ringColor=(candidate.ringColor+LUNA_RING_COLOR_COUNT+direction)%LUNA_RING_COLOR_COUNT;
+      if(row==2)candidate.ringEffectsColor=(candidate.ringEffectsColor+LUNA_RING_COLOR_COUNT+direction)%LUNA_RING_COLOR_COUNT;
+      else if(row==1)candidate.ringColor=(candidate.ringColor+LUNA_RING_COLOR_COUNT+direction)%LUNA_RING_COLOR_COUNT;
       else candidate.glassColor=(candidate.glassColor+GLASS_COLOR_COUNT+direction)%GLASS_COLOR_COUNT;
       break;
     case AP_TEXT:candidate.font=(candidate.font+UI_FONT_COUNT+direction)%UI_FONT_COUNT;break;

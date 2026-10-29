@@ -11,6 +11,10 @@ void uiRingSetColor(LunaRingColor color) {
   ringColorPreset=color>=LUNA_RING_ORIGINAL&&color<LUNA_RING_COLOR_COUNT?color:LUNA_RING_ORIGINAL;
 }
 LunaRingColor uiRingGetColor(void) {return ringColorPreset;}
+static LunaRingColor ringEffectsColorPreset=LUNA_RING_ORIGINAL;
+void uiRingSetEffectsColor(LunaRingColor color) {
+  ringEffectsColorPreset=color>=LUNA_RING_ORIGINAL&&color<LUNA_RING_COLOR_COUNT?color:LUNA_RING_ORIGINAL;
+}
 #define RING_ITEM_COUNT 4
 /* Preserve the three recovered positions; the fourth is a LUNA extension. */
 static const float ringSlots[RING_ITEM_COUNT] = {-2.28f, 0, 1.3f, 2.4f};

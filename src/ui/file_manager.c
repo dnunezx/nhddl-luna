@@ -2752,6 +2752,7 @@ int uiMainMenuLoop(int hasLibrary, Target *target) {
   lunaSpaceSetSpeed(appearance.spaceSpeed);
   lunaSpaceSetDepth(appearance.spaceDepth);
   uiRingSetColor((LunaRingColor)appearance.ringColor);
+  uiRingSetEffectsColor((LunaRingColor)appearance.ringEffectsColor);
   for (;;) {
     int action = uiRingMenuLoop(hasLibrary, startMenuStatus(hasLibrary));
     // Consume the activation press before entering another interactive screen.

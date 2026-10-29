@@ -43,7 +43,8 @@ static void ringRipple(const RingWave *wave) {
   /* Mode2's native slower path includes sqrt; exact R5900 rounding unresolved. */
   float progress=sqrtf(ringClamp(age/duration));
   float diameter=wave->size*(1+(wave->factor-1)*progress);
-  ringRibbon(wave->center,wave->u,wave->v,diameter,(1-age/duration)*wave->alpha,wave->size>=500);
+  GSTEXTURE *texture=ringEffectsColorPreset==LUNA_RING_ORIGINAL?&ringRibbonTexture:&ringEffectsRibbonTexture;
+  ringRibbonDraw(wave->center,wave->u,wave->v,diameter,(1-age/duration)*wave->alpha,wave->size>=500,texture);
 }
 static void ringDrawEffects(RingMenu *menu) {
   int bound=bindTextureSafe(gsGlobal,&ringOrbTexture);

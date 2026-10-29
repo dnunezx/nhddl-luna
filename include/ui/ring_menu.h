@@ -9,6 +9,7 @@ typedef enum {
 } LunaRingColor;
 void uiRingSetColor(LunaRingColor color);
 LunaRingColor uiRingGetColor(void);
+void uiRingSetEffectsColor(LunaRingColor color);
 int uiRingMenuLoop(int hasLibrary, const char *status);
 
 #endif

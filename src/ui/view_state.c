@@ -523,6 +523,7 @@ void loadLegacyAppearance(Target *target, LunaAppearance *settings) {
   settings->spaceSpeed = 4;
   settings->spaceDepth = 2;
   settings->ringColor = 0;
+  settings->ringEffectsColor = 0;
   settings->background = legacyLibraryBackground(target);
   settings->glassColor = legacyGlassColorPreset(target);
   settings->font = legacyUIFont(target);

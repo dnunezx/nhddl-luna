@@ -11,6 +11,7 @@ typedef struct {
   uint32_t orbsTheme, orbsAppearance, orbsColor, tailsColor, orbShapes;
   uint32_t ringColor;
   uint32_t spaceSpeed, spaceDepth;
+  uint32_t ringEffectsColor;
 } LunaAppearance;
 
 // Always fills settings, including legacy/default fallback on read errors.

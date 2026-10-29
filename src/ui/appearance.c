@@ -13,7 +13,7 @@
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h>
 
-#define APPEARANCE_VERSION 4U
+#define APPEARANCE_VERSION 5U
 #define RECORD_LIMIT 2048
 #define RECORD_WRITE_SIZE 512
 static const char *const recordNames[] = {
@@ -65,7 +65,8 @@ static const AppearanceField fields[] = {
   FIELD(orbsTheme, themes, 0), FIELD(orbsAppearance, themes, 0),
   FIELD(orbsColor, colors, 0), FIELD(tailsColor, colors, 0),
   FIELD(orbShapes, shapes, 1), FIELD(ringColor, ringColors, 0),
-  FIELD(spaceSpeed, spaceSpeeds, 0), FIELD(spaceDepth, spaceDepths, 0)
+  FIELD(spaceSpeed, spaceSpeeds, 0), FIELD(spaceDepth, spaceDepths, 0),
+  FIELD(ringEffectsColor, ringColors, 0)
 };
 #define FIELD_COUNT (sizeof(fields)/sizeof(*fields))
 typedef struct {
@@ -216,8 +217,8 @@ static int readRecord(const char *path, AppearanceRecord *record) {
     if (!lineEnd) break;
     line = lineEnd + 1;
   }
-  // Fields are appended: v1 has no ring color; v2 has no Space Flight settings.
-  unsigned count=FIELD_COUNT-(version==1U?3:version==2U?2:0);
+  // Appended fields default to Original; retain older records' required keys.
+  unsigned count=FIELD_COUNT-(version<5U?1:0)-(version==1U?3:version==2U?2:0);
   uint32_t required=(1U << count)-1U;
   // Introduce the new view once; subsequent records preserve its On/Off choice.
   if (version < 4U && (record->settings.enabledViews & (1U << UI_VIEW_PSBBN)))
