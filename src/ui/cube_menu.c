@@ -144,6 +144,7 @@ static const LunaCubeHub *activeCubeHub;
 static const LunaCubeSubmenu *activeCubeSubmenu;
 static const char *activeCubeStatus;
 static int activeCubeConfirm;
+#include "cube_quick_glass.inc"
 
 void uiCubeHubDrawBackdrop(void) {
   int saved=cubeBackdropOnly;
@@ -161,6 +162,7 @@ static void cubeHubClose(void) {
 int uiCubeHubLoop(int *selected,const char *status,const LunaCubeHub *hub) {
   static CubeMenu menu;
   if(!hub||!hub->labels||hub->count<1||hub->count>CUBE_COUNT)return -1;
+  uiCubeQuickMenuGlassClose();
   int initial=*selected;
   if(initial<0||initial>=hub->count)initial=0;
   cubeInit(&menu,uiNowMs(),initial,gsGlobal->Mode==GS_MODE_PAL?50:60);

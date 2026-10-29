@@ -14,7 +14,6 @@ if(ENABLE_PRINTF)
 endif()
 option(LUNA_EMULATOR_BUILD "Enable behavior used only by emulator test builds" OFF)
 option(LUNA_CAMERA_ANIMATIONS "Enable camera animations in library views" ON)
-option(LUNA_CAMERA_MENU_PAN "Pan the library scene with the quick menu" ON)
 option(LUNA_CAMERA_LIST_TURN "Turn the selected cover from List into Collections" ON)
 option(LUNA_CAMERA_ORBIT_TRANSITION "Move Collections covers into Orbit" ON)
 option(LUNA_ENABLE_PSXCORE "Build with the experimental PSXCore dependency" OFF)
@@ -135,7 +134,6 @@ add_executable(${EE_BIN} ${SOURCES})
 if(LUNA_CAMERA_ANIMATIONS)
   target_sources(${EE_BIN} PRIVATE src/ui/luna_motion.c src/ui/camera_transitions.c)
   target_compile_definitions(${EE_BIN} PRIVATE LUNA_CAMERA_ANIMATIONS=1
-    LUNA_CAMERA_MENU_PAN=$<BOOL:${LUNA_CAMERA_MENU_PAN}>
     LUNA_CAMERA_LIST_TURN=$<BOOL:${LUNA_CAMERA_LIST_TURN}>
     LUNA_CAMERA_ORBIT_TRANSITION=$<BOOL:${LUNA_CAMERA_ORBIT_TRANSITION}>)
 endif()

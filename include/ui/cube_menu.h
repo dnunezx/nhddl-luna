@@ -53,6 +53,9 @@ typedef struct {
 int uiCubeHubLoop(int *selected, const char *status, const LunaCubeHub *hub);
 // Redraw the active hub or page beneath a blocking picker, without presenting.
 void uiCubeHubDrawBackdrop(void);
+// CubeGlass panel in screen pixels; borrows scratch pages after the live scene.
+int uiCubeQuickMenuGlassDraw(int left, int top, int right, int bottom);
+void uiCubeQuickMenuGlassClose(void);
 // Game Options uses the library footer's margins, height, and prompt spacing.
 void uiCubeOptionsFooterDraw(const char *action, float opacity);
 void uiCubeOptionsFooterTransitionDraw(float libraryProgress, float pageProgress);

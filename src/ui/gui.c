@@ -12,6 +12,7 @@
 #include "ui/art_cache.h"
 #include "ui/file_manager.h"
 #include "ui/ring_menu.h"
+#include "ui/cube_menu.h"
 #include "ui/appearance.h"
 #include "vmc_storage.h"
 #include "storage.h"
@@ -123,6 +124,9 @@ static void drawLibraryFooter(int canLaunch) {
 static void drawQuickMenuText(int x1, int y1, int x2, int y2,
                               uint64_t color, uint8_t alignment,
                               const char *text) {
+  if (getGlassColorPreset() == GLASS_COLOR_CYBER)
+    color = glassPresetColor(color & 255, (color >> 8) & 255,
+                             (color >> 16) & 255, (color >> 24) & 255);
   // Keep labels distinct from any artwork visible through the glass.
   drawQuickMenuTextWindow(x1 + 1, y1 + 2, x2 + 1, y2 + 2, 0, ColorBlack,
                  alignment, text);
@@ -145,11 +149,13 @@ static void drawGameModeToast(void) {
 }
 #endif
 
-static void drawLibraryQuickMenu(int progress, int closing, UILibraryView view,
+static void drawLibraryQuickMenu(int progress, UILibraryView view,
                                  int favoritesOnly, int isFavorite,
                                  int total, const char *title) {
-  if (progress <= 0)
+  if (progress <= 0) {
+    uiCubeQuickMenuGlassClose();
     return;
+  }
 #ifdef LUNA_ENABLE_PSXCORE
   char switchGamesLabel[128];
   snprintf(switchGamesLabel, sizeof(switchGamesLabel), lunaText("Switch Games: %s"),
@@ -177,22 +183,9 @@ static void drawLibraryQuickMenu(int progress, int closing, UILibraryView view,
   int top = 16;
   gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
   gsKit_prim_sprite(gsGlobal, 0, 0, gsGlobal->Width, gsGlobal->Height, 0,
-                    GS_SETREG_RGBA(0x00, 0x04, 0x0A, (0x14 * progress) / 1000));
-  // A pair of faint rails trails the glass as it accelerates offscreen.
-  int wake = closing ? (4 * progress * (1000 - progress)) / 1000 : 0;
-  if (wake > 0) {
-    gsKit_prim_sprite(gsGlobal, left - 16, top + 12, left - 12,
-                      top + height - 12, 0,
-                      glassPresetColor(0x64, 0xB0, 0xD8, (0x25 * wake) / 1000));
-    gsKit_prim_sprite(gsGlobal, left - 29, top + 22, left - 26,
-                      top + height - 22, 0,
-                      glassPresetColor(0x50, 0x92, 0xB8, (0x13 * wake) / 1000));
-  }
-  drawGlassPanelWithFillAlpha(left, top, right, top + height, 0, 0x78);
-  if (wake > 0)
-    gsKit_prim_sprite(gsGlobal, left, top + 8, left + 3,
-                      top + height - 8, 1,
-                      glassPresetColor(0xA0, 0xE0, 0xF8, (0x30 * wake) / 1000));
+                    glassPresetColor(0x00, 0x04, 0x0A, (0x14 * progress) / 1000));
+  if (!uiCubeQuickMenuGlassDraw(left, top, right, top + height))
+    drawGlassPanelWithFillAlpha(left, top, right, top + height, 0, 0x78);
   drawQuickMenuText(left + 16, top + 10, right - 16,
                  top + rowHeight + 10, FontMainColor,
                  ALIGN_LEFT | ALIGN_VCENTER,
@@ -328,6 +321,7 @@ int uiInit() {
 void closeUI() {
   if (gsGlobal == NULL)
     return;
+  uiCubeQuickMenuGlassClose();
   gsKit_queue_exec(gsGlobal);
   gsKit_finish();
   dmaKit_wait_fast();
@@ -894,7 +888,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     if (quickMenuProgress < 0) quickMenuProgress = 0;
     if (quickMenuProgress > 1000) quickMenuProgress = 1000;
     int favoriteIndex = curTarget->idx;
-    drawLibraryQuickMenu(quickMenuProgress, !quickMenu.open, view,
+    drawLibraryQuickMenu(quickMenuProgress, view,
                          favoritesOnly, titles->total > 0 && allFavoriteFlags[favoriteIndex],
                          titles->total, curTarget->name);
 #ifdef LUNA_ENABLE_PSXCORE
@@ -1485,6 +1479,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       optionsTriangleHeld = (pollInput() & PAD_TRIANGLE) != 0;
       input = 0;
     } else if (input & PAD_START) {
+      uiCubeQuickMenuGlassClose();
       uiVmcSetLibrary(allTitles);
       int menuResult = uiMainMenuLoop(1,curTarget);
       uiVmcSetLibrary(NULL);
@@ -1520,6 +1515,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   }
 
 exit:
+  uiCubeQuickMenuGlassClose();
 #ifdef LUNA_CAMERA_ANIMATIONS
   lunaCameraMenuReturnCancel();
   lunaCameraChannelCancel();

@@ -4,7 +4,6 @@
 #include <math.h>
 #include <stddef.h>
 
-static LunaMotion camera;
 static LunaMotion menuReturn;
 static int menuReturning;
 float lunaCameraDrawScale = 1.0f;
@@ -12,7 +11,7 @@ float lunaCameraDrawOpacity = 1.0f;
 static int layerActive;
 static float layerScale=1,layerOpacity=1,layerOffsetX,layerOffsetY;
 static uint32_t lastMs, pendingTicks;
-static int initialized, wasOpen, armed, applied, savedOffsetX, savedOffsetY;
+static int initialized, armed, applied, savedOffsetX, savedOffsetY;
 static LunaMotion viewMotion;
 static GSTEXTURE *viewCover;
 static float sourceRect[4];
@@ -162,7 +161,6 @@ void lunaCameraSceneBeforeBackground(void) {
 void lunaCameraSceneBegin(int open, uint32_t nowMs) {
   restoreCameraOffset();
   if (!initialized) {
-    lunaMotionReset(&camera);
     lastMs = nowMs;
     initialized = 1;
   }
@@ -174,7 +172,6 @@ void lunaCameraSceneBegin(int open, uint32_t nowMs) {
   }
   pendingTicks += elapsed * 60U;
   while (pendingTicks >= 1000U) {
-    lunaMotionTick(&camera);
     if (menuReturning) lunaMotionTick(&menuReturn);
     if (viewCover && !viewSettled) lunaMotionTick(&viewMotion);
     if (lunaCameraChannelActive()) lunaMotionTick(&channelMotion);
@@ -201,13 +198,6 @@ void lunaCameraSceneBegin(int open, uint32_t nowMs) {
     if (open || (channelAgeMs >= 350U && lunaCameraChannelProgress() >= 0.998f))
       lunaCameraChannelCancel();
   }
-  const int cameraOpen = LUNA_CAMERA_MENU_PAN && open;
-  if (cameraOpen != wasOpen) {
-    /* Screen-space adaptation: full original perspective is not reconstructed. */
-    const float target[3] = {cameraOpen ? -280.0f : 0.0f, 0.0f, 0.0f};
-    lunaMotionRetarget(&camera, target, 750.0f, 1.0f);
-    wasOpen = cameraOpen;
-  }
   armed = 1;
 }
 
@@ -216,14 +206,12 @@ void lunaCameraSceneAfterBackground(void) {
     return;
   savedOffsetX = gsGlobal->OffsetX;
   savedOffsetY = gsGlobal->OffsetY;
-  const float scale = (float)gsGlobal->Width / 640.0f;
   if (layerActive) {
     lunaCameraDrawScale=layerScale;
     lunaCameraDrawOpacity=layerOpacity;
     gsGlobal->OffsetX+=(int)lroundf(layerOffsetX*16.0f);
     gsGlobal->OffsetY+=(int)lroundf(layerOffsetY*16.0f);
   } else {
-    gsGlobal->OffsetX += (int)lroundf(camera.position[0] * scale * 16.0f);
     lunaCameraDrawScale = menuReturning ? menuReturn.position[0] : 1.0f;
   }
   applied = 1;
