@@ -36,7 +36,7 @@ static void cubeMenuTextScaled(int left,int top,int right,int z,float scale,uint
     memcpy(fitted,text,best);memcpy(fitted+best,"...",4);shown=fitted;
   }
   int x=rightAligned?right-(int)ceilf(getLineDrawWidth(shown)*scale):left;
-  drawTextLineScaledCrisp(x,top,right,z,scale,color,shown);
+  drawTextLineScaled(x,top,right,z,scale,color,shown);
 }
 void uiCubeMenuTextDraw(int left,int top,int right,int z,uint64_t color,
                         const char *text,int rightAligned) {

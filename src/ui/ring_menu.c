@@ -1,4 +1,4 @@
-/* Circular Start menu with authored lettering and effects. */
+/* Circular Start menu with shared UI lettering and effects. */
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -130,7 +130,6 @@ int uiRingMenuLoop(int hasLibrary, const char *status) {
   static RingMenu menu;
   ringInit(&menu,uiNowMs(),hasLibrary?0:1);
   ringLayoutInit(&menu);
-  ringLetteringInit();
   ringEffectsInit();
   int previous=pollInput(), destination=LUNA_RING_LIBRARY;
   for(;;) {
@@ -139,7 +138,7 @@ int uiRingMenuLoop(int hasLibrary, const char *status) {
     int held=pollInput(),input=held&~previous;
     previous=held;
     if(menu.closing) {
-      if(menu.exit>=2000) { ringEffectsClose(); ringLetteringClose(); return destination; }
+      if(menu.exit>=2000) { ringEffectsClose(); return destination; }
       continue;
     }
     if((input&(PAD_CIRCLE|PAD_TRIANGLE|PAD_START))&&hasLibrary) {

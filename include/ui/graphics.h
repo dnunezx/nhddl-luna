@@ -115,10 +115,6 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
 void drawTextLineScaled(int x, int y, int right, int z, float scale,
                         uint64_t color, const char *text);
 
-// Menu text: uniform scale, pixel-aligned glyphs and matching atlas padding.
-void drawTextLineScaledCrisp(int x, int y, int right, int z, float scale,
-                           uint64_t color, const char *text);
-
 // Draws a single line shifted left within a clipped horizontal window.
 int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *text, int scrollX);
 
@@ -130,7 +126,7 @@ uint8_t getFontLineHeight();
 
 // Gets the line width for the first line in text
 float getLineWidth(const char *text);
-// Includes glyph overhang and the crisp renderer's extra atlas texel.
+// Includes glyph overhang in the drawn line width.
 float getLineDrawWidth(const char *text);
 
 // Returns icon width
