@@ -1,4 +1,72 @@
 #include "cube_glass.inc"
+static MenuPromptTransition cubeFooterTransition;
+static MenuPromptSnapshot cubeFooterDesired;
+static int cubeFooterCollect;
+void uiCubeSubmenuFooterDraw(const PromptBar *bar,float opacity) {
+  if(cubeBackdropOnly)return;
+  if(cubeFooterCollect) {
+    cubeFooterDesired.count=bar->count>MENU_PROMPT_MAX?MENU_PROMPT_MAX:bar->count;
+    cubeFooterDesired.hasNote=0;
+    for(int i=0;i<cubeFooterDesired.count;i++) {
+      snprintf(cubeFooterDesired.labels[i],sizeof(cubeFooterDesired.labels[i]),"%s",bar->items[i].label);
+      cubeFooterDesired.items[i]=(ButtonPrompt){bar->items[i].icon,cubeFooterDesired.labels[i]};
+    }
+  } else drawMenuPromptBar(&cubeFooterTransition,(int)cubeSX(32),(int)cubeSY(426),
+      (int)cubeSX(608),(int)cubeSY(464),7,HeaderTextColor,*bar,opacity);
+}
+static void cubeMenuTextScaled(int left,int top,int right,int z,float scale,uint64_t color,
+                               const char *text,int rightAligned) {
+  if(!text||right<=left)return;
+  const char *shown=text;
+  char fitted[512];
+  size_t length=strcspn(text,"\n");
+  if(text[length]||length>=sizeof(fitted)||getLineDrawWidth(text)*scale>right-left) {
+    if(getLineDrawWidth("...")*scale>right-left)return;
+    size_t limit=length<sizeof(fitted)-4?length:sizeof(fitted)-4;
+    int low=0,high=(int)limit;
+    size_t best=0;
+    while(low<=high) {
+      int middle=low+(high-low)/2;
+      size_t cut=(size_t)middle;
+      while(cut&&((unsigned char)text[cut]&0xc0)==0x80)cut--;
+      memcpy(fitted,text,cut);memcpy(fitted+cut,"...",4);
+      if(getLineDrawWidth(fitted)*scale<=right-left){best=cut;low=middle+1;}
+      else high=middle-1;
+    }
+    memcpy(fitted,text,best);memcpy(fitted+best,"...",4);shown=fitted;
+  }
+  int x=rightAligned?right-(int)ceilf(getLineDrawWidth(shown)*scale):left;
+  drawTextLineScaledCrisp(x,top,right,z,scale,color,shown);
+}
+void uiCubeMenuTextDraw(int left,int top,int right,int z,uint64_t color,
+                        const char *text,int rightAligned) {
+  cubeMenuTextScaled(left,top,right,z,1,color,text,rightAligned);
+}
+void uiCubeMenuHelpDraw(int left,int right,uint64_t color,const char *text) {
+  if(!text||!text[0])return;
+  const float scale=.8f;
+  int y=(int)cubeSY(390),step=(int)ceilf(getFontLineHeight()*scale);
+  char line[512];
+  const char *rest=text;
+  size_t length=strlen(text),cut=0;
+  for(size_t i=0;i<length&&i<sizeof(line)-1;i++) {
+    if(text[i]!=' '&&text[i]!='\n')continue;
+    memcpy(line,text,i);line[i]=0;
+    if(getLineDrawWidth(line)*scale>right-left)break;
+    cut=i;
+    if(text[i]=='\n')break;
+  }
+  if(getLineDrawWidth(text)*scale>right-left||strchr(text,'\n')) {
+    if(cut) {
+      memcpy(line,text,cut);line[cut]=0;
+      cubeMenuTextScaled(left,y,right,7,scale,color,line,0);
+      rest=text+cut+1;while(*rest==' ')rest++;
+      y+=step;
+    }
+  }
+  cubeMenuTextScaled(left,y,right,7,scale,color,rest,0);
+}
+
 static void cubeText(float cx,float y,uint64_t color,const char *text) {
   /* Use the active LUNA font at its native size, just like List view. */
   drawText((int)cubeSX(cx)-getLineWidth(text)/2,(int)cubeSY(y),6,
@@ -7,6 +75,25 @@ static void cubeText(float cx,float y,uint64_t color,const char *text) {
 static uint64_t cubeTextFade(uint64_t color,float opacity) {
   unsigned alpha=(unsigned)((color>>24)&255);
   return (color&~(0xffULL<<24))|((uint64_t)(alpha*cubeClamp(opacity))<<24);
+}
+void uiCubeOptionsFooterDraw(const char *action,float opacity) {
+  ButtonPrompt prompts[]={{ICON_CIRCLE,lunaText("Back")},{ICON_CROSS,lunaText(action)}};
+  PromptBar bar={NULL,prompts,2};
+  drawPromptBarTransition(20,gsGlobal->Height-footerHeight+8,gsGlobal->Width-20,gsGlobal->Height,
+      8,FontMainColor,bar,bar,1,opacity);
+}
+void uiCubeOptionsFooterTransitionDraw(float libraryProgress,float pageProgress) {
+  ButtonPrompt library[]={{ICON_CIRCLE,lunaText("View")},{ICON_CROSS,lunaText("Launch")},
+      {ICON_START,lunaText("Menu")},{ICON_R1,lunaText("More")}};
+  ButtonPrompt hub[]={{ICON_CIRCLE,lunaText("Back")},{ICON_CROSS,lunaText("Open")}};
+  ButtonPrompt page[]={{ICON_CIRCLE,lunaText("Back")},{ICON_CROSS,lunaText("Change")}};
+  PromptBar from={NULL,library,4},to={NULL,hub,2};
+  float progress=cubeClamp(libraryProgress);
+  if(progress>=1) {
+    from=to;to=(PromptBar){NULL,page,2};progress=pageProgress;
+  }
+  drawPromptBarTransition(20,gsGlobal->Height-footerHeight+8,gsGlobal->Width-20,gsGlobal->Height,
+      8,FontMainColor,from,to,progress,1);
 }
 void uiCubeSubmenuFocusDraw(int left,int top,int right,int bottom,float opacity) {
   gsKit_prim_sprite(gsGlobal,left,top,right,bottom,6,
@@ -39,33 +126,43 @@ void uiCubeSubmenuPageDraw(const LunaCubePage *page,int selected,
   uint64_t bright=cubeColor(240,250,255,opacity);
   drawTextWindow(left,(int)cubeSY(22),right,(int)cubeSY(22)+line,6,ink,
                  ALIGN_LEFT,lunaText(page->sectionTitle?page->sectionTitle:"System Configuration"));
-  drawTextWindow(left,(int)cubeSY(60),right,(int)cubeSY(60)+line,6,
+  /* Subtitle pages need both header lines clear of the pane's top rim. */
+  int titleY=(int)cubeSY(50);
+  drawTextWindow(left,titleY,right,titleY+line,6,
                  cubeColor(232,232,70,opacity),ALIGN_LEFT,lunaText(page->title));
   if(page->subtitle) {
-    float width=getLineWidth(page->subtitle),available=right-left;
-    drawTextLineScaledCrisp(left,(int)cubeSY(86),right,7,
-        width>available?available/width:1,ink,page->subtitle);
+    uiCubeMenuTextDraw(left,(int)cubeSY(74),right,7,ink,page->subtitle,0);
   }
   /* The expanded crystal supplies the pane's glass and rim. */
   gsKit_prim_sprite(gsGlobal,cubeSX(22),cubeSY(99),cubeSX(518),cubeSY(383),5,
       glassPresetColor(5,13,34,(int)(48*opacity)));
   if(page->count>0)uiCubeSubmenuFocusDraw(left-4,focusY-1,right-10,
       focusY+(page->stackedValues?2*line:line)+2,opacity);
+  int maxLabel=0,maxValue=0;
+  if(!page->stackedValues&&page->value) {
+    for(int row=first;row<page->count&&row<first+visible;row++) {
+      const char *label=lunaText(page->label(page->context,row));
+      int width=label?(int)ceilf(getLineDrawWidth(label)):0;
+      if(width>maxLabel)maxLabel=width;
+      const char *value=lunaText(page->value(page->context,row));
+      width=value?(int)ceilf(getLineDrawWidth(value)):0;
+      if(width>maxValue)maxValue=width;
+    }
+  }
+  int content=right-left-16;
+  int valueSpace=(int)fminf(maxValue,fmaxf(content/2,content-maxLabel-16));
+  int valueLeft=right-12-valueSpace;
+  int nameRight=valueSpace?valueLeft-16:right-12;
   for(int row=first;row<page->count&&row<first+visible;row++) {
     const char *label=lunaText(page->label(page->context,row));
     const char *value=page->value?lunaText(page->value(page->context,row)):NULL;
-    int valueWidth=value&&value[0]?(int)getLineWidth(value)+12:0;
-    int nameRight=right-12-(page->stackedValues?0:valueWidth),available=nameRight-left-8;
-    float natural=getLineWidth(label),scale=natural>0?fminf(1,available/natural):1;
     uint64_t color=row==selected?bright:ink;
     int rowY=top+(row-first)*step;
-    if(scale>0)drawTextLineScaledCrisp(left+4,rowY,nameRight,7,scale,color,label);
-    if(valueWidth) {
+    uiCubeMenuTextDraw(left+4,rowY,nameRight,7,color,label,0);
+    if(value&&value[0]) {
       if(page->stackedValues) {
-        float width=getLineWidth(value),space=right-left-24;
-        drawTextLineScaledCrisp(left+12,rowY+line,right-12,7,
-            width>space?space/width:1,color,value);
-      } else drawTextWindow(nameRight+8,rowY,right-12,rowY+line,7,color,ALIGN_RIGHT,value);
+        uiCubeMenuTextDraw(left+12,rowY+line,right-12,7,color,value,0);
+      } else uiCubeMenuTextDraw(valueLeft,rowY,right-12,7,color,value,1);
     }
   }
   if(page->count==0)drawTextWindow(left+4,top,right,top+line,7,ink,
@@ -74,13 +171,12 @@ void uiCubeSubmenuPageDraw(const LunaCubePage *page,int selected,
                                      page->count,first,visible,7);
   const char *description=page->description&&page->count>0?
       page->description(page->context,selected):page->status;
-  if(description)drawTextWindow(left,(int)cubeSY(393),(int)cubeSX(608),
-      (int)cubeSY(425),7,ink,ALIGN_LEFT,lunaText(description));
-  ButtonPrompt prompts[]={{ICON_DPAD,lunaText("Select")},
-      {ICON_CROSS,lunaText(page->adjust?"Change":"Select")},{ICON_CIRCLE,lunaText("Back")},
-      {ICON_SQUARE,lunaText(page->testLabel?page->testLabel:"")}};
-  drawPromptBar(left,(int)cubeSY(426),(int)cubeSX(608),(int)cubeSY(464),7,ink,
-                (PromptBar){NULL,prompts,page->testLabel?4:3});
+  uiCubeMenuHelpDraw(left,(int)cubeSX(608),ink,lunaText(description));
+  if(!page->libraryFooter) {
+    ButtonPrompt prompts[]={{ICON_DPAD,lunaText("Navigate")},
+        {ICON_CROSS,lunaText(page->adjust?"Change":page->value?"Select":"Open")},{ICON_CIRCLE,lunaText("Back")}};
+    uiCubeSubmenuFooterDraw(&(PromptBar){NULL,prompts,3},opacity);
+  }
 }
 static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCubeHub *hub,const LunaCubeSubmenu *submenu) {
   const char *const *labels=hub->labels;
@@ -127,47 +223,55 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
   if(m->submenuOpen)cubeGlassDraw(&scene[m->selected%CUBE_COUNT],camera);
   cubeRestoreGlassState();
   drawLunaLogo(cubeSX(60),cubeSY(20),cubeSX(78),6,cubeColor(185,210,235,text));
-  cubeText(175,128,cubeColor(232,232,70,text),lunaText(hub->title));
+  uiCubeMenuTextDraw((int)cubeSX(60),(int)cubeSY(128),(int)cubeSX(310),6,
+      cubeColor(232,232,70,text),lunaText(hub->title),0);
   if(status)cubeText(320,53,cubeColor(215,229,244,text),status);
   if(hub->subtitle)drawTextWindow((int)cubeSX(25),(int)cubeSY(65),(int)cubeSX(615),
       (int)cubeSY(112),6,cubeColor(215,229,244,text),ALIGN_HCENTER,hub->subtitle);
   const int listTop=(int)cubeSY(167);
   const int rowStep=getFontLineHeight()+getFontLineHeight()/3;
-  const int listCenter=(int)cubeSX(175),rowRight=(int)cubeSX(300);
+  const int listLeft=(int)cubeSX(60),rowRight=(int)cubeSX(300);
   int visible=(int)((cubeSY(352)-listTop)/rowStep);
   if(visible<1)visible=1;
   if(visible>m->itemCount)visible=m->itemCount;
   int first=m->selected>=visible?m->selected-visible+1:0;
   const char *selectedLabel=lunaText(labels[m->selected]);
-  const int selectedLeft=listCenter-getLineWidth(selectedLabel)/2;
-  int textRight=selectedLeft+getLineWidth(selectedLabel);
+  const int selectedLeft=listLeft;
+  int textRight=selectedLeft+(int)ceilf(getLineDrawWidth(selectedLabel));
   if(textRight>rowRight-12)textRight=rowRight-12;
   if(text>.01f)drawPSBBNFocusGlow(selectedLeft,(int)(listTop+rowStep*fmaxf(0,fminf(visible-1,m->row-first))),rowRight,textRight);
   for(int i=first;i<first+visible;i++) {
     float alpha=text*(i==m->selected?1:.65f);
     const char *label=lunaText(labels[i]);
     uint64_t color=i==m->selected?GS_SETREG_RGBA(0xF0,0xFA,0xFF,0x80):HeaderTextColor;
-    drawText(listCenter-getLineWidth(label)/2,listTop+rowStep*(i-first),6,rowRight,0,
-        cubeTextFade(color,alpha),label);
+    uiCubeMenuTextDraw(listLeft,listTop+rowStep*(i-first),rowRight-12,6,
+        cubeTextFade(color,alpha),label,0);
   }
-  ButtonPrompt prompts[]={{ICON_DPAD,lunaText("Select")},{ICON_CROSS,lunaText("Open")},
-      {ICON_CIRCLE,lunaText("Back")},{ICON_SQUARE,lunaText(hub->testLabel?hub->testLabel:"")}};
+  ButtonPrompt prompts[]={{ICON_DPAD,lunaText("Navigate")},{ICON_CROSS,lunaText("Open")},
+      {ICON_CIRCLE,lunaText("Back")}};
   ButtonPrompt confirm[]={{ICON_CROSS,lunaText("Confirm")},{ICON_CIRCLE,lunaText("Cancel")}};
   if(confirming&&hub->confirmText)
     cubeText(175,365,cubeColor(240,250,255,text),lunaText(hub->confirmText));
   else if(hub->description) {
     const char *description=hub->description(hub->context,m->selected);
-    if(description)drawTextWindow((int)cubeSX(25),(int)cubeSY(381),(int)cubeSX(615),
-        (int)cubeSY(424),6,cubeColor(190,211,232,text),ALIGN_HCENTER,lunaText(description));
+    uiCubeMenuHelpDraw((int)cubeSX(32),(int)cubeSX(608),cubeColor(190,211,232,text),lunaText(description));
   }
-  /* Controller artwork has its own alpha convention. Hand the prompt row to
-   * the submenu when its contents appear instead of drawing both sets of icons. */
-  if(!m->submenuOpen||m->submenuAge<=CUBE_SUBMENU_MS*.28f)
-    drawPromptBar((int)cubeSX(155),(int)cubeSY(426),(int)cubeSX(580),(int)cubeSY(456),4,
-        cubeColor(185,210,235,text),(PromptBar){NULL,confirming?confirm:prompts,confirming?2:hub->testLabel?4:3});
+  cubeFooterCollect=!hub->libraryFooter&&!cubeBackdropOnly;
+  if(cubeFooterCollect)uiCubeSubmenuFooterDraw(
+      &(PromptBar){NULL,confirming?confirm:prompts,confirming?2:3},overall);
   if(m->submenuOpen&&submenu) {
     float opacity=cubeSmooth((m->submenuAge/CUBE_SUBMENU_MS-.28f)/.72f);
     if(opacity>0)submenu->draw(submenu->context,opacity);
+  }
+  if(cubeFooterCollect)drawMenuPromptBar(&cubeFooterTransition,(int)cubeSX(32),(int)cubeSY(426),
+      (int)cubeSX(608),(int)cubeSY(464),7,HeaderTextColor,
+      (PromptBar){NULL,cubeFooterDesired.items,cubeFooterDesired.count},overall);
+  cubeFooterCollect=0;
+  // One footer owns the whole handoff, independent of the scene's text fades.
+  if(hub->libraryFooter && !cubeBackdropOnly) {
+    float pageProgress=cubeSmooth((submenuProgress-.28f)/.72f);
+    if(hub->footer)hub->footer(hub->context,pageProgress);
+    else uiCubeOptionsFooterTransitionDraw(overall,pageProgress);
   }
   cubeSceneScale=1;cubeSceneOffsetX=cubeSceneOffsetY=0;
   gsKit_set_primalpha(gsGlobal,savedBlend,savedPabe);gsGlobal->PrimAlphaEnable=savedAlpha;

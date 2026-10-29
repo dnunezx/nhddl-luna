@@ -1,4 +1,3 @@
-#include "ui/artwork_slice.h"
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/texture_budget.h"
 #include "ui/collection_art.h"
@@ -36,10 +35,6 @@ int fitTextureToVram(const GSGLOBAL *gs, GSTEXTURE *texture) {
   const uint8_t *source = (const uint8_t *)texture->Mem;
   // Area averaging preserves detail and the already-normalized alpha channel.
   for (int y = 0; y < height; y++) {
-    if (artworkSliceCheckpoint()) {
-      free(scaled);
-      return -1;
-    }
     const int top = y * texture->Height / height;
     const int bottom = (y + 1) * texture->Height / height;
     for (int x = 0; x < width; x++) {

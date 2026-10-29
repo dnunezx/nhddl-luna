@@ -101,7 +101,6 @@ int main(int argc, char *argv[]) {
   if (res)
     goto fail;
 
-
   titles = storageRefresh(NULL);
   if (titles == NULL)
     goto fail;
@@ -132,13 +131,12 @@ int main(int argc, char *argv[]) {
     }
     ambientStart(loadAmbientSoundEnabled(audioTarget));
 
-    UILibraryView startupView = loadLastLibraryView(audioTarget);
+    UILibraryView startupView = loadStartupLibraryView(audioTarget);
     uint32_t enabledViews = loadEnabledLibraryViews(audioTarget);
     if (!(enabledViews & (1U << startupView)))
       startupView = lunaNavNextView(startupView, enabledViews);
-    if (startupView == UI_VIEW_PSBBN && loadLastGameMode(audioTarget) == TARGET_ALL) {
-      // Keep the splash until current + six upcoming games are resolved.
-      // Previous-only covers can finish after Collection is revealed.
+    if (lunaNavIsCollection(startupView) && loadLastGameMode(audioTarget) == TARGET_ALL) {
+      // Prepare the current cover and six upcoming games behind the splash.
       setCollectionArtForeground(1);
       preparedCollectionIdx = audioTarget->idx;
       refreshCollectionCovers(titles, preparedCollectionIdx, -1);
@@ -172,7 +170,11 @@ int main(int argc, char *argv[]) {
   freeTargetList(titles);
   syncDeviceMap();
   freeDeviceMapEntries(deviceModeMap);
-  return 0;
+  res = exitToBrowser();
+  init_scr();
+  logString("\n\nERROR: Could not return to the PS2 Browser: %d\nPlease restart the console.\n", res);
+  // Do not fall through to the generic exit with an incomplete IOP reset.
+  while (1) sleep(1);
 
 fail:
   ambientStop();

@@ -78,10 +78,11 @@ set(SOURCES
   src/ui/view_state.c
   src/ui/appearance.c
   src/ui/art_cache.c
-  src/ui/artwork_slice.c
   src/ui/collection_art.c
     src/ui/view_classic.c
     src/ui/view_collection.c
+    src/ui/collection_v2_pose.c
+    src/ui/view_collection_v2.c
   src/ui/view_orbit.c
   src/ui/view_3d.c
   src/ui/view_scroll.c

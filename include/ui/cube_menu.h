@@ -1,5 +1,13 @@
 #ifndef LUNA_CUBE_MENU_H
 #define LUNA_CUBE_MENU_H
+#include <stdint.h>
+
+// Native-size menu text, fitted at UTF-8 boundaries with an ellipsis when needed.
+void uiCubeMenuTextDraw(int left, int top, int right, int z, uint64_t color,
+                        const char *text, int rightAligned);
+void uiCubeMenuHelpDraw(int left,int right,uint64_t color,const char *text);
+struct PromptBar;
+void uiCubeSubmenuFooterDraw(const struct PromptBar *bar,float opacity);
 enum { LUNA_CUBE_BACK, LUNA_CUBE_VMC, LUNA_CUBE_STORAGE,
        LUNA_CUBE_LANGUAGE, LUNA_CUBE_EXIT, LUNA_CUBE_SHUTDOWN, LUNA_CUBE_DEFAULTS };
 typedef struct {
@@ -13,7 +21,7 @@ typedef struct {
   const char *status;
   const char *sectionTitle;
   const char *subtitle;
-  const char *testLabel;
+  int libraryFooter;
   int stackedValues;
 } LunaCubePage;
 enum { LUNA_CUBE_SUBMENU_STAY, LUNA_CUBE_SUBMENU_BACK, LUNA_CUBE_SUBMENU_DONE };
@@ -35,15 +43,19 @@ typedef struct {
   void *context;
   const char *(*description)(void *context, int row);
   const char *subtitle;
-  const char *testLabel;
+  int libraryFooter;
   // Optional live scene. Return nonzero once the closing scene is restored.
   int (*background)(void *context, int closing);
   int (*input)(void *context, int buttons);
+  void (*footer)(void *context, float pageProgress);
 } LunaCubeHub;
 // One crystal per row, up to six. Returns the chosen row, or -1 for Back.
 int uiCubeHubLoop(int *selected, const char *status, const LunaCubeHub *hub);
 // Redraw the active hub or page beneath a blocking picker, without presenting.
 void uiCubeHubDrawBackdrop(void);
+// Game Options uses the library footer's margins, height, and prompt spacing.
+void uiCubeOptionsFooterDraw(const char *action, float opacity);
+void uiCubeOptionsFooterTransitionDraw(float libraryProgress, float pageProgress);
 typedef struct {
   int selected,first,fromY,toY;
   unsigned int startMs;
@@ -53,7 +65,7 @@ typedef struct {
 void uiCubeSubmenuPageDraw(const LunaCubePage *page, int selected,
                          LunaCubePageFocus *focus, float opacity);
 void uiCubeSubmenuFocusDraw(int left, int top, int right, int bottom, float opacity);
-// The first four settings rows supply VMC, Storage, Language, and Game Defaults.
+// The first four settings rows supply VMC, Storage, Language, and Defaults.
 int uiCubeSettingsLoop(int *selected, const char *status,
                       const LunaCubeSubmenu submenus[4]);
 #endif

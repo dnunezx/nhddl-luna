@@ -125,11 +125,11 @@ static const char *const gameRowLabels[LUNA_GAME_ROW_COUNT] = {
     "EE: Unhook syscalls", "IOP: Emulate DVD-DL",
     "IOP: Fix game buffer overrun", "Launch arguments",
     "VMC slot 1", "VMC slot 2",
-    "Video out", "Field flipping",
+    "Video output", "Field flipping",
     "Show PS2 logo", "Debug colors", "Game core",
     "Accurate reads", "Synchronous reads", "Unhook syscalls",
     "Skip videos", "Emulate DVD-DL", "Disable IGR", "Disable IGR",
-    "Video out", "Field flipping", "Code Validation", "HDTV Fix"};
+    "Video output", "Field flipping", "Code validation", "HDTV fix"};
 
 static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Use faster IOP disc reads for this game.",
@@ -158,7 +158,7 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Send low-resolution gameplay as 480i (NTSC) or 576i (PAL) for TVs and HDMI adapters. Off by default."};
 
 static const char *const gameSectionLabels[GAME_SECTION_COUNT] = {
-    "Virtual memory cards", "Game core", "Compatibility", "Video", "Cheats", "Launch"};
+    "Virtual Memory Cards", "Game Core", "Compatibility", "Video", "Cheats", "Launch"};
 static const LunaGameRow gameSectionRows[GAME_SECTION_COUNT][5] = {
     {LUNA_GAME_VMC_SLOT1, LUNA_GAME_VMC_SLOT2},
     {LUNA_GAME_CORE},
@@ -215,29 +215,6 @@ static void presentOptionsFrame(void) {
   gsKit_finish();
   gsKit_sync_flip(gsGlobal);
   usleep(1000);
-}
-
-static void drawOptionsFooter(int gamePage, int argumentList, int placeholder, const char *actionLabel,
-                              int gameDetail) {
-  const int top = gsGlobal->Height - footerHeight;
-  const int width = gsGlobal->Width;
-  const int slot = width / 4;
-  if (!placeholder) {
-    const ButtonPrompt action[] = {
-        {ICON_CROSS, argumentList ? lunaText("Toggle") : actionLabel ? actionLabel : lunaText("Change")}};
-    drawPromptBar(8, top, slot, gsGlobal->Height, 0, HeaderTextColor,
-                  (PromptBar){NULL, action, 1});
-    if (gamePage || argumentList) {
-      const ButtonPrompt test[] = {{ICON_SQUARE, lunaText("Test")}};
-      drawPromptBar(slot, top, 2 * slot, gsGlobal->Height, 0,
-                    HeaderTextColor, (PromptBar){NULL, test, 1});
-    }
-  }
-  const ButtonPrompt back[] = {
-      {ICON_TRIANGLE, argumentList || gameDetail ? lunaText("Back") :
-                      lunaText("Close")}};
-  drawPromptBar(3 * slot, top, width - 8, gsGlobal->Height, 0,
-                HeaderTextColor, (PromptBar){NULL, back, 1});
 }
 
 static void drawOptionsTextRow(int x, int y, int right, int selected,
@@ -846,7 +823,7 @@ static int uiArgumentListLoop(OptionsMenuState *state) {
       drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
                      gsGlobal->Height - footerHeight, 0, HeaderTextColor,
                      ALIGN_LEFT, lunaText("[G] Inherited from global settings"));
-    drawOptionsFooter(1, 1, 0, NULL, 0);
+    uiCubeOptionsFooterDraw("Toggle",1);
     if (saveError)
       drawTextWindow(baseX, menuBottom, gsGlobal->Width - baseX,
                      gsGlobal->Height - footerHeight, 0, ErrorTextColor, ALIGN_HCENTER,
@@ -857,7 +834,7 @@ static int uiArgumentListLoop(OptionsMenuState *state) {
     int input = waitForInput(-1);
     if (input & PAD_SQUARE) {
       if (uiLaunchTitleWithCheats(target, titleArguments, cheats)) return -1;
-    } else if (input & PAD_TRIANGLE) {
+    } else if (input & (PAD_CIRCLE | PAD_TRIANGLE)) {
       return changed ? 2 : 0;
     }
     if (!curArgument)

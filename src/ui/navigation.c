@@ -268,12 +268,13 @@ int lunaNavRandomTarget(int total, int selectedIndex, uint32_t randomSeed) {
 }
 
 const UILibraryView lunaViewCycleOrder[UI_VIEW_COUNT] = {
-    UI_VIEW_CLASSIC, UI_VIEW_PSBBN, UI_VIEW_ORBIT,
+    UI_VIEW_CLASSIC, UI_VIEW_PSBBN, UI_VIEW_COLLECTION_V2, UI_VIEW_ORBIT,
     UI_VIEW_3D, UI_VIEW_ORBS};
 
 const char *lunaNavViewLabel(UILibraryView view) {
   static const char *const labels[UI_VIEW_ID_LIMIT] = {
       [UI_VIEW_CLASSIC] = "List", [UI_VIEW_PSBBN] = "Collections",
+      [UI_VIEW_COLLECTION_V2] = "Collections Version 2",
       [UI_VIEW_ORBIT] = "Orbit",
       [UI_VIEW_ORBS] = "Scroll", [UI_VIEW_3D] = "3D"};
   return view >= UI_VIEW_CLASSIC && view < UI_VIEW_ID_LIMIT && lunaText(labels[view]) ?

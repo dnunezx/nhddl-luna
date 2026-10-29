@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
 #include "ui/cube_menu.h"
 #define CUBE_PI 3.14159265359f
 #define CUBE_ITEMS 6
@@ -136,6 +137,7 @@ static void cubeStep(CubeMenu *m,uint32_t now) {
 #include <libpad.h>
 #include <dmaKit.h>
 #include <unistd.h>
+static int cubeBackdropOnly;
 #include "cube_draw.inc"
 static CubeMenu *activeCubeMenu;
 static const LunaCubeHub *activeCubeHub;
@@ -144,8 +146,11 @@ static const char *activeCubeStatus;
 static int activeCubeConfirm;
 
 void uiCubeHubDrawBackdrop(void) {
+  int saved=cubeBackdropOnly;
+  cubeBackdropOnly=1;
   if(activeCubeMenu)cubeDraw(activeCubeMenu,activeCubeStatus,activeCubeConfirm,
                              activeCubeHub,activeCubeSubmenu);
+  cubeBackdropOnly=saved;
 }
 
 static void cubeHubClose(void) {
@@ -220,8 +225,8 @@ int uiCubeHubLoop(int *selected,const char *status,const LunaCubeHub *hub) {
 
 int uiCubeSettingsLoop(int *selected,const char *status,
                        const LunaCubeSubmenu submenus[4]) {
-  static const char *const labels[]={"Virtual Memory Cards","Storage Devices",
-    "Language","Game Defaults","Exit LUNA","Shutdown"};
+  static const char *const labels[]={"Memory Cards","Storage",
+    "Language","Defaults","Exit LUNA","Power Off"};
   static const int actions[]={LUNA_CUBE_VMC,LUNA_CUBE_STORAGE,LUNA_CUBE_LANGUAGE,
                               LUNA_CUBE_DEFAULTS,LUNA_CUBE_EXIT,LUNA_CUBE_SHUTDOWN};
   const LunaCubeHub hub={.title="System Configuration",.labels=labels,.count=CUBE_ITEMS,

@@ -1,4 +1,3 @@
-#include "ui/artwork_slice.h"
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "devices/devices.h"
 #include "ui/art_cache.h"
@@ -15,13 +14,13 @@
 #include <stdio.h>
 #include <string.h>
 
+#define COLLECTION_ART_FOREGROUND_PRIORITY 0x1f
+#define COLLECTION_ART_BACKGROUND_PRIORITY 0x22
 #define PSBBN_THUMBNAIL_SIZE 64
 #define PSBBN_PREVIEW_SIZE 128
 #define CASE_THUMBNAIL_WIDTH 64
 #define CASE_THUMBNAIL_HEIGHT 96
 #define GRID_THUMBNAIL_CACHE_COUNT (GRID_PAGE_BUFFERS * GRID_PAGE_SIZE)
-#define COLLECTION_ART_FOREGROUND_PRIORITY 0x1f
-#define COLLECTION_ART_BACKGROUND_PRIORITY 0x22
 
 typedef struct {
   uint8_t r, g, b, a;
@@ -444,7 +443,7 @@ int artCacheInit(void) {
   thread.stack = collectionArtStack;
   thread.stack_size = sizeof(collectionArtStack);
   thread.gp_reg = &_gp;
-  // Hidden preloads yield to the UI (0x20), audio and Classic art (0x21).
+  // Hidden preloads yield to the interface, music and List artwork.
   thread.initial_priority = COLLECTION_ART_BACKGROUND_PRIORITY;
   collectionArtStopping = 0;
   collectionArtThreadId = CreateThread(&thread);
@@ -719,45 +718,39 @@ static void releasePSBBNCoverCacheEntry(int cacheIdx) {
 // PSBBN jacket art fades into the scene instead of sitting inside a hard
 // rectangular card. Apply the feather once to the decoded EE-RAM pixels so it
 // is inherited by both the focused texture and the runtime thumbnails.
-static int featherPSBBNCoverEdges(GSTEXTURE *texture) {
+static void featherPSBBNCoverEdges(GSTEXTURE *texture) {
   PSBBNPixel *pixels = (PSBBNPixel *)texture->Mem;
   int shortestSide = (texture->Width < texture->Height) ? texture->Width : texture->Height;
   int featherWidth = shortestSide * 7 / 100;
 
   if (pixels == NULL || featherWidth < 2)
-    return 0;
-
-  // Every pixel at the same edge distance uses the same integer smoothstep.
-  // The decoder caps dimensions at 1024, so this table uses at most 284 bytes.
-  int featherByDistance[featherWidth];
-  for (int distance = 0; distance < featherWidth; distance++) {
-    int progress = distance * 1000 / featherWidth;
-    featherByDistance[distance] =
-        (int)(((int64_t)progress * progress * (3000 - 2 * progress)) / 1000000LL);
-  }
+    return;
 
   for (int y = 0; y < texture->Height; y++) {
-    if (artworkSliceCheckpoint()) return -1;
     int edgeY = y;
     if (texture->Height - 1 - y < edgeY)
       edgeY = texture->Height - 1 - y;
 
-    PSBBNPixel *row = pixels + y * texture->Width;
-    // Left and right strips never overlap: the feather is 7% of the short side.
-    for (int x = 0; x < featherWidth; x++) {
-      int feather = featherByDistance[x < edgeY ? x : edgeY];
-      int right = texture->Width - 1 - x;
-      row[x].a = 128 - (((128 - row[x].a) * feather) / 1000);
-      row[right].a = 128 - (((128 - row[right].a) * feather) / 1000);
-    }
-    // Only top/bottom strips change the middle; interior rows need no visit.
-    if (edgeY < featherWidth) {
-      int feather = featherByDistance[edgeY];
-      for (int x = featherWidth; x < texture->Width - featherWidth; x++)
-        row[x].a = 128 - (((128 - row[x].a) * feather) / 1000);
+    for (int x = 0; x < texture->Width; x++) {
+      int edgeDistance = x;
+      int inverseAlpha;
+      int progress;
+      int feather;
+
+      if (texture->Width - 1 - x < edgeDistance)
+        edgeDistance = texture->Width - 1 - x;
+      if (edgeY < edgeDistance)
+        edgeDistance = edgeY;
+      if (edgeDistance >= featherWidth)
+        continue;
+
+      // Smoothstep avoids a visible straight threshold at the inside edge.
+      progress = edgeDistance * 1000 / featherWidth;
+      feather = (int)(((int64_t)progress * progress * (3000 - 2 * progress)) / 1000000LL);
+      inverseAlpha = pixels[y * texture->Width + x].a;
+      pixels[y * texture->Width + x].a = 128 - (((128 - inverseAlpha) * feather) / 1000);
     }
   }
-  return 0;
 }
 
 static PSBBNPixel *createArtThumbnail(const PSBBNPixel *source, int width, int height,
@@ -768,10 +761,6 @@ static PSBBNPixel *createArtThumbnail(const PSBBNPixel *source, int width, int h
     return NULL;
   memset(thumbnail, 0, bytes);
   for (int y = 0; y < thumbHeight; y++) {
-    if (artworkSliceCheckpoint()) {
-      free(thumbnail);
-      return NULL;
-    }
     int sourceY1 = y * height / thumbHeight;
     int sourceY2 = (y + 1) * height / thumbHeight;
     if (sourceY2 <= sourceY1)
@@ -1017,7 +1006,7 @@ static void cancelObsoleteCollectionArtJob(PSBBNArtJob *job, TargetList *titles,
         collectionArtReuseRank(&collectionReuseCache, job->path) >= 0)
       return;
   }
-  artworkSliceCancelJob(&job->cancelled);
+  job->cancelled = 1;
 }
 
 static void cancelCollectionArtJobs(void) {
@@ -1029,20 +1018,22 @@ static void decodePSBBNArtJob(PSBBNArtJob *job) {
   GSTEXTURE decoded = {0};
   PSBBNPixel *preview = NULL, *thumbnail = NULL;
   job->result = -1;
-  if (artworkSliceJobBegin(job == &collectionArtJob || job == &collectionFarArtJob,
-                           &job->cancelled))
+  if (job->cancelled ||
+      decodeCollectionPNGTextureRGBA(gsGlobal, &decoded, job->path, &job->cancelled) != 0 ||
+      job->cancelled || decoded.Mem == NULL || decoded.Width <= 0 || decoded.Height <= 0)
     goto finished;
-  if (decodePNGTextureRGBA(gsGlobal, &decoded, job->path) != 0 ||
-      decoded.Mem == NULL || decoded.Width <= 0 || decoded.Height <= 0 ||
-      fitPSBBNCoverToBudget(&decoded) < 0 || featherPSBBNCoverEdges(&decoded) < 0)
+  if (fitPSBBNCoverToBudget(&decoded) < 0 || job->cancelled)
+    goto finished;
+  featherPSBBNCoverEdges(&decoded);
+  if (job->cancelled)
     goto finished;
   preview = createPSBBNThumbnail((const PSBBNPixel *)decoded.Mem,
                                   decoded.Width, decoded.Height, PSBBN_PREVIEW_SIZE);
-  if (preview == NULL)
+  if (preview == NULL || job->cancelled)
     goto finished;
   thumbnail = createPSBBNThumbnail(preview, PSBBN_PREVIEW_SIZE, PSBBN_PREVIEW_SIZE,
                                    PSBBN_THUMBNAIL_SIZE);
-  if (thumbnail == NULL || artworkSliceCheckpoint())
+  if (thumbnail == NULL || job->cancelled)
     goto finished;
 
   job->sourcePixels = decoded.Mem;
@@ -1055,11 +1046,9 @@ static void decodePSBBNArtJob(PSBBNArtJob *job) {
   decoded.PSM = GS_PSM_CT32;
   decoded.Filter = GS_FILTER_LINEAR;
   decoded.Delayed = 1;
-  decoded.Vram = 0;
-  decoded.VramClut = 0;
+  decoded.Vram = decoded.VramClut = 0;
   job->texture = decoded;
   job->result = 0;
-
 finished:
   if (job->result != 0) {
     free(thumbnail);
@@ -1067,8 +1056,6 @@ finished:
     free(decoded.Mem);
     free(decoded.Clut);
   }
-  // End the worker context before publishing; only the UI can reuse this job.
-  artworkSliceJobEnd();
   __asm__ __volatile__("" ::: "memory");
   job->state = 2;
 }
@@ -1116,7 +1103,6 @@ static void clearPSBBNArtJob(PSBBNArtJob *job) {
 
 static void stopCollectionArtWorker(void) {
   cancelObsoleteCollectionArtJob(&collectionArtJob, NULL, 0);
-  artworkSliceDisable();
   if (collectionArtThreadId >= 0) {
     collectionArtStopping = 1;
     SignalSema(collectionArtWakeSema);
@@ -1134,7 +1120,6 @@ static void stopCollectionArtWorker(void) {
 
 void stopCollectionFarArtWorker(TargetList *titles, int selectedTitleIdx) {
   cancelObsoleteCollectionArtJob(&collectionFarArtJob, NULL, 0);
-  artworkSliceDisable();
   if (collectionFarArtThreadId >= 0) {
     collectionFarArtStopping = 1;
     SignalSema(collectionFarArtWakeSema);
@@ -1162,21 +1147,18 @@ void stopCollectionFarArtWorker(TargetList *titles, int selectedTitleIdx) {
 }
 
 void setCollectionArtForeground(int foreground) {
-  if (!foreground) artworkSliceDisable();
   foreground = foreground != 0;
   if (collectionArtForeground == foreground)
     return;
   collectionArtForeground = foreground;
   collectionPrefetchTitles = NULL;
   if (!foreground) {
-    if (collectionArtJob.prefetch) artworkSliceCancelJob(&collectionArtJob.cancelled);
-    if (collectionFarArtJob.prefetch) artworkSliceCancelJob(&collectionFarArtJob.cancelled);
+    if (collectionArtJob.prefetch) collectionArtJob.cancelled = 1;
+    if (collectionFarArtJob.prefetch) collectionFarArtJob.cancelled = 1;
     collectionArtReusePlan(&collectionReuseCache, NULL, 0);
   }
   const int priority = foreground ? COLLECTION_ART_FOREGROUND_PRIORITY :
                                     COLLECTION_ART_BACKGROUND_PRIORITY;
-  // Change existing threads too, so leaving Collection does not wait for a
-  // foreground decode. A retiring second job finishes at background priority.
   if (collectionArtThreadId >= 0)
     (void)ChangeThreadPriority(collectionArtThreadId, priority);
   if (collectionFarArtThreadId >= 0)
@@ -1239,8 +1221,8 @@ void releasePSBBNCovers(void) {
   // evicting distant covers rather than the selection and its moving partner.
   static const uint8_t releaseOrder[PSBBN_COVER_CACHE_COUNT] = {9, 8, 7, 0, 6, 1, 5, 2, 4, 3};
   collectionArtGeneration++;
-  cancelCollectionArtJobs();
   orbitArtGeneration++;
+  cancelCollectionArtJobs();
   for (int p = 0; p < PSBBN_COVER_CACHE_COUNT; p++)
     releasePSBBNCoverCacheEntry(releaseOrder[p]);
 }
@@ -1268,7 +1250,7 @@ void adoptOrbitCoversForCollection(void) {
 
 void adoptCollectionCoversForOrbit(void) {
   // Finished Collection jackets already occupy the same slots Orbit needs.
-  // Let Orbit request unfinished slots while obsolete Collection work cancels.
+  // Let Orbit request unfinished slots while a pending Collection decode winds down.
   collectionArtGeneration++;
   cancelCollectionArtJobs();
   for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++)
@@ -2466,8 +2448,12 @@ static void prioritizeCollectionVisibleArt(TargetList *titles, int selectedTitle
       if (collectionCoverPath(titles, selectedTitleIdx, i, path, sizeof(path)) == 0 &&
           !strcmp(path, job->path)) { visible = 1; break; }
     }
-    if (!visible) artworkSliceCancelJob(&job->cancelled);
+    if (!visible) job->cancelled = 1;
   }
+}
+
+int collectionArtBackgroundAvailable(void) {
+  return collectionArtThreadId >= 0;
 }
 
 static int serviceCollectionCoversInternal(TargetList *titles, int selectedTitleIdx,
@@ -2561,7 +2547,6 @@ void serviceCollectionCoversNavigating(TargetList *titles, int selectedTitleIdx,
 int serviceCollectionEntryCovers(TargetList *titles, int selectedTitleIdx) {
   return serviceCollectionCoversInternal(titles, selectedTitleIdx, 0, 0, 0, 1);
 }
-
 
 void serviceOrbitCovers(TargetList *titles, int selectedTitleIdx) {
   static const uint8_t priority[PSBBN_COVER_CACHE_COUNT] = {3, 4, 2, 5, 1, 6, 7, 8, 9, 0};

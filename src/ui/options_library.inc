@@ -27,6 +27,9 @@ static void drawOptionsLibraryScene(void *context, float progress) {
   gsGlobal->OffsetX+=(int)lroundf(offsetX*16.0f);
 #endif
   switch (s->view) {
+    case UI_VIEW_COLLECTION_V2:
+      drawPSBBNCollectionV2(s->titles,s->selected,s->flow,s->favorites,
+                            s->entry,s->now); break;
     case UI_VIEW_3D:
       drawCaseGrid(s->titles,s->selected,s->now); break;
     case UI_VIEW_PSBBN:

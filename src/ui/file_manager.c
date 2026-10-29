@@ -28,6 +28,7 @@
 #include <libpad.h>
 #include <libmc.h>
 #include <stdint.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -99,6 +100,7 @@ static struct {
   const int *trayCollapsed;
   const int *move;
 } fileManagerScene;
+static MenuPromptTransition fileFooterTransitions[6];
 
 static void drawFileManagerContents(const BrowserRoot *roots, int rootCount,
     const BrowserPane *browser, const CopyQueue *queue, int trayCollapsed,
@@ -219,8 +221,8 @@ static void drawFileManagerModal(int left, int top, int right, int bottom,
 static void drawFileManagerModalHelp(int left, int right, int bottom,
                                      PromptBar help) {
   int line = getFontLineHeight();
-  drawPromptBar(left + 14, bottom - line - 12, right - 14, bottom - 8, 14,
-                HeaderTextColor, help);
+  drawMenuPromptBar(&fileFooterTransitions[2],left + 14, bottom - line - 12, right - 14, bottom - 8, 14,
+                    HeaderTextColor, help,1);
 }
 
 static void drawFileManagerWrapped(const char *text, int left, int top,
@@ -253,10 +255,8 @@ static void drawFileManagerWrapped(const char *text, int left, int top,
 
 static void drawBrowserRow(int y, int selected, const char *name,
                            const char *detail, int right, int selectorY,
-                           int selectorRight) {
+                           int selectorRight,int detailWidth) {
   int left = keepoutArea + 30;
-  int lineHeight = getFontLineHeight();
-  int detailWidth = detail == NULL ? 0 : (int)getLineWidth(detail) + 14;
   if (selected) {
     if (selectorY >= 0) {
       if (selectorRight <= 0) {
@@ -272,14 +272,14 @@ static void drawBrowserRow(int y, int selected, const char *name,
       drawPSBBNFocusGlow(right - detailWidth, selectorY >= 0 ? selectorY : y,
                           right, right - 12);
   }
-  drawTextWindow(left + 18, y, right - detailWidth - 10, y + lineHeight,
+  uiCubeMenuTextDraw(left + 18, y, right - detailWidth - 10,
                  0, selected ? (selectorY >= 0 ? GS_SETREG_RGBA(0xF0, 0xFA, 0xFF, 0x80)
                                                 : FontMainColor) : HeaderTextColor,
-                 ALIGN_LEFT, name);
+                 name,0);
   if (detail != NULL)
-    drawTextWindow(right - detailWidth, y, right - 12, y + lineHeight,
+    uiCubeMenuTextDraw(right - detailWidth, y, right - 12,
                    0, selected ? ColorSelectedText : FontMainColor,
-                   ALIGN_RIGHT, detail);
+                   detail,1);
 }
 
 static void drawBrowserFrameSelected(const char *heading, const char *path,
@@ -297,6 +297,15 @@ static void drawBrowserFrameSelected(const char *heading, const char *path,
   int visible = (listBottom - listTop) / rowStep;
   if (visible < 1) visible = 1;
   int rowRight = right - (count > visible ? 14 : 0);
+  int detailWidth=0;
+  for(int index=first;index<count&&index<first+visible;index++) {
+    char name[PATH_MAX+3],detail[32];
+    if(row(index,name,sizeof(name),detail,sizeof(detail),context)&&detail[0]) {
+      int width=(int)ceilf(getLineDrawWidth(detail))+14;
+      if(width>detailWidth)detailWidth=width;
+    }
+  }
+  if(detailWidth>(rowRight-left-36)/2)detailWidth=(rowRight-left-36)/2;
   int selectorY = selector != NULL
       ? browserSelectorY(selector, selected, first,
                            listTop + (selected - first) * rowStep) : -1;
@@ -314,7 +323,7 @@ static void drawBrowserFrameSelected(const char *heading, const char *path,
     drawBrowserRow(listTop + (index - first) * rowStep,
                    index == selected, name, detail[0] ? detail : NULL,
                    rowRight, selectorY,
-                   selector != NULL && !selector->wordOnly ? rowRight : 0);
+                   selector != NULL && !selector->wordOnly ? rowRight : 0,detailWidth);
   }
   drawListScrollbar(right - 6, listTop, listTop + visible * rowStep,
                      count, first, visible, 6);
@@ -323,8 +332,8 @@ static void drawBrowserFrameSelected(const char *heading, const char *path,
                    0, HeaderTextColor, ALIGN_LEFT, lunaText("Nothing to show"));
   drawTextWindow(left + 18, listBottom, right, gsGlobal->Height - footerHeight,
                  0, HeaderTextColor, ALIGN_LEFT, status);
-  drawPromptBar(left + 18, gsGlobal->Height - footerHeight, right,
-                gsGlobal->Height, 0, HeaderTextColor, footer);
+  drawMenuPromptBar(&fileFooterTransitions[0],left + 18, gsGlobal->Height - footerHeight, right,
+                    gsGlobal->Height, 0, HeaderTextColor, footer,1);
   presentBrowserFrame();
 }
 
@@ -606,9 +615,9 @@ static int editBrowserText(const char *title, char *name, size_t capacity,
     const ButtonPrompt edit[] = {
         {ICON_CROSS, lunaText("Type")}, {ICON_SQUARE, lunaText("Space")},
         {ICON_TRIANGLE, lunaText("Delete")}, {ICON_R1, lunaText("Case")}};
-    drawPromptBar(left + 14, bottom - 2 * line - 16, right - 14,
+    drawMenuPromptBar(&fileFooterTransitions[3],left + 14, bottom - 2 * line - 16, right - 14,
                   bottom - line - 16, 15, HeaderTextColor,
-                  (PromptBar){NULL, edit, 4});
+                  (PromptBar){NULL, edit, 4},1);
     drawFileManagerModalHelp(left, right, bottom, PROMPT_TWO(
         ICON_START, lunaText("Save"), ICON_CIRCLE, lunaText("Cancel")));
     presentBrowserFrame();
@@ -1097,15 +1106,15 @@ static void drawFileManagerFooter(int left, int right, PromptBar footer) {
   gsKit_prim_sprite(gsGlobal, left + 8, top, right - 8, top + 1, 4,
                     glassPresetColor(0x55, 0x9A, 0xB8, 0x48));
   if (footer.note != NULL || footer.count > 0) {
-    drawPromptBar(left + 8, top + 6, right - 8, bottom, 0,
-                  HeaderTextColor, footer);
+    drawMenuPromptBar(&fileFooterTransitions[1],left + 8, top + 6, right - 8, bottom, 0,
+                      HeaderTextColor, footer,1);
     return;
   }
   const ButtonPrompt controls[] = {
       {ICON_CROSS, lunaText("Open")}, {ICON_SQUARE, lunaText("Select")},
       {ICON_TRIANGLE, lunaText("Options")}, {ICON_CIRCLE, lunaText("Back")}};
-  drawPromptBar(left + 8, top + 6, right - 8, bottom, 0,
-                HeaderTextColor, (PromptBar){NULL, controls, 4});
+  drawMenuPromptBar(&fileFooterTransitions[1],left + 8, top + 6, right - 8, bottom, 0,
+                    HeaderTextColor, (PromptBar){NULL, controls, 4},1);
 }
 
 
@@ -1318,8 +1327,8 @@ static void drawFileManagerContents(const BrowserRoot *roots, int rootCount,
     const ButtonPrompt ready[] = {
         {ICON_R1, lunaText("Tray")}, {ICON_START,
          fileManagerScene.move && *fileManagerScene.move ? lunaText("Move here") : lunaText("Paste here")}};
-    drawPromptBar(actionLeft, layout.summaryTop, right - 8, layout.summaryTop + line,
-                   5, HeaderTextColor, (PromptBar){NULL, ready, browser->root >= 0 ? 2 : 1});
+    drawMenuPromptBar(&fileFooterTransitions[5],actionLeft, layout.summaryTop, right - 8, layout.summaryTop + line,
+                   5, HeaderTextColor, (PromptBar){NULL, ready, browser->root >= 0 ? 2 : 1},1);
   }
   const char *message = status;
   if (progressPercent < 0 && footer.count == 0) {
@@ -2246,8 +2255,8 @@ static void viewTextFile(const char *path, char *status, size_t statusSize) {
     const ButtonPrompt controls[] = {
         {ICON_DPAD, lunaText("Scroll")}, {ICON_L1, lunaText("Page up")},
         {ICON_R1, lunaText("Page down")}, {ICON_CIRCLE, lunaText("Back")}};
-    drawPromptBar(left + 8, gsGlobal->Height - footerHeight, right - 8,
-        gsGlobal->Height - 8, 0, HeaderTextColor, (PromptBar){NULL, controls, 4});
+    drawMenuPromptBar(&fileFooterTransitions[4],left + 8, gsGlobal->Height - footerHeight, right - 8,
+        gsGlobal->Height - 8, 0, HeaderTextColor, (PromptBar){NULL, controls, 4},1);
     presentBrowserFrame();
     int input = readInput();
     if (input & (PAD_CIRCLE | PAD_TRIANGLE)) break;
@@ -2460,6 +2469,7 @@ static void uiFileManagerLoop(void) {
 #endif
 #include "vmc_manager.inc"
 
+#define STORAGE_MENU_ROWS 10
 static int storageRow(int index, char *name, size_t nameSize,
                       char *detail, size_t detailSize, void *context) {
   StorageSettings *settings = context;
@@ -2467,7 +2477,7 @@ static int storageRow(int index, char *name, size_t nameSize,
     ModeType mode = storageSourceMode(index);
     snprintf(name, nameSize, "%s", storageSourceName(index));
     if (!(settings->enabled & mode)) snprintf(detail, detailSize, lunaText("Disabled"));
-    else if (!(STORAGE_SETTINGS.enabled & mode)) snprintf(detail, detailSize, lunaText("Enable pending"));
+    else if (!(STORAGE_SETTINGS.enabled & mode)) snprintf(detail, detailSize, lunaText("Pending scan"));
     else if (STORAGE_STATUS[index].incomplete ||
              (STORAGE_STATUS[index].error && STORAGE_STATUS[index].games))
       snprintf(detail, detailSize, lunaText("Incomplete - %d games"), STORAGE_STATUS[index].games);
@@ -2518,37 +2528,43 @@ static void storageSubmenuDraw(void *context, float opacity) {
   uint64_t bright = storageInk(GS_SETREG_RGBA(0xF0, 0xFA, 0xFF, 0x80), opacity);
   drawTextWindow(left, storageY(22), right, storageY(22) + line, 6, ink,
                  ALIGN_LEFT, lunaText("System Configuration"));
-  drawTextWindow(left, storageY(60), right, storageY(60) + line, 6,
+  drawTextWindow(left, storageY(50), right, storageY(50) + line, 6,
                  storageInk(GS_SETREG_RGBA(232, 232, 70, 128), opacity),
                  ALIGN_LEFT, lunaText("Storage Devices"));
   /* The expanded crystal supplies the pane's glass and rim. */
   gsKit_prim_sprite(gsGlobal,storageX(22),storageY(99),storageX(518),storageY(383),5,
       glassPresetColor(5,13,34,(int)(48*opacity)));
   drawTextWindow(left, storageY(100), right, storageY(100) + line, 6, ink,
-                 ALIGN_LEFT, lunaText("Connected devices only"));
+                 ALIGN_LEFT, lunaText("Choose devices for your library."));
   int focusY = browserSelectorY(&editor->selector, editor->selected, first,
                                 top + (editor->selected - first) * step);
   uiCubeSubmenuFocusDraw(left-4,focusY-1,right-10,focusY+line+2,opacity);
-  for (int index = first; index < 10 && index < first + visible; index++) {
-    char name[PATH_MAX + 3], detail[32], fitted[PATH_MAX + 3];
+  int detailWidth=0,maxLabel=0;
+  for(int index=first;index<STORAGE_MENU_ROWS&&index<first+visible;index++) {
+    char name[PATH_MAX+3],detail[32];
+    storageRow(index,name,sizeof(name),detail,sizeof(detail),&editor->settings);
+    int width=(int)ceilf(getLineDrawWidth(name));if(width>maxLabel)maxLabel=width;
+    width=(int)ceilf(getLineDrawWidth(detail));if(width>detailWidth)detailWidth=width;
+  }
+  int content=right-left-16;
+  int maximum=content-maxLabel-16;if(maximum<content/2)maximum=content/2;
+  if(detailWidth>maximum)detailWidth=maximum;
+  int detailLeft=right-12-detailWidth;
+  for (int index = first; index < STORAGE_MENU_ROWS && index < first + visible; index++) {
+    char name[PATH_MAX + 3], detail[32];
     storageRow(index, name, sizeof(name), detail, sizeof(detail), &editor->settings);
-    int detailWidth = detail[0] ? (int)getLineWidth(detail) + 12 : 0;
-    int nameRight = right - 12 - detailWidth;
-    fileManagerFitText(name, nameRight - left - 8, fitted, sizeof(fitted), 0);
+    int nameRight = detailWidth ? detailLeft-16 : right-12;
     int y = top + (index - first) * step;
     uint64_t color = index == editor->selected ? bright : ink;
-    drawTextWindow(left + 4, y, nameRight, y + line, 7, color, ALIGN_LEFT, fitted);
-    if (detail[0]) drawTextWindow(nameRight + 8, y, right - 12, y + line, 7,
-                                 color, ALIGN_RIGHT, detail);
+    uiCubeMenuTextDraw(left+4,y,nameRight,7,color,name,0);
+    if(detail[0])uiCubeMenuTextDraw(detailLeft,y,right-12,7,color,detail,1);
   }
   if (opacity >= .999f)
-    drawListScrollbar(right - 6, top, top + visible * step, 10, first, visible, 7);
-  drawTextWindow(left, storageY(393), storageX(608), storageY(425), 7, ink,
-                 ALIGN_LEFT, editor->status);
-  const ButtonPrompt prompts[] = {{ICON_CROSS, lunaText("Select")},
+    drawListScrollbar(right - 6, top, top + visible * step, STORAGE_MENU_ROWS, first, visible, 7);
+  uiCubeMenuHelpDraw(left,storageX(608),ink,editor->status);
+  const ButtonPrompt prompts[] = {{ICON_DPAD, lunaText("Navigate")},{ICON_CROSS, lunaText("Select")},
       {ICON_SQUARE, lunaText("Rescan")}, {ICON_CIRCLE, lunaText("Back")}};
-  drawPromptBar(left, storageY(426), storageX(608), storageY(464), 7, ink,
-                (PromptBar){NULL, prompts, 3});
+  uiCubeSubmenuFooterDraw(&(PromptBar){NULL,prompts,4},opacity);
 }
 
 static int storageSubmenuInput(void *context, int input) {
@@ -2558,8 +2574,8 @@ static int storageSubmenuInput(void *context, int input) {
   int selected = editor->selected;
   BrowserSelector *selector = &editor->selector;
     if (input & PAD_CIRCLE) return LUNA_CUBE_SUBMENU_BACK; // Discard pending edits.
-    if (input & PAD_UP) selected = (selected + 9) % 10;
-    else if (input & PAD_DOWN) selected = (selected + 1) % 10;
+    if (input & PAD_UP) selected = (selected + STORAGE_MENU_ROWS - 1) % STORAGE_MENU_ROWS;
+    else if (input & PAD_DOWN) selected = (selected + 1) % STORAGE_MENU_ROWS;
     else if ((input & PAD_CROSS) && selected < STORAGE_SOURCE_COUNT) {
       StorageSettings before = *settings;
       ModeType mode = storageSourceMode(selected);
@@ -2591,7 +2607,7 @@ static int storageSubmenuInput(void *context, int input) {
         drawBrowserFrameSelected(lunaText("Restart storage drivers"), lunaText("Apply changes"),
                          lunaText("LUNA will reopen the library after restarting its drivers."),
                          PROMPT_TWO(ICON_CROSS, lunaText("Apply"), ICON_CIRCLE, lunaText("Cancel")),
-                         10, selected, browserFirstRow(selected), storageRow, settings, selector);
+                         STORAGE_MENU_ROWS, selected, browserFirstRow(selected), storageRow, settings, selector);
         if (!(waitForInput(PAD_CROSS | PAD_CIRCLE) & PAD_CROSS)) return LUNA_CUBE_SUBMENU_STAY;
       }
       if (storageSave(settings)) {
@@ -2681,7 +2697,7 @@ static int uiSystemSettingsLoop(int hasLibrary, Target *target) {
      .input=storageSubmenuInput},
     {.context=&language,.begin=languageSubmenuBegin,.draw=languageSubmenuDraw,
      .input=languageSubmenuInput},
-    uiGameDefaultsSubmenu(target)
+    uiDefaultsSubmenu(target)
   };
   for (;;) {
     int action = uiCubeSettingsLoop(&selected, startMenuStatus(hasLibrary), submenus);

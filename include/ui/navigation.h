@@ -81,18 +81,24 @@ typedef enum {
   UI_VIEW_ORBS = 4,
   // Keep persisted view IDs stable; slots 5 and 6 are also retired.
   UI_VIEW_3D = 7,
+  UI_VIEW_COLLECTION_V2 = 8,
   UI_VIEW_ID_LIMIT,
 } UILibraryView;
 
-#define UI_VIEW_COUNT 5
+#define UI_VIEW_COUNT 6
 #define UI_VIEW_ALL_MASK (((1U << UI_VIEW_ID_LIMIT) - 1U) & \
                           ~((1U << UI_VIEW_GRID) | (1U << 5) | (1U << 6)))
 #define UI_VIEW_DEFAULT_MASK ((1U << UI_VIEW_CLASSIC) | \
                               (1U << UI_VIEW_PSBBN) | \
+                              (1U << UI_VIEW_COLLECTION_V2) | \
                               (1U << UI_VIEW_ORBIT) | \
                               (1U << UI_VIEW_3D))
 
 extern const UILibraryView lunaViewCycleOrder[UI_VIEW_COUNT];
+
+static inline int lunaNavIsCollection(UILibraryView view) {
+  return view == UI_VIEW_PSBBN || view == UI_VIEW_COLLECTION_V2;
+}
 
 int lunaNavWrap(int total, int index);
 int lunaNavRepeatStep(LunaNavRepeatState *state, int direction, uint32_t now,

@@ -1,10 +1,10 @@
-#include "ui/artwork_slice.h"
 // LUNA 2026
 #include "ui/graphics.h"
 #include "ui/ui.h"
 #include "ui/dejavu_sans.h"
 #include "ui/psbbn_font.h"
 #include "ui/utf8.h"
+#include "ui/navigation.h"
 #include "ui/icons.h"
 #include "ui/grid_selector.h"
 #include "ui/view_internal.h"
@@ -16,6 +16,7 @@
 #include <math.h>
 #include <png.h>
 #include <stdlib.h>
+#include <string.h>
 
 // Loads 32-bit RGBA PNG texture from memory into GSTEXTURE and uploads it to GS VRAM.
 static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *buf, size_t size, int whiteTransparentRgb,
@@ -145,15 +146,12 @@ static void prepareFontPageAlpha(GSTEXTURE *page) {
     pixels[i * 4 + 3] = 0x80 - pixels[i * 4 + 3];
 }
 
-static void prepareLunaLogoAlpha(void) {
-  // Only the brand region uses normal alpha for menu fades; controls retain
-  // their existing inverted-alpha blend and colors.
+static void prepareIconsAlpha(void) {
+  // Use source alpha for the whole atlas so buttons can fade with their labels.
+  // At full opacity this is equivalent to the old inverse-alpha icon blend.
   u8 *pixels=(u8 *)icons->Mem;
-  for(int y=LUNA_LOGO.y;y<LUNA_LOGO.y+LUNA_LOGO.height;y++)
-    for(int x=LUNA_LOGO.x;x<LUNA_LOGO.x+LUNA_LOGO.width;x++) {
-      size_t offset=((size_t)y*icons->Width+x)*4+3;
-      pixels[offset]=0x80-pixels[offset];
-    }
+  for(size_t i=0;i<(size_t)icons->Width*icons->Height;i++)
+    pixels[i*4+3]=0x80-pixels[i*4+3];
 }
 
 int setUIFont(UIFont selection) {
@@ -221,7 +219,7 @@ int initGraphics() {
       gsKit_texture_png_mem(gsGlobal, icons, ICONS_PNG, SIZE_ICONS_PNG, 0, 0)) {
     goto fail;
   }
-  prepareLunaLogoAlpha();
+  prepareIconsAlpha();
   if(!bindTextureSafe(gsGlobal,icons))goto fail;
 
   gridSelector = calloc(sizeof(GSTEXTURE), 1);
@@ -266,16 +264,20 @@ void drawIcon(float x, float y, int z, uint64_t color, IconType iconType) {
   drawIconScaled(x, y, z, color, iconType, 1.0f);
 }
 
-void drawIconScaled(float x, float y, int z, uint64_t color, IconType iconType, float scale) {
+static void drawIconScaledOpacity(float x, float y, int z, uint64_t color,
+                                  IconType iconType, float scale, float opacity) {
   Icon icon = ICONS[iconType];
+  if(opacity<=0)return;
 
   // Preserve the artwork colors for every controller button.
   if (iconType != ICON_ENABLED)
     color = GS_SETREG_RGBA(0x80, 0x80, 0x80, 0x80);
+  unsigned alpha=(unsigned)((color>>24)&255);
+  color=(color&~(0xffULL<<24))|((uint64_t)(alpha*fminf(1,opacity))<<24);
 
   if (!bindTextureSafe(gsGlobal, icons))
     return;
-  gsKit_set_primalpha(gsGlobal, GS_BLEND_BACK2FRONT, 0);
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0,1,0,1,0), 0);
   gsKit_set_test(gsGlobal, GS_ATEST_OFF);
   gsKit_prim_sprite_texture(gsGlobal, icons,          // font page
                             x,                        // x1 (destination)
@@ -289,6 +291,10 @@ void drawIconScaled(float x, float y, int z, uint64_t color, IconType iconType, 
                             z, color);
   gsKit_set_test(gsGlobal, GS_ATEST_ON);
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+}
+
+void drawIconScaled(float x, float y, int z, uint64_t color, IconType iconType, float scale) {
+  drawIconScaledOpacity(x,y,z,color,iconType,scale,1);
 }
 
 void drawLunaLogo(float centerX,float top,float width,int z,uint64_t color) {
@@ -410,6 +416,140 @@ void drawPromptBar(int left, int top, int right, int bottom, int z,
     drawTextWindow(x + getIconWidth(prompt->icon) + 6, top, slotRight - 2,
                    bottom, z, labelColor, ALIGN_VCENTER, prompt->label);
   }
+}
+
+static uint64_t promptFade(uint64_t color,float opacity) {
+  unsigned alpha=(unsigned)((color>>24)&255);
+  return (color&~(0xffULL<<24))|((uint64_t)(alpha*opacity)<<24);
+}
+
+static int promptMatch(PromptBar bar,IconType icon) {
+  for(int i=0;i<bar.count;i++)
+    if(bar.items[i].label && bar.items[i].icon==icon)return i;
+  return -1;
+}
+
+static float promptLeft(int left,int right,PromptBar bar,int index) {
+  int slot=(right-left)/bar.count,start=left+index*slot;
+  int end=index==bar.count-1?right:start+slot;
+  int width=getIconWidth(bar.items[index].icon)+6+(int)getLineWidth(bar.items[index].label);
+  return fmaxf(start+2,start+((end-start)-width)/2);
+}
+
+static void drawPromptTransitionItem(int x,int top,int right,int bottom,int z,
+                                     uint64_t color,const ButtonPrompt *from,
+                                     const ButtonPrompt *to,float progress,float opacity) {
+  if(opacity<=0)return;
+  const ButtonPrompt *button=to?to:from;
+  Icon icon=ICONS[button->icon];
+  drawIconScaledOpacity(x,top+((bottom-top)-icon.height)/2,z,FontMainColor,
+                        button->icon,1,opacity);
+  int textX=x+icon.width+6;
+  if(from && to && strcmp(from->label,to->label)) {
+    drawTextWindow(textX,top,right,bottom,z,promptFade(color,opacity*(1-progress)),
+                    ALIGN_VCENTER,from->label);
+    drawTextWindow(textX,top,right,bottom,z,promptFade(color,opacity*progress),
+                    ALIGN_VCENTER,to->label);
+  } else drawTextWindow(textX,top,right,bottom,z,promptFade(color,opacity),
+                          ALIGN_VCENTER,button->label);
+}
+
+void drawPromptBarTransition(int left,int top,int right,int bottom,int z,
+                            uint64_t labelColor,PromptBar from,PromptBar to,
+                            float progress,float opacity) {
+  if(right<=left || bottom<=top || opacity<=0)return;
+  progress=fminf(1,fmaxf(0,progress));opacity=fminf(1,opacity);
+  for(int i=0;i<from.count;i++) {
+    const ButtonPrompt *source=&from.items[i];
+    if(!source->label)continue;
+    int match=promptMatch(to,source->icon);
+    float x=promptLeft(left,right,from,i);
+    if(match>=0) {
+      float destination=promptLeft(left,right,to,match);
+      x+=(destination-x)*progress;
+      drawPromptTransitionItem((int)lroundf(x),top,right,bottom,z,labelColor,
+          source,&to.items[match],progress,opacity);
+    } else drawPromptTransitionItem((int)lroundf(x),top,right,bottom,z,labelColor,
+                                     source,NULL,0,opacity*(1-progress));
+  }
+  for(int i=0;i<to.count;i++) {
+    const ButtonPrompt *destination=&to.items[i];
+    if(!destination->label || promptMatch(from,destination->icon)>=0)continue;
+    drawPromptTransitionItem((int)lroundf(promptLeft(left,right,to,i)),top,right,bottom,z,
+        labelColor,NULL,destination,0,opacity*progress);
+  }
+}
+
+static void menuPromptText(char *out,size_t capacity,const char *text) {
+  if(!text)text="";
+  size_t n=strlen(text);
+  if(n>=capacity)n=capacity-1;
+  while(n&&((unsigned char)text[n]&0xc0)==0x80)n--;
+  memcpy(out,text,n);out[n]=0;
+}
+static void menuPromptCopy(MenuPromptSnapshot *out,PromptBar bar) {
+  out->count=bar.items&&bar.count>0?(bar.count>MENU_PROMPT_MAX?MENU_PROMPT_MAX:bar.count):0;
+  out->hasNote=bar.note!=NULL;menuPromptText(out->note,sizeof(out->note),bar.note);
+  for(int i=0;i<out->count;i++) {
+    menuPromptText(out->labels[i],sizeof(out->labels[i]),bar.items[i].label);
+    out->items[i]=(ButtonPrompt){bar.items[i].icon,bar.items[i].label?out->labels[i]:NULL};
+  }
+}
+static PromptBar menuPromptBar(MenuPromptSnapshot *snapshot) {
+  return (PromptBar){snapshot->hasNote?snapshot->note:NULL,snapshot->items,snapshot->count};
+}
+static int menuPromptSame(const MenuPromptSnapshot *snapshot,PromptBar bar) {
+  int count=bar.items&&bar.count>0?(bar.count>MENU_PROMPT_MAX?MENU_PROMPT_MAX:bar.count):0;
+  if(snapshot->count!=count||snapshot->hasNote!=(bar.note!=NULL))return 0;
+  for(int i=0;i<count;i++) {
+    char label[96];menuPromptText(label,sizeof(label),bar.items[i].label);
+    if(snapshot->items[i].icon!=bar.items[i].icon||
+       (snapshot->items[i].label!=NULL)!=(bar.items[i].label!=NULL)||
+       strcmp(snapshot->labels[i],label))return 0;
+  }
+  return 1;
+}
+void drawMenuPromptBar(MenuPromptTransition *state,int left,int top,int right,
+                       int bottom,int z,uint64_t color,PromptBar bar,float opacity) {
+  if(opacity<=0||right<=left||bottom<=top)return;
+  uint32_t now=uiNowMs();
+  if(!state->initialized||(uint32_t)(now-state->lastDraw)>300U) {
+    menuPromptCopy(&state->from,(PromptBar){0});menuPromptCopy(&state->to,bar);
+    state->started=now;state->initialized=1;
+  } else if(!menuPromptSame(&state->to,bar)) {
+    menuPromptCopy(&state->from,menuPromptBar(&state->to));menuPromptCopy(&state->to,bar);
+    state->started=now;
+  } else menuPromptText(state->to.note,sizeof(state->to.note),bar.note);
+  state->lastDraw=now;
+  unsigned elapsed=now-state->started;
+  float progress=lunaNavEase(elapsed>=180U?1000:(int)(elapsed*1000U/180U))/1000.0f;
+  PromptBar from=menuPromptBar(&state->from),to=menuPromptBar(&state->to);
+  if(!from.note&&!to.note) {
+    drawPromptBarTransition(left,top,right,bottom,z,color,from,to,progress,opacity);return;
+  }
+  int fromLeft=from.note&&from.count?left+(right-left)/2:left;
+  int toLeft=to.note&&to.count?left+(right-left)/2:left;
+  if(from.note&&to.note&&!strcmp(from.note,to.note))
+    drawTextWindow(left,top,to.count?toLeft-6:right,bottom,z,promptFade(color,opacity),
+                   to.count?ALIGN_VCENTER:ALIGN_CENTER,to.note);
+  else {
+    if(from.note)drawTextWindow(left,top,from.count?fromLeft-6:right,bottom,z,
+        promptFade(color,opacity*(1-progress)),from.count?ALIGN_VCENTER:ALIGN_CENTER,from.note);
+    if(to.note)drawTextWindow(left,top,to.count?toLeft-6:right,bottom,z,
+        promptFade(color,opacity*progress),to.count?ALIGN_VCENTER:ALIGN_CENTER,to.note);
+  }
+  for(int i=0;i<from.count;i++) {
+    const ButtonPrompt *source=&from.items[i];if(!source->label)continue;
+    int match=promptMatch(to,source->icon);
+    float x=promptLeft(fromLeft,right,from,i);
+    if(match>=0) {
+      x+=(promptLeft(toLeft,right,to,match)-x)*progress;
+      drawPromptTransitionItem((int)lroundf(x),top,right,bottom,z,color,source,&to.items[match],progress,opacity);
+    } else drawPromptTransitionItem((int)lroundf(x),top,right,bottom,z,color,source,NULL,0,opacity*(1-progress));
+  }
+  for(int i=0;i<to.count;i++)if(to.items[i].label&&promptMatch(from,to.items[i].icon)<0)
+    drawPromptTransitionItem((int)lroundf(promptLeft(toLeft,right,to,i)),top,right,bottom,z,
+        color,NULL,&to.items[i],0,opacity*progress);
 }
 
 // Returns line height for used font
@@ -889,7 +1029,7 @@ static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *b
   if (!hasAlpha)
     png_set_filler(png_ptr, 0xff, PNG_FILLER_AFTER);
 
-  int passes = png_set_interlace_handling(png_ptr);
+  png_set_interlace_handling(png_ptr);
   png_read_update_info(png_ptr, info_ptr);
 
   if (png_get_channels(png_ptr, info_ptr) != 4) {
@@ -913,12 +1053,7 @@ static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *b
   for (row = 0; row < height; row++)
     row_pointers[row] = pixelBuffer + (size_t)row * width * 4;
 
-  for (int pass = 0; pass < passes; pass++) {
-    for (row = 0; row < height; row++) {
-      if (artworkSliceCheckpoint()) goto failed;
-      png_read_row(png_ptr, row_pointers[row], NULL);
-    }
-  }
+  png_read_image(png_ptr, row_pointers);
   png_read_end(png_ptr, NULL);
 
   struct pixel {
@@ -927,7 +1062,6 @@ static int gsKit_texture_png_mem(GSGLOBAL *gsGlobal, GSTEXTURE *texture, void *b
   struct pixel *pixels = (struct pixel *)pixelBuffer;
 
   for (i = 0; i < height; i++) {
-    if (artworkSliceCheckpoint()) goto failed;
     for (j = 0; j < width; j++) {
       uint8_t sourceAlpha = row_pointers[i][4 * j + 3];
       if (whiteTransparentRgb && sourceAlpha == 0) {
@@ -974,8 +1108,11 @@ failed:
   return -1;
 }
 
-static int loadPNGTextureRGBAInternal(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path, int upload) {
-  if (artworkSliceCheckpoint()) return -1;
+static int loadPNGTextureRGBAInternal(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
+                                      const char *path, int upload,
+                                      const volatile int *cancelled) {
+  if (cancelled != NULL && *cancelled)
+    return -1;
   FILE *file = fopen(path, "rb");
   void *buffer;
   long fileSize;
@@ -997,10 +1134,14 @@ static int loadPNGTextureRGBAInternal(GSGLOBAL *gsGlobal, GSTEXTURE *texture, co
   }
   fclose(file);
 
-  result = artworkSliceCheckpoint() ? -1 :
-      gsKit_texture_png_mem(gsGlobal, texture, buffer, fileSize, 0, 0);
+  if (cancelled != NULL && *cancelled) {
+    free(buffer);
+    return -1;
+  }
+  result = gsKit_texture_png_mem(gsGlobal, texture, buffer, fileSize, 0, 0);
   if (result == 0 &&
-      (fitTextureToVram(gsGlobal, texture) < 0 ||
+      ((cancelled != NULL && *cancelled) ||
+       fitTextureToVram(gsGlobal, texture) < 0 ||
        (upload && !bindTextureSafe(gsGlobal, texture)))) {
     free(texture->Mem);
     texture->Mem = NULL;
@@ -1011,9 +1152,14 @@ static int loadPNGTextureRGBAInternal(GSGLOBAL *gsGlobal, GSTEXTURE *texture, co
 }
 
 int loadPNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path) {
-  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 1);
+  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 1, NULL);
 }
 
 int decodePNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path) {
-  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 0);
+  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 0, NULL);
+}
+
+int decodeCollectionPNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
+                                   const char *path, const volatile int *cancelled) {
+  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 0, cancelled);
 }

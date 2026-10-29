@@ -20,10 +20,10 @@
 enum { AP_BACKGROUND,AP_VIEWS,AP_COLORS,AP_EFFECTS,AP_TEXT,AP_SOUND };
 static const char *const categories[]={"Backgrounds","Library Views","Interface Colors",
   "Background Effects","Text","Ambient Sound"};
-static const char *const backgrounds[]={"Stars & cubes","Ambient Orbs","Red Clouds","Midnight Cubes",
+static const char *const backgrounds[]={"Stars & Cubes","Ambient Orbs","Red Clouds","Midnight Cubes",
   "System Configuration","Neo","Aurora","Ronin","Torch","Tempest","Space Flight"};
 static const char *const colors[]={"Original","Cyan","Violet","Rose","Green","Gold","White"};
-static const char *const shapes[]={"Diamond","Cube","Octahedron","Sphere","LUNA","Skull","Atom","Iron cross"};
+static const char *const shapes[]={"Diamond","Cube","Octahedron","Sphere","LUNA","Skull","Atom","Iron Cross"};
 typedef struct {
   Target *target;
   LunaAppearance saved,pending,runtime;
@@ -111,8 +111,8 @@ static const char *appearanceRowValue(void *context,int row) {
         snprintf(s->value,sizeof(s->value),"%u",(unsigned)(row?a->spaceDepth:a->spaceSpeed));return s->value;
       }
       if(a->background!=LIBRARY_BACKGROUND_ORBS)return "Ambient Orbs required";
-      if(row==0)return a->orbsTheme==ORBS_THEME_LUNA?"LUNA":"PS2 original";
-      if(row==1)return a->orbsAppearance==ORBS_APPEARANCE_LUNA?"LUNA":"PS2 original";
+      if(row==0)return a->orbsTheme==ORBS_THEME_LUNA?"LUNA":"PS2 Original";
+      if(row==1)return a->orbsAppearance==ORBS_APPEARANCE_LUNA?"LUNA":"PS2 Original";
       if(row<4)return a->orbsAppearance==ORBS_APPEARANCE_PS2_ORIGINAL?"Original colors":colors[row==2?a->orbsColor:a->tailsColor];
       if(a->orbsTheme!=ORBS_THEME_LUNA)return "LUNA behavior required";
       value=(a->orbShapes>>(row-4))&1;
@@ -132,8 +132,15 @@ static const char *appearanceRowDescription(void *context,int row) {
   return "Changes save automatically.";
 }
 static void appearanceAdjust(void *context,int row,int direction) {
-  AppearanceEditor *s=context;LunaAppearance candidate=s->pending;s->message=NULL;
-  if(s->loadError) {s->savedAt=0;s->message="Could not read appearance settings";return;}
+  AppearanceEditor *s=context;s->message=NULL;
+  if(s->loadError) {
+    LunaAppearance recovered;
+    s->savedAt=0;
+    s->loadError=loadAppearance(s->target,&recovered);
+    if(s->loadError) {s->message="Could not read appearance settings";return;}
+    s->saved=s->pending=recovered;
+  }
+  LunaAppearance candidate=s->pending;
   switch(s->category) {
     case AP_BACKGROUND:candidate.background=(candidate.background+LIBRARY_BACKGROUND_COUNT+direction)%LIBRARY_BACKGROUND_COUNT;break;
     case AP_COLORS:
@@ -186,6 +193,8 @@ static void appearanceAdjust(void *context,int row,int direction) {
 #include "appearance_workspace.inc"
 int uiAppearanceLoop(Target *target) {
   AppearanceEditor state={.target=target};
+  // The file browser or another application may have removed the settings.
+  resetAppearanceCache();
   state.loadError=loadAppearance(target,&state.saved);
   state.pending=state.runtime=state.saved;
   // Empty-library entry has not run the library's appearance initialization.
@@ -200,45 +209,73 @@ int uiAppearanceLoop(Target *target) {
   appearanceCubeLoop(&state);appearanceReleaseButtons();return 0;
 }
 
+enum { DEFAULT_LOGO, DEFAULT_CORE, DEFAULT_STARTUP_VIEW, DEFAULT_COUNT };
 typedef struct {
   Target *target;int logo,core;const char *error;
+  UILibraryView startupView;
+  uint32_t enabledViews;
   int selected;LunaCubePageFocus focus;
 } DefaultsEditor;
-static const char *defaultsLabel(void *context,int row) {(void)context;return row?"Game core":"PlayStation 2 logo";}
+static const char *defaultsLabel(void *context,int row) {
+  (void)context;
+  return (const char *const[]){"PlayStation 2 logo","Game core","Startup view"}[row];
+}
 static const char *defaultsValue(void *context,int row) {
-  DefaultsEditor *s=context;return row?(s->core?"OPL":"Neutrino"):(s->logo?"On":"Off");
+  DefaultsEditor *s=context;
+  if(row==DEFAULT_STARTUP_VIEW)return lunaNavViewLabel(s->startupView);
+  return row==DEFAULT_CORE?(s->core?"OPL":"Neutrino"):(s->logo?"On":"Off");
 }
 static const char *defaultsDescription(void *context,int row) {
   DefaultsEditor *s=context;
-  return s->error?s->error:row?"Default game core. Each game can override it.":"Default PS2 startup logo. Each game can override it.";
+  if(s->error)return s->error;
+  if(row==DEFAULT_STARTUP_VIEW)return "Choose the enabled library view LUNA opens at startup.";
+  return row==DEFAULT_CORE?"Default game core. Each game can override it.":"Default PS2 startup logo. Each game can override it.";
 }
 static void defaultsAdjust(void *context,int row,int direction) {
-  DefaultsEditor *s=context;(void)direction;
-  int result=row?saveGameCoreOpl(s->target,!s->core):savePS2LogoEnabled(s->target,!s->logo);
+  DefaultsEditor *s=context;
+  if(row==DEFAULT_STARTUP_VIEW) {
+    int index=0;
+    while(index<UI_VIEW_COUNT&&lunaViewCycleOrder[index]!=s->startupView)index++;
+    UILibraryView candidate=s->startupView;
+    for(int step=1;step<=UI_VIEW_COUNT;step++) {
+      candidate=lunaViewCycleOrder[(index+UI_VIEW_COUNT+direction*step)%UI_VIEW_COUNT];
+      if(s->enabledViews&(1U<<candidate))break;
+    }
+    if(candidate==s->startupView)return;
+    if(saveStartupLibraryView(s->target,candidate))s->error="Could not save global settings";
+    else {s->startupView=candidate;s->error=NULL;}
+    return;
+  }
+  int result=row==DEFAULT_CORE?saveGameCoreOpl(s->target,!s->core):savePS2LogoEnabled(s->target,!s->logo);
   if(result)s->error="Could not save global settings";
-  else {if(row)s->core^=1;else s->logo^=1;s->error=NULL;}
+  else {if(row==DEFAULT_CORE)s->core^=1;else s->logo^=1;s->error=NULL;}
 }
 static void defaultsSubmenuBegin(void *context) {
   DefaultsEditor *state=context;
   state->logo=loadPS2LogoEnabled(state->target);state->core=loadGameCoreOpl(state->target);
+  state->enabledViews=loadEnabledLibraryViews(state->target);
+  state->startupView=loadStartupLibraryView(state->target);
+  if(!(state->enabledViews&(1U<<state->startupView)))
+    state->startupView=lunaNavNextView(state->startupView,state->enabledViews);
   state->error=NULL;state->selected=0;
   state->focus=(LunaCubePageFocus){.selected=-1,.glideMs=150};
 }
 static void defaultsSubmenuDraw(void *context,float opacity) {
   DefaultsEditor *state=context;
-  LunaCubePage page={.title="Game Defaults",.count=2,.label=defaultsLabel,
+  LunaCubePage page={.title="Defaults",.count=DEFAULT_COUNT,.label=defaultsLabel,
     .value=defaultsValue,.description=defaultsDescription,.adjust=defaultsAdjust,.context=state};
   uiCubeSubmenuPageDraw(&page,state->selected,&state->focus,opacity);
 }
 static int defaultsSubmenuInput(void *context,int input) {
   DefaultsEditor *state=context;
   if(input&(PAD_CIRCLE|PAD_TRIANGLE|PAD_START))return LUNA_CUBE_SUBMENU_BACK;
-  if(input&(PAD_UP|PAD_L1|PAD_DOWN|PAD_R1))state->selected^=1;
+  if(input&(PAD_UP|PAD_L1))state->selected=(state->selected+DEFAULT_COUNT-1)%DEFAULT_COUNT;
+  else if(input&(PAD_DOWN|PAD_R1))state->selected=(state->selected+1)%DEFAULT_COUNT;
   else if(input&(PAD_LEFT|PAD_RIGHT|PAD_CROSS))
     defaultsAdjust(state,state->selected,input&PAD_LEFT?-1:1);
   return LUNA_CUBE_SUBMENU_STAY;
 }
-LunaCubeSubmenu uiGameDefaultsSubmenu(Target *target) {
+LunaCubeSubmenu uiDefaultsSubmenu(Target *target) {
   static DefaultsEditor state;
   state.target=target;
   return (LunaCubeSubmenu){.context=&state,.begin=defaultsSubmenuBegin,

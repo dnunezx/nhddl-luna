@@ -47,11 +47,12 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
                         int useFullResolution);
 void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx);
 void refreshOrbitCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx);
-// Applies to running decodes as well as future requests; retains cached pixels.
+int collectionArtBackgroundAvailable(void);
+// Retain cached pixels while changing active/background artwork priority.
 void setCollectionArtForeground(int foreground);
-void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx);
-// Returns whether entry covers were ready from memory before servicing new loads.
+// Returns whether entry covers were available before scheduling fresh loads.
 int serviceCollectionEntryCovers(TargetList *titles, int selectedTitleIdx);
+void serviceCollectionCovers(TargetList *titles, int selectedTitleIdx);
 void serviceCollectionCoversNavigating(TargetList *titles, int selectedTitleIdx,
                                       int direction, int fastScrolling, int flowOffset);
 void stopCollectionFarArtWorker(TargetList *titles, int selectedTitleIdx);
@@ -59,7 +60,6 @@ void serviceOrbitCovers(TargetList *titles, int selectedTitleIdx);
 // Rear-slot replacement keeps a small outgoing cover while the new art fades in.
 GSTEXTURE *orbitCoverHandoff(int cacheIdx, uint32_t now, int *outgoingVisibility,
                            int *incomingVisibility);
-// Entry requires current + six upcoming games; previous-only games do not block.
 int collectionCoversReady(TargetList *titles, int selectedTitleIdx);
 int collectionCoverMissing(int cacheIdx);
 // Returns zero when no cover size can safely be bound to the texture pool.

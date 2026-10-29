@@ -13,7 +13,7 @@
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h>
 
-#define APPEARANCE_VERSION 3U
+#define APPEARANCE_VERSION 4U
 #define RECORD_LIMIT 2048
 #define RECORD_WRITE_SIZE 512
 static const char *const recordNames[] = {
@@ -36,7 +36,8 @@ static const char *const spaceDepths[] = {"0","1","2","3","4"};
 _Static_assert(sizeof(ringColors)/sizeof(*ringColors)==LUNA_RING_COLOR_COUNT,"Update ring color storage names");
 static const char *const views[UI_VIEW_ID_LIMIT] = {
   [UI_VIEW_CLASSIC] = "classic", [UI_VIEW_PSBBN] = "collection",
-  [UI_VIEW_ORBIT] = "orbit", [UI_VIEW_ORBS] = "scroll", [UI_VIEW_3D] = "3d"
+  [UI_VIEW_ORBIT] = "orbit", [UI_VIEW_ORBS] = "scroll", [UI_VIEW_3D] = "3d",
+  [UI_VIEW_COLLECTION_V2] = "collection-v2"
 };
 static const char *const shapes[] = {
   "diamond", "cube", "octahedron", "sphere", "luna", "skull", "atom", "iron-cross"
@@ -218,6 +219,9 @@ static int readRecord(const char *path, AppearanceRecord *record) {
   // Fields are appended: v1 has no ring color; v2 has no Space Flight settings.
   unsigned count=FIELD_COUNT-(version==1U?3:version==2U?2:0);
   uint32_t required=(1U << count)-1U;
+  // Introduce the new view once; subsequent records preserve its On/Off choice.
+  if (version < 4U && (record->settings.enabledViews & (1U << UI_VIEW_PSBBN)))
+    record->settings.enabledViews |= 1U << UI_VIEW_COLLECTION_V2;
   return seen == required && validSettings(&record->settings) ? 0 : -EINVAL;
 }
 
@@ -289,7 +293,8 @@ int loadAppearance(Target *target, LunaAppearance *settings) {
     }
     cache.error = readLatest(target, &cache.record);
     strcpy(cache.root, root);
-    cache.valid = 1;
+    // A transient read failure must not disable settings until a storage rescan.
+    cache.valid = cache.error == 0;
   }
   *settings = cache.record.settings;
   return cache.error;

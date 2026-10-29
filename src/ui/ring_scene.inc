@@ -158,8 +158,10 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
     ringBracket(info.x+bracketHalfWidth*right,bracketY,8,bracketHeight,1);
   }
   ringOpacity=1;
-  ButtonPrompt prompts[]={{ICON_DPAD,lunaText("Select")},{ICON_CROSS,lunaText("Open")},{ICON_CIRCLE,lunaText("Back")}};
-  drawPromptBar((int)ringSX(100),(int)ringSY(413),(int)ringSX(540),(int)ringSY(442),4,HeaderTextColor,(PromptBar){NULL,prompts,3});
+  static MenuPromptTransition footerTransition;
+  ButtonPrompt prompts[]={{ICON_DPAD,lunaText("Navigate")},{ICON_CROSS,lunaText("Open")},{ICON_CIRCLE,lunaText("Back")}};
+  drawMenuPromptBar(&footerTransition,(int)ringSX(100),(int)ringSY(413),(int)ringSX(540),(int)ringSY(442),4,
+      HeaderTextColor,(PromptBar){NULL,prompts,3},menu->closing?1-ringClamp(menu->exit/2000):ringClamp(menu->entry/600));
   gsKit_set_primalpha(gsGlobal,savedBlend,savedPabe); gsGlobal->PrimAlphaEnable=savedAlpha;
   *gsGlobal->Test=savedTest; gsKit_set_test(gsGlobal,GS_ZTEST_ON);
   gsKit_queue_exec(gsGlobal); gsKit_finish(); gsKit_sync_flip(gsGlobal); usleep(1000);

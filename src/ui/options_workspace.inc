@@ -7,8 +7,8 @@ static GameSection owCategorySection(const OptionsMenuState *s, int row) {
   return s->target->platform == TARGET_PS1 ? ps1[row] : (GameSection)row;
 }
 static const char *owSectionLabel(GameSection section) {
-  if (section == GAME_MEMORY_CARDS) return lunaText("Memory cards");
-  if (section == GAME_VIDEO_OUT) return lunaText("Video out");
+  if (section == GAME_MEMORY_CARDS) return lunaText("Memory Cards");
+  if (section == GAME_VIDEO_OUT) return lunaText("Video Output");
   if (section == GAME_DISCS) return lunaText("Discs");
   return lunaText(gameSectionLabels[section]);
 }
@@ -207,7 +207,7 @@ static void optionsCubeDraw(void *context,float opacity) {
   LunaCubePage page={.title=title,.count=count,.label=optionsCubeLabel,
     .value=optionsCubeValue,.description=optionsCubeRowDescription,
     .adjust=optionsCubeAdjust,.context=s,.sectionTitle="Game Options",
-    .subtitle=s->target->name,.testLabel=s->target->platform==TARGET_PS1?"Launch":"Test",
+    .subtitle=s->target->name,.libraryFooter=1,
     .stackedValues=s->gameSection==GAME_MEMORY_CARDS || s->gameSection==GAME_CORE};
   uiCubeSubmenuPageDraw(&page,s->selectedGameRow,&s->pageFocus,opacity);
   if(!s->saveError && s->savedAt && uiNowMs()-s->savedAt<1800U)
@@ -245,6 +245,11 @@ static int optionsCubeHubInput(void *context,int input) {
   return (input&PAD_SQUARE)?optionsCubeAction(context,PAD_SQUARE):LUNA_CUBE_SUBMENU_STAY;
 }
 
+static void optionsCubeFooter(void *context,float pageProgress) {
+  OptionsMenuState *s=context;
+  uiCubeOptionsFooterTransitionDraw(s->transition.position,pageProgress);
+}
+
 static void optionsCubeLoop(OptionsMenuState *s) {
   OptionsCubeCategory contexts[GAME_SECTION_COUNT];
   LunaCubeSubmenu submenus[GAME_SECTION_COUNT];
@@ -259,7 +264,7 @@ static void optionsCubeLoop(OptionsMenuState *s) {
   LunaCubeHub hub={.title="Game Options",.labels=labels,.count=count,
     .submenus=submenus,.submenuCount=count,.confirmRow=-1,.context=s,
     .description=optionsCubeDescription,.subtitle=s->target->name,
-    .testLabel=s->target->platform==TARGET_PS1?"Launch":"Test",
-    .background=optionsCubeBackground,.input=optionsCubeHubInput};
+    .libraryFooter=1,
+    .background=optionsCubeBackground,.input=optionsCubeHubInput,.footer=optionsCubeFooter};
   uiCubeHubLoop(&s->selectedGameHubRow,NULL,&hub);
 }

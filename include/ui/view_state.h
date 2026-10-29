@@ -12,10 +12,10 @@
 // PS1 covers in List and 3D use this preference; absent/invalid state is Tall.
 Ps1CaseStyle loadPs1CaseStyle(Target *target);
 
-// The selected view is stored with the selected title's metadata on its game drive.
-// Missing or invalid state falls back to Classic.
-UILibraryView loadLastLibraryView(Target *target);
-int saveLastLibraryView(Target *target, UILibraryView view);
+// Explicit startup preference on the metadata drive; never saved by navigation.
+// Missing or invalid state falls back to List. Callers skip disabled views.
+UILibraryView loadStartupLibraryView(Target *target);
+int saveStartupLibraryView(Target *target, UILibraryView view);
 
 // Game mode uses the same metadata drive; absent/invalid state defaults to All.
 TargetFilter loadLastGameMode(Target *target);

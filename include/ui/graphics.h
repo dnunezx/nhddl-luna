@@ -32,6 +32,9 @@ int loadPNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path)
 
 // Decodes a PNG into EE memory without uploading it to GS VRAM.
 int decodePNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path);
+// Collections can abandon obsolete work between file-read and whole-image stages.
+int decodeCollectionPNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
+                                   const char *path, const volatile int *cancelled);
 
 #define ALIGN_LEFT 0 << 0
 #define ALIGN_RIGHT 1 << 0
@@ -65,11 +68,23 @@ typedef struct {
   const char *label;
 } ButtonPrompt;
 
-typedef struct {
+typedef struct PromptBar {
   const char *note;
   const ButtonPrompt *items;
   int count;
 } PromptBar;
+
+#define MENU_PROMPT_MAX 8
+typedef struct {
+  ButtonPrompt items[MENU_PROMPT_MAX];
+  char labels[MENU_PROMPT_MAX][96],note[256];
+  int count,hasNote;
+} MenuPromptSnapshot;
+typedef struct {
+  MenuPromptSnapshot from,to;
+  uint32_t started,lastDraw;
+  int initialized;
+} MenuPromptTransition;
 
 typedef enum {
   UI_FONT_DEJAVU,
@@ -133,6 +148,13 @@ void drawIconWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8
 // Centers prompts within equal-width slots; an optional note occupies the left half.
 void drawPromptBar(int left, int top, int right, int bottom, int z,
                    uint64_t labelColor, PromptBar bar);
+// Morph prompt-only bars: shared buttons move once, changed labels crossfade.
+void drawPromptBarTransition(int left, int top, int right, int bottom, int z,
+                            uint64_t labelColor, PromptBar from, PromptBar to,
+                            float progress, float opacity);
+// Menu-owned state keeps temporary prompt arrays safe across rendered frames.
+void drawMenuPromptBar(MenuPromptTransition *state, int left, int top, int right,
+                       int bottom, int z, uint64_t color, PromptBar bar, float opacity);
 
 // Quiet selection plate with the Options menu's leading accent.
 void drawMenuRowSelector(int left, int top, int right);

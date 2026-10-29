@@ -3,5 +3,5 @@
 #include "target.h"
 #include "ui/cube_menu.h"
 int uiAppearanceLoop(Target *target);
-LunaCubeSubmenu uiGameDefaultsSubmenu(Target *target);
+LunaCubeSubmenu uiDefaultsSubmenu(Target *target);
 #endif

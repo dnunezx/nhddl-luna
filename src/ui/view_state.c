@@ -7,8 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char lastViewPath[] = "/lastView.txt";
-static const char lastViewTempPath[] = "/lastView.txt.tmp";
+static const char startupViewPath[] = "/startupView.txt";
+static const char startupViewTempPath[] = "/startupView.txt.tmp";
 static const char lastGameModePath[] = "/lastGameMode.txt";
 static const char lastGameModeTempPath[] = "/lastGameMode.txt.tmp";
 static const char *const gameModeNames[] = {"all", "ps2", "ps1"};
@@ -41,7 +41,8 @@ static const char ambientSoundTempPath[] = "/ambientSound.txt.tmp";
 static const char *const viewNames[UI_VIEW_ID_LIMIT] = {
     [UI_VIEW_CLASSIC] = "classic", [UI_VIEW_PSBBN] = "collection",
     [UI_VIEW_GRID] = "grid", [UI_VIEW_ORBIT] = "orbit",
-    [UI_VIEW_ORBS] = "orbs", [UI_VIEW_3D] = "3d"};
+    [UI_VIEW_ORBS] = "orbs", [UI_VIEW_3D] = "3d",
+    [UI_VIEW_COLLECTION_V2] = "collection-v2"};
 static const char *const glassColorNames[GLASS_COLOR_COUNT] = {
     "original", "white-gray", "black", "cyber"};
 static const char *const uiFontNames[UI_FONT_COUNT] = {
@@ -57,48 +58,46 @@ static struct DeviceMapEntry *viewDevice(Target *target) {
 
 static int readViewFile(const char *path, UILibraryView *view) {
   char name[24];
-  FILE *file = fopen(path, "r");
+  FILE *file = fopen(path, "rb");
   if (file == NULL)
     return -ENOENT;
-  if (fgets(name, sizeof(name), file) == NULL) {
-    fclose(file);
-    return -EINVAL;
-  }
-  fclose(file);
-  size_t nameLength = strcspn(name, "\r\n");
-  if (name[nameLength] == '\0')
-    return -EINVAL;
-  name[nameLength] = '\0';
+  size_t length = fread(name, 1, sizeof(name), file);
+  int valid = length > 0 && length < sizeof(name) && !ferror(file);
+  if (valid && fgetc(file) != EOF) valid = 0;
+  if (fclose(file)) valid = 0;
+  if (length && name[length - 1] == '\n') length--;
+  if (length && name[length - 1] == '\r') length--;
+  if (!valid) return -EINVAL;
   for (int i = UI_VIEW_CLASSIC; i < UI_VIEW_ID_LIMIT; i++) {
-    if (viewNames[i] && !strcmp(name, viewNames[i])) {
-      *view = i == UI_VIEW_GRID ? UI_VIEW_3D : (UILibraryView)i;
+    if ((UI_VIEW_ALL_MASK & (1U << i)) && viewNames[i] &&
+        length == strlen(viewNames[i]) && !memcmp(name, viewNames[i], length)) {
+      *view = (UILibraryView)i;
       return 0;
     }
   }
   return -EINVAL;
 }
 
-UILibraryView loadLastLibraryView(Target *target) {
+UILibraryView loadStartupLibraryView(Target *target) {
   struct DeviceMapEntry *device = viewDevice(target);
   char path[PATH_MAX];
   UILibraryView view;
 
   if (device == NULL || device->mountpoint == NULL)
     return UI_VIEW_CLASSIC;
-  // A completed temporary file is the latest state if power was lost between
-  // removing the previous file and committing the replacement.
-  if (!buildConfigFilePath(path, sizeof(path), device->mountpoint, lastViewTempPath) &&
+  // A complete staged file is the latest preference after an interrupted commit.
+  if (!buildConfigFilePath(path, sizeof(path), device->mountpoint, startupViewTempPath) &&
       !readViewFile(path, &view)) {
     return view;
   }
-  if (!buildConfigFilePath(path, sizeof(path), device->mountpoint, lastViewPath) &&
+  if (!buildConfigFilePath(path, sizeof(path), device->mountpoint, startupViewPath) &&
       !readViewFile(path, &view)) {
     return view;
   }
   return UI_VIEW_CLASSIC;
 }
 
-int saveLastLibraryView(Target *target, UILibraryView view) {
+int saveStartupLibraryView(Target *target, UILibraryView view) {
   struct DeviceMapEntry *device = viewDevice(target);
   char directory[PATH_MAX];
   char path[PATH_MAX];
@@ -111,8 +110,8 @@ int saveLastLibraryView(Target *target, UILibraryView view) {
       !(UI_VIEW_ALL_MASK & (1U << view)))
     return -EINVAL;
   if (buildConfigFilePath(directory, sizeof(directory), device->mountpoint, NULL) ||
-      buildConfigFilePath(path, sizeof(path), device->mountpoint, lastViewPath) ||
-      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, lastViewTempPath))
+      buildConfigFilePath(path, sizeof(path), device->mountpoint, startupViewPath) ||
+      buildConfigFilePath(tempPath, sizeof(tempPath), device->mountpoint, startupViewTempPath))
     return -ENAMETOOLONG;
   if (stat(directory, &st) == -1 && mkdir(directory, 0777)) {
     return -EIO;

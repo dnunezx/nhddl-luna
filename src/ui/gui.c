@@ -1,4 +1,3 @@
-#include "ui/artwork_slice.h"
 // LUNA 2026
 #include "common.h"
 #include "ui/language.h"
@@ -446,7 +445,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     }
   }
   free(lastTitle);
-  view = loadLastLibraryView(curTarget);
+  view = loadStartupLibraryView(curTarget);
   int restoredView = view;
   int restoredIdx = storageRestoreSelection(titles, &restoredView);
   if (restoredIdx >= 0) {
@@ -463,9 +462,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   enabledViews = loadEnabledLibraryViews(curTarget);
   if (!(enabledViews & (1U << view)))
     view = lunaNavNextView(view, enabledViews);
-  setCollectionArtForeground(view == UI_VIEW_PSBBN);
-  if (view == UI_VIEW_PSBBN) {
-    entryView = UI_VIEW_PSBBN;
+  setCollectionArtForeground(lunaNavIsCollection(view));
+  if (lunaNavIsCollection(view)) {
+    entryView = (int)view;
     entryPending = 1;
   }
   if (view == UI_VIEW_ORBIT)
@@ -549,7 +548,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   int prevInput = 0;
   int input = 0;
   int circleButtonHeld = 0;
-  int startupInputPending = view == UI_VIEW_PSBBN;
+  int startupInputPending = lunaNavIsCollection(view);
   int collectionCirclePending = 0;
   int optionsTriangleHeld = 0;
   int forceViewSwitch = 0;
@@ -566,7 +565,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   uint32_t gameModeToastStartMs = 0;
 #endif
   while (1) {
-    artworkSliceFrame(view == UI_VIEW_PSBBN);
     gsKit_clear(gsGlobal, BGColor);
     gsKit_TexManager_nextFrame(gsGlobal);
     const UILibraryView nextView = lunaNavNextView(view, enabledViews);
@@ -625,7 +623,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       }
     }
 
-    if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT) {
+    if (lunaNavIsCollection(view) || view == UI_VIEW_ORBIT) {
       if (classicPrefetchCandidate != curTarget) {
         classicPrefetchCandidate = curTarget;
         classicPrefetchDueMs = uiNowMs() + 200;
@@ -679,7 +677,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
 
     if (view == UI_VIEW_3D) {
       drawCaseGrid(titles, selectedTitleIdx, optionsLibrary.now);
-    } else if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT || view == UI_VIEW_ORBS) {
+    } else if (lunaNavIsCollection(view) || view == UI_VIEW_ORBIT || view == UI_VIEW_ORBS) {
       TargetList *flowTitles = titles;
       int flowSelectedTitleIdx = selectedTitleIdx;
       uint32_t now = uiNowMs();
@@ -690,13 +688,13 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       // glide clock wait for file I/O or decoding.
       if (view != UI_VIEW_ORBS) {
         if (psbbnCoverBaseIdx != flowSelectedTitleIdx) {
-          if (view == UI_VIEW_PSBBN)
+          if (lunaNavIsCollection(view))
             refreshCollectionCovers(flowTitles, flowSelectedTitleIdx, psbbnCoverBaseIdx);
           else
             refreshOrbitCovers(flowTitles, flowSelectedTitleIdx, psbbnCoverBaseIdx);
         }
         psbbnCoverBaseIdx = flowSelectedTitleIdx;
-        if (view != UI_VIEW_PSBBN)
+        if (!lunaNavIsCollection(view))
           serviceOrbitCovers(flowTitles, flowSelectedTitleIdx);
       }
       now = uiNowMs();
@@ -711,7 +709,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         flowFreshTap = 0;
         flowManualGlide = 0;
       } else if (psbbnAnimationTargetIdx != flowSelectedTitleIdx) {
-        int currentOffset = view == UI_VIEW_PSBBN
+        int currentOffset = lunaNavIsCollection(view)
             ? lunaNavGlideOffset(psbbnAnimationStartOffset,
                 psbbnAnimationElapsedFrames,
                 lunaNavDurationFrames(psbbnAnimationDuration, collectionFps),
@@ -722,19 +720,19 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         float inheritedVelocity = 0.0f;
         if (flowFreshTap && !collectionScan.active &&
             !scrollFast.active && !orbitRandomActive &&
-            (view == UI_VIEW_PSBBN || flowManualGlide) &&
+            (lunaNavIsCollection(view) || flowManualGlide) &&
             currentOffset * direction > 0 &&
             psbbnAnimationDuration == PSBBN_ANIMATION_DURATION_MS)
           inheritedVelocity = lunaNavGlideVelocity(psbbnAnimationStartOffset,
-              view == UI_VIEW_PSBBN ? psbbnAnimationElapsedFrames
+              lunaNavIsCollection(view) ? psbbnAnimationElapsedFrames
                                    : now - psbbnAnimationStart,
-              view == UI_VIEW_PSBBN
+              lunaNavIsCollection(view)
                   ? lunaNavDurationFrames(psbbnAnimationDuration, collectionFps)
                   : psbbnAnimationDuration,
               flowStartVelocity);
         psbbnOutgoingTitleIdx = psbbnAnimationTargetIdx;
         psbbnAnimationStartOffset = currentOffset + direction * 1000;
-        if (view == UI_VIEW_PSBBN && collectionScan.active) {
+        if (lunaNavIsCollection(view) && collectionScan.active) {
           psbbnAnimationStartOffset = collectionScan.heldDirection * 1000;
           psbbnAnimationDuration = COLLECTION_SCAN_STEP_MS;
         } else if (view == UI_VIEW_ORBS && scrollFast.active) {
@@ -750,7 +748,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
           psbbnAnimationDuration = PSBBN_ANIMATION_DURATION_MS;
         }
         flowStartVelocity = lunaNavGlideCarry(psbbnAnimationStartOffset,
-            view == UI_VIEW_PSBBN
+            lunaNavIsCollection(view)
                 ? lunaNavDurationFrames(psbbnAnimationDuration, collectionFps)
                 : psbbnAnimationDuration,
             inheritedVelocity);
@@ -763,38 +761,37 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       }
 
       // Collections advances its glide once per rendered frame.
-      flowOffset = view == UI_VIEW_PSBBN
+      flowOffset = lunaNavIsCollection(view)
           ? lunaNavGlideOffset(psbbnAnimationStartOffset,
               psbbnAnimationElapsedFrames,
               lunaNavDurationFrames(psbbnAnimationDuration, collectionFps),
               flowStartVelocity)
           : lunaNavTimedGlideOffset(psbbnAnimationStartOffset, psbbnAnimationStart,
                                   psbbnAnimationDuration, now, flowStartVelocity);
-      if (view == UI_VIEW_PSBBN) {
+      if (lunaNavIsCollection(view)) {
         if (entryPending) {
           int entryCached = serviceCollectionEntryCovers(flowTitles, flowSelectedTitleIdx);
-          // Decide once: later loads completing must not cancel a cold-entry fade.
+          // Decide once so fresh completions do not interrupt a cold-entry fade.
           if (collectionEntryFade < 0)
             collectionEntryFade = !entryCached;
         } else
           serviceCollectionCoversNavigating(flowTitles, flowSelectedTitleIdx,
-            collectionScan.active ? collectionScan.heldDirection : 0,
-            collectionScan.active, flowOffset);
+              collectionScan.active ? collectionScan.heldDirection : 0,
+              collectionScan.active, flowOffset);
         updateCollectionCoverResidency(flowOffset);
-        artworkSliceGrant();
       } else if (view == UI_VIEW_ORBIT)
         updatePSBBNCoverResidency(flowOffset);
       now = uiNowMs();
       if (entryPending &&
           (view == UI_VIEW_ORBIT ||
-           (view == UI_VIEW_PSBBN && collectionCoversReady(flowTitles, flowSelectedTitleIdx)))) {
+           (lunaNavIsCollection(view) && collectionCoversReady(flowTitles, flowSelectedTitleIdx)))) {
         entryStartMs = now;
         entryPending = 0;
       }
-      if (view != UI_VIEW_PSBBN)
+      if (!lunaNavIsCollection(view))
         flowOffset = lunaNavTimedGlideOffset(psbbnAnimationStartOffset, psbbnAnimationStart,
                                           psbbnAnimationDuration, now, flowStartVelocity);
-      if (view == UI_VIEW_PSBBN) {
+      if (lunaNavIsCollection(view)) {
         collectionVisualCoverIdx = PSBBN_COVER_CACHE_FOCUS;
         if (flowOffset >= 500)
           collectionVisualCoverIdx--;
@@ -812,11 +809,15 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         optionsLibrary.flow=flowOffset; optionsLibrary.outgoing=psbbnOutgoingTitleIdx;
         optionsLibrary.fast=collectionScan.active; optionsLibrary.entry=collectionEntryProgress;
         optionsLibrary.fade=collectionEntryFade; optionsLibrary.now=now;
-        drawPSBBNCollection(flowTitles, flowSelectedTitleIdx, psbbnCoverTextures,
-                            flowOffset, psbbnOutgoingTitleIdx, favoritesOnly,
-                            collectionScan.active,
-                            collectionEntryProgress,
-                            collectionEntryFade, now, nextViewLabel);
+        if (view == UI_VIEW_COLLECTION_V2)
+          drawPSBBNCollectionV2(flowTitles, flowSelectedTitleIdx, flowOffset,
+                                favoritesOnly, collectionEntryProgress, now);
+        else
+          drawPSBBNCollection(flowTitles, flowSelectedTitleIdx, psbbnCoverTextures,
+                              flowOffset, psbbnOutgoingTitleIdx, favoritesOnly,
+                              collectionScan.active,
+                              collectionEntryProgress,
+                              collectionEntryFade, now, nextViewLabel);
       } else if (view == UI_VIEW_ORBIT) {
         optionsLibrary.flow=flowOffset; optionsLibrary.now=now;
         optionsLibrary.entry=libraryViewEntryProgress(entryView,view,entryStartMs,entryDurationMs,now);
@@ -880,7 +881,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
 #endif
     gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
     drawLibraryFooter(titles->total > 0);
-    if (favoritesOnly && view != UI_VIEW_CLASSIC && view != UI_VIEW_PSBBN)
+    if (favoritesOnly && view != UI_VIEW_CLASSIC && !lunaNavIsCollection(view))
       drawTextWindow(20, 8, gsGlobal->Width - 20, headerHeight, 0,
                      HeaderTextColor, ALIGN_RIGHT, lunaText("Favorites"));
     gsKit_set_test(gsGlobal, GS_ZTEST_ON);
@@ -944,7 +945,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     gsKit_sync_flip(gsGlobal);
     if (view == UI_VIEW_CLASSIC)
       classicEntryFirstFramePending = 0;
-    if (view == UI_VIEW_PSBBN && psbbnAnimationTargetIdx >= 0 &&
+    if (lunaNavIsCollection(view) && psbbnAnimationTargetIdx >= 0 &&
         psbbnAnimationElapsedFrames <
             lunaNavDurationFrames(psbbnAnimationDuration,
                                   gsGlobal->Mode == GS_MODE_PAL ? 50 : 60))
@@ -995,7 +996,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                                      quickShortcut, uiNowMs());
     if (!quickWasOpen && (quickMenu.open || quickAction >= 0)) {
       // Freeze the visible title, including during a scan or cover glide.
-      if (titles->total > 0 && view == UI_VIEW_PSBBN && collectionVisualTitleIdx >= 0)
+      if (titles->total > 0 && lunaNavIsCollection(view) && collectionVisualTitleIdx >= 0)
         selectedTitleIdx = collectionVisualTitleIdx;
       else if (titles->total > 0 && view == UI_VIEW_ORBIT && orbitVisibleTitleIndex() >= 0)
         selectedTitleIdx = orbitVisibleTitleIndex();
@@ -1090,7 +1091,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       forceViewSwitch = 0;
     }
 
-    if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT || view == UI_VIEW_ORBS) {
+    if (lunaNavIsCollection(view) || view == UI_VIEW_ORBIT || view == UI_VIEW_ORBS) {
       // Held directions repeat with rendered frames, using the original cadence.
       frameCount = (frameCount + 1) % ((gsGlobal->Mode == GS_MODE_PAL) ? PSBBN_REPEAT_FRAMES_PAL : PSBBN_REPEAT_FRAMES_NTSC);
     } else if (gsGlobal->Mode == GS_MODE_PAL) {
@@ -1099,7 +1100,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       frameCount = (frameCount + 1) % 10;
     }
 
-    if (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT) {
+    if (lunaNavIsCollection(view) || view == UI_VIEW_ORBIT) {
       const int rawInput = input;
       const int actionButtons = PAD_CROSS | PAD_TRIANGLE | PAD_CIRCLE | PAD_SELECT | PAD_START;
       const int shoulderButtons = PAD_L2 | PAD_R2;
@@ -1158,7 +1159,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       if (frameCount && (input == prevInput) && quickAction < 0)
         continue;
       const int flowDirections = PAD_LEFT | PAD_RIGHT | PAD_UP | PAD_DOWN;
-      flowFreshTap = (view == UI_VIEW_PSBBN || view == UI_VIEW_ORBIT ||
+      flowFreshTap = (lunaNavIsCollection(view) || view == UI_VIEW_ORBIT ||
                             view == UI_VIEW_ORBS) &&
           (input & flowDirections) != 0 &&
           (input & flowDirections) != (prevInput & flowDirections);
@@ -1190,7 +1191,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       orbitRandomActive = 0;
 
     collectionActionCoverIdx = PSBBN_COVER_CACHE_FOCUS;
-    if (titles->total > 0 && view == UI_VIEW_PSBBN &&
+    if (titles->total > 0 && lunaNavIsCollection(view) &&
         psbbnAnimationDuration == COLLECTION_SCAN_STEP_MS &&
         (input & (PAD_CROSS | PAD_TRIANGLE | PAD_CIRCLE | PAD_SELECT | PAD_START)) &&
         collectionVisualTitleIdx >= 0) {
@@ -1283,12 +1284,12 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         lunaCameraViewCancel();
       }
 #endif
-      setCollectionArtForeground(view == UI_VIEW_PSBBN);
+      setCollectionArtForeground(lunaNavIsCollection(view));
       collectionPreloadIdleSinceMs = uiNowMs();
       // PSBBN and Orbit release their cache in the view cleanup below.
       // Releasing it here as well tears down the same texture window twice
       // when switching Collection between All and Favorites.
-      if (libraryListChanged && previousView != UI_VIEW_PSBBN &&
+      if (libraryListChanged && !lunaNavIsCollection(previousView) &&
           previousView != UI_VIEW_ORBIT)
         releasePSBBNCovers();
       entryView = (int)view;
@@ -1303,7 +1304,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       if (collectionFromList)
         collectionEntryFade = 0;
 #endif
-      collectionCirclePending = view == UI_VIEW_PSBBN && titles->total > 0;
+      collectionCirclePending = lunaNavIsCollection(view) && titles->total > 0;
       classicEntryFirstFramePending = view == UI_VIEW_CLASSIC &&
                                       previousView != UI_VIEW_CLASSIC;
       classicEntryListSlideActive = view == UI_VIEW_CLASSIC &&
@@ -1312,7 +1313,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       classicEntryListSlideDurationMs = previousView == UI_VIEW_3D
           ? CASE_VIEW_HANDOFF_MS : CLASSIC_LIST_ENTRY_SLIDE_MS;
       if (previousView == UI_VIEW_CLASSIC || libraryListChanged ||
-          (view != UI_VIEW_CLASSIC && view != UI_VIEW_PSBBN && view != UI_VIEW_ORBIT)) {
+          (view != UI_VIEW_CLASSIC && !lunaNavIsCollection(view) && view != UI_VIEW_ORBIT)) {
         cancelClassicArt();
         classicPrefetchCandidate = NULL;
         classicPrefetchSubmitted = NULL;
@@ -1331,10 +1332,12 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         isDiscUninitialized = 1;
         classicDisplayedCoverAvailable = 0;
         classicDisplayedDiscAvailable = 0;
-      } else if (previousView == UI_VIEW_PSBBN || previousView == UI_VIEW_ORBIT) {
-        if (previousView == UI_VIEW_ORBIT && view == UI_VIEW_PSBBN)
+      } else if (lunaNavIsCollection(previousView) || previousView == UI_VIEW_ORBIT) {
+        if (lunaNavIsCollection(previousView) && lunaNavIsCollection(view) && !libraryListChanged) {
+          // The two renderers share decoded artwork and GPU residency.
+        } else if (previousView == UI_VIEW_ORBIT && lunaNavIsCollection(view))
           adoptOrbitCoversForCollection();
-        else if (previousView == UI_VIEW_PSBBN && view == UI_VIEW_ORBIT &&
+        else if (lunaNavIsCollection(previousView) && view == UI_VIEW_ORBIT &&
                  !libraryListChanged)
           adoptCollectionCoversForOrbit();
         else if (previousView == UI_VIEW_ORBIT || view == UI_VIEW_ORBIT || wasCollectionFavorites || libraryListChanged)
@@ -1350,13 +1353,13 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       if (view == UI_VIEW_3D)
         resetCaseGrid();
 
-      if (view == UI_VIEW_ORBIT && previousView != UI_VIEW_PSBBN &&
+      if (view == UI_VIEW_ORBIT && !lunaNavIsCollection(previousView) &&
           previousView != UI_VIEW_ORBIT)
         releasePSBBNCovers();
 
-      if ((previousView == UI_VIEW_ORBIT && view != UI_VIEW_PSBBN) ||
-          (view == UI_VIEW_ORBIT && previousView != UI_VIEW_PSBBN) ||
-          (wasCollectionFavorites && view != UI_VIEW_ORBIT) || libraryListChanged)
+      if ((previousView == UI_VIEW_ORBIT && !lunaNavIsCollection(view)) ||
+          (view == UI_VIEW_ORBIT && !lunaNavIsCollection(previousView)) ||
+          (wasCollectionFavorites && !lunaNavIsCollection(view) && view != UI_VIEW_ORBIT) || libraryListChanged)
         psbbnCoverBaseIdx = -1;
       psbbnAnimationTargetIdx = -1;
       collectionVisualTitleIdx = -1;
@@ -1380,10 +1383,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         classicNavHeld = 0;
         classicRepeat.direction = 0;
       }
-      (void)saveLastLibraryView(curTarget, view);
-#ifdef LUNA_ENABLE_PSXCORE
-      (void)saveLastGameMode(curTarget, libraryPlatformFilter);
-#endif
     } else if ((quickAction == QUICK_TOGGLE_FAVORITE || (view == UI_VIEW_CLASSIC && (input & PAD_SQUARE))) &&
                !favoriteButtonHeld && titles->total > 0) {
       int originalIndex = curTarget->idx;
