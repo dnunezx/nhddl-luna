@@ -12,7 +12,7 @@ int parseIPConfig(void);
 // Flush storage and power off the console.
 void powerOffConsole(void);
 
-// Call after closing the UI and syncing storage. Returns only on reset failure.
+// Call after closing the UI and syncing storage. Returns only if ExecOSD fails.
 int exitToBrowser(void);
 
 #endif

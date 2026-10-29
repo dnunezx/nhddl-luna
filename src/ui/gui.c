@@ -1544,6 +1544,16 @@ exit:
       res = -1;
     }
   } else {
+    // Leave both display buffers black before releasing the renderer and
+    // handing its VRAM to the Browser.
+    if (!res && gsGlobal != NULL) {
+      for (int buffer = 0; buffer < 2; buffer++) {
+        gsKit_clear(gsGlobal, GS_SETREG_RGBA(0, 0, 0, 0x80));
+        gsKit_queue_exec(gsGlobal);
+        gsKit_finish();
+        gsKit_sync_flip(gsGlobal);
+      }
+    }
     closeUI();
   }
   if (favoriteTitles != NULL)

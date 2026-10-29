@@ -8,7 +8,6 @@
 #include <fcntl.h>
 #include <hdd-ioctl.h>
 #include <iopcontrol.h>
-#include <iopheap.h>
 #include <kernel.h>
 #include <libpwroff.h>
 #include <loadfile.h>
@@ -161,31 +160,12 @@ static void powerButtonPressed(void *arg) {
 }
 
 int exitToBrowser(void) {
-  // The ROM browser must not inherit LUNA's replacement IOP driver stack.
-  // Storage and UI workers have already finished before their clients close.
-  fileXioExit();
-  SifLoadFileExit();
-  SifExitIopHeap();
-  SifExitRpc();
-  SifInitRpc(0);
-
-  int attempts = 0;
-  while (!SifIopReset("", 0)) {
-    if (++attempts == 5000) return -ETIMEDOUT;
-    usleep(1000);
-  }
-  attempts = 0;
-  while (!SifIopSync()) {
-    if (++attempts == 5000) return -ETIMEDOUT;
-    usleep(1000);
-  }
-
-  SifExitRpc();
-  FlushCache(0);
-  FlushCache(2);
-  // Request the browser rather than treating this as a fresh console boot.
+  // UI workers, input and storage are already closed/synced. Let the ROM
+  // loader handle the IOP handoff, as wLaunchELF does for its Browser action.
+  // Keep SIF services available until ExecOSD takes control.
   char *args[] = {"BootBrowser"};
   ExecOSD(1, args);
+  return -EIO;
 }
 
 // Initializes IOP modules

@@ -173,7 +173,7 @@ int main(int argc, char *argv[]) {
   res = exitToBrowser();
   init_scr();
   logString("\n\nERROR: Could not return to the PS2 Browser: %d\nPlease restart the console.\n", res);
-  // Do not fall through to the generic exit with an incomplete IOP reset.
+  // Do not retry the Browser handoff through the generic exit path.
   while (1) sleep(1);
 
 fail:
