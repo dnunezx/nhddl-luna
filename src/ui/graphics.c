@@ -579,13 +579,15 @@ static uint64_t glassTextColor(uint64_t color) {
 
 // Draws glyph at specified coordinates
 static void drawGlyph(const BMFontChar *glyph, float x, float y, int z, uint64_t color) {
+  // Match the menu renderer: the extra atlas texel needs a destination pixel
+  // too. Squeezing width+1 texels into width pixels changes stroke spacing.
   gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],   // font page
                             x + glyph->xoffset,                 // x1 (destination)
                             y + glyph->yoffset,                 // y1
                             glyph->x,                           // u1 (source texture)
                             glyph->y,                           // v1
-                            x + glyph->xoffset + glyph->width,  // x2 (destination)
-                            y + glyph->yoffset + glyph->height, // y2
+                            x + glyph->xoffset + glyph->width + 1,  // x2 (destination)
+                            y + glyph->yoffset + glyph->height + 1, // y2
                             glyph->x + glyph->width + 1,        // u2 (source texture, without +1 all characters are cut off on real hardware)
                             glyph->y + glyph->height + 1,       // v2
                             z, color);
@@ -838,10 +840,10 @@ void drawTextLineScaled(int x, int y, int right, int z, float scale,
     if (!glyph) continue;
     float left = curX + glyph->xoffset * scale;
     float top = y + glyph->yoffset * scale;
-    if (left + glyph->width * scale > right) break;
+    if (left + (glyph->width + 1) * scale > right) break;
     gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],
         left, top, glyph->x, glyph->y,
-        left + glyph->width * scale, top + glyph->height * scale,
+        left + (glyph->width + 1) * scale, top + (glyph->height + 1) * scale,
         glyph->x + glyph->width + 1, glyph->y + glyph->height + 1, z, color);
     curX += glyph->xadvance * scale;
     if (glyph->kernings && *cursor) {
@@ -925,16 +927,15 @@ int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *te
       continue;
 
     float glyphLeft = curX + glyph->xoffset;
-    float glyphRight = glyphLeft + glyph->width;
+    float glyphRight = glyphLeft + glyph->width + 1;
     if (glyph->width > 0 && glyphRight > x1 && glyphLeft < x2) {
       float clippedLeft = (glyphLeft < x1) ? x1 : glyphLeft;
       float clippedRight = (glyphRight > x2) ? x2 : glyphRight;
-      float textureScale = (glyph->width + 1.0f) / glyph->width;
-      float u1 = glyph->x + (clippedLeft - glyphLeft) * textureScale;
-      float u2 = glyph->x + (clippedRight - glyphLeft) * textureScale;
+      float u1 = glyph->x + clippedLeft - glyphLeft;
+      float u2 = glyph->x + clippedRight - glyphLeft;
       gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],
                                 clippedLeft, y + glyph->yoffset, u1, glyph->y,
-                                clippedRight, y + glyph->yoffset + glyph->height,
+                                clippedRight, y + glyph->yoffset + glyph->height + 1,
                                 u2, glyph->y + glyph->height + 1, z, color);
     }
 
