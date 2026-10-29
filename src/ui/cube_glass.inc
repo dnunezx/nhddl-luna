@@ -70,7 +70,10 @@ static void cubeMaterialInit(void) {
   /* A continuous edge-to-outside falloff for the joined selection contour. */
   for(int y=0;y<64;y++)for(int x=0;x<64;x++) {
     float fade=1-y/63.0f;
-    cubeIcePixels[3][y*64+x]=GS_SETREG_RGBA(220,242,255,(int)(128*fade*sqrtf(fade)));
+    /* A rounded crest joins the inner and outer halo without a sharp ridge. */
+    float halo=gsGlobal->Interlace==GS_INTERLACED?
+        fade*fade*(3-2*fade):fade*sqrtf(fade);
+    cubeIcePixels[3][y*64+x]=GS_SETREG_RGBA(220,242,255,(int)(128*halo));
   }
   for(int i=0;i<4;i++) {
     cubeMaterial[i].Width=cubeMaterial[i].Height=64;
@@ -266,6 +269,10 @@ static void cubeGlassFaces(const CubeGlass *s,CubeVec camera,int pass,CubeVec of
         pass==CUBE_GLOSS?s->fade*CUBE_ICE_GLOSS:1),1);
   }
 }
+static float cubeGlassGlowWidth(const CubeGlass *s) {
+  float width=fmaxf(3,fminf(7,2100/fmaxf(16,s->depth)));
+  return width*(gsGlobal->Interlace==GS_INTERLACED?1.4f:1);
+}
 static int cubeGlassOutline(const CubeGlass *s,CubeVec camera,CubePoint *inner,CubePoint *outer) {
   CubePoint corners[8];
   for(int f=0;f<6;f++)for(int j=0;j<4;j++) {
@@ -307,8 +314,8 @@ static int cubeGlassOutline(const CubeGlass *s,CubeVec camera,CubePoint *inner,C
     if(x*((a.x+b.x)*.5f-center.x)+y*((a.y+b.y)*.5f-center.y)<0){x=-x;y=-y;}
     nx[i]=x;ny[i]=y;
   }
-  /* Tight rim with shared miter vertices: no detached bands or corner gaps. */
-  float glow=fmaxf(3,fminf(7,2100/fmaxf(16,s->depth)));
+  /* Shared miter vertices keep the halo attached through edges and corners. */
+  float glow=cubeGlassGlowWidth(s);
   for(int i=0;i<count;i++) {
     int previous=(i+count-1)%count;
     float x=nx[previous]+nx[i],y=ny[previous]+ny[i];
@@ -325,12 +332,21 @@ static void cubeGlowQuad(const CubePoint *p,const float uv[][2],float alpha) {
   /* Four quarter-pixel samples soften raster stair steps without blurring the
    * glass or background. Glow is a screen-space overlay, so use affine UVs. */
   static const float jitter[4][2]={{-.25f,-.25f},{.25f,-.25f},{-.25f,.25f},{.25f,.25f}};
-  for(int sample=0;sample<4;sample++) {
+  /* Interlaced output also needs a vertical [1 2 1]/4 filter: subpixel AA
+   * alone leaves the bright crest concentrated on alternating scanlines.
+   * Filter only this additive contour, in output pixels, and retain the
+   * original sampling and brightness for progressive output. */
+  static const float fieldWeight[3]={.25f,.5f,.25f};
+  int interlaced=gsGlobal->Interlace==GS_INTERLACED;
+  int taps=interlaced?3:1;
+  for(int tap=0;tap<taps;tap++)for(int sample=0;sample<4;sample++) {
+    float offsetY=interlaced?tap-1:0;
+    float weight=interlaced?fieldWeight[tap]*.85f:1;
     CubePoint shifted[4];
     for(int j=0;j<4;j++)shifted[j]=(CubePoint){
       p[j].x+jitter[sample][0]*640/gsGlobal->Width,
-      p[j].y+jitter[sample][1]*480/gsGlobal->Height,500};
-    cubeEmit(shifted,uv,4,cubeColor(128,128,128,alpha*.25f),1);
+      p[j].y+(jitter[sample][1]+offsetY)*480/gsGlobal->Height,500};
+    cubeEmit(shifted,uv,4,cubeColor(128,128,128,alpha*.25f*weight),1);
   }
 }
 static void cubeGlassHighlight(const CubeGlass *s,CubeVec camera) {
@@ -338,15 +354,15 @@ static void cubeGlassHighlight(const CubeGlass *s,CubeVec camera) {
   CubePoint inner[8],outer[8];int count=cubeGlassOutline(s,camera,inner,outer);
   if(!count)return;
   cubeBind(&cubeMaterial[3],1,0);cubeBlend(2);
-  float glow=fmaxf(3,fminf(7,2100/fmaxf(16,s->depth)));
+  float glow=cubeGlassGlowWidth(s);
   CubePoint feather[8];
   for(int i=0;i<count;i++) {
-    /* Fade in from just inside the glass instead of a full-alpha polygon
-     * boundary. Scale the feather to approximately one physical pixel. */
+    /* The CRT halo extends into the glass as well as outside it, spreading
+     * the bright crest over several output pixels instead of a thin rim. */
     float dx=(outer[i].x-inner[i].x)/glow,dy=(outer[i].y-inner[i].y)/glow;
     float physical=sqrtf(dx*dx*gsGlobal->Width*gsGlobal->Width/(640.0f*640)+
         dy*dy*gsGlobal->Height*gsGlobal->Height/(480.0f*480));
-    float width=1.25f/fmaxf(.001f,physical);
+    float width=(gsGlobal->Interlace==GS_INTERLACED?2.5f:1.25f)/fmaxf(.001f,physical);
     feather[i]=(CubePoint){inner[i].x-dx*width,inner[i].y-dy*width,500};
   }
   for(int i=0;i<count;i++) {
