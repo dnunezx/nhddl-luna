@@ -10,6 +10,7 @@
 typedef struct {
   ModeType enabled;
   char ip[16];
+  int mmceGameID;
 } StorageSettings;
 typedef struct {
   int devices;

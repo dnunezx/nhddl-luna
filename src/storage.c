@@ -81,7 +81,8 @@ int storageValidIP(const char *ip) {
 int storageValidSettings(const StorageSettings *settings) {
   return !(settings->enabled & ~STORAGE_SUPPORTED) &&
       !((settings->enabled & MODE_MX4SIO) && (settings->enabled & MODE_MMCE)) &&
-      storageValidIP(settings->ip);
+      storageValidIP(settings->ip) &&
+      (settings->mmceGameID == 0 || settings->mmceGameID == 1);
 }
 
 int storageRequiredConflict(const StorageSettings *settings) {
@@ -95,13 +96,17 @@ static int readSettings(const char *path, StorageSettings *saved) {
   memset(saved, 0, sizeof(*saved));
   char line[96];
   unsigned mask;
-  int version = 0, haveMask = 0;
+  int version = 0, haveMask = 0, invalid = 0;
   while (fgets(line, sizeof(line), file)) {
     line[strcspn(line, "\r\n")] = '\0';
     if (!strcmp(line, "LUNA_STORAGE_1")) version = 1;
     else if (sscanf(line, "enabled=%u", &mask) == 1) {
       saved->enabled = mask;
       haveMask = 1;
+    } else if (!strncmp(line, "mmce_gameid=", 12)) {
+      if (!strcmp(line + 12, "0") || !strcmp(line + 12, "1"))
+        saved->mmceGameID = line[12] == '1';
+      else invalid = 1;
     } else if (!strncmp(line, "ip=", 3)) {
       if (strlen(line + 3) >= sizeof(saved->ip)) { version = 0; break; }
       strcpy(saved->ip, line + 3);
@@ -109,15 +114,15 @@ static int readSettings(const char *path, StorageSettings *saved) {
   }
   int bad = ferror(file);
   fclose(file);
-  return !bad && version && haveMask && storageValidSettings(saved) &&
+  return !bad && !invalid && version && haveMask && storageValidSettings(saved) &&
          !storageRequiredConflict(saved);
 }
 
 static int writeSettings(const char *path, const StorageSettings *settings) {
   FILE *file = fopen(path, "wb");
   if (!file) return -EIO;
-  int bad = fprintf(file, "LUNA_STORAGE_1\nenabled=%u\nip=%s\n",
-                    (unsigned)settings->enabled, settings->ip) < 0;
+  int bad = fprintf(file, "LUNA_STORAGE_1\nenabled=%u\nip=%s\nmmce_gameid=%d\n",
+                    (unsigned)settings->enabled, settings->ip, settings->mmceGameID) < 0;
   if (fflush(file)) bad = 1;
   if (fclose(file)) bad = 1;
   return bad ? -EIO : 0;
@@ -126,6 +131,7 @@ static int writeSettings(const char *path, const StorageSettings *settings) {
 void storageConfigure(const char *directory, ModeType defaults, ModeType required,
                       int useSaved) {
   requiredModes = required;
+  STORAGE_SETTINGS.mmceGameID = 0; // Old preference files also default to Off.
   STORAGE_SETTINGS.enabled = defaults & STORAGE_SUPPORTED;
   snprintf(STORAGE_SETTINGS.ip, sizeof(STORAGE_SETTINGS.ip), "%s", LAUNCHER_OPTIONS.udpfsIp);
   if ((STORAGE_SETTINGS.enabled & MODE_MX4SIO) && (STORAGE_SETTINGS.enabled & MODE_MMCE))

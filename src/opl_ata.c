@@ -45,6 +45,7 @@ _off64_t lseek64(int fd, _off64_t offset, int whence);
 #define OPL_COMPAT_ACCURATE_READS 0x0008
 #define OPL_COMPAT_ENABLE_POFF 0x0100
 #define OPL_COMPAT_IOP_POFF 0x80000000u
+#define OPL_COMPAT_MMCE_SHIFT 29 // Match COMPAT_LUNA_MMCE_* in OPL ee_core.h.
 
 typedef struct {
   unsigned char ident[16];
@@ -602,7 +603,7 @@ int launchOplTitle(Target *target, ArgumentList *arguments, const char *cheatPay
   // Preserve LUNA's libkernel region above OPL_CLEAR_END during installation.
   ambientStop();
   // All runtime files are in RAM, including those read from the boot card.
-  mmceMountVMC(target->id);
+  config->_CompatMask |= mmceMountVMC(target->id) << OPL_COMPAT_MMCE_SHIFT;
   memset((void *)OPL_CORE_START, 0, OPL_CLEAR_END - OPL_CORE_START);
   for (int i = 0; i < moduleCount; i++) {
     memcpy((void *)moduleAddresses[i], data[i], sizes[i]);

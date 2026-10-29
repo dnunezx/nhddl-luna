@@ -8,6 +8,7 @@
 #include "ui/ambient.h"
 #include "options.h"
 #include "cheat_storage.h"
+#include "storage.h"
 #include <debug.h>
 #include <kernel.h>
 #include <loadfile.h>
@@ -185,6 +186,8 @@ void launchTitleWithCheatProgress(Target *target, ArgumentList *arguments,
   // Append bsd and ISO path
   appendArgument(arguments, newArgument(bsdArgument, bsdValue));
   appendArgument(arguments, newArgument(isoArgument, target->fullPath));
+  if (STORAGE_SETTINGS.mmceGameID)
+    appendArgument(arguments, newArgument("mmce-gameid", ""));
   if (target->device->mode == MODE_UDPFS && LAUNCHER_OPTIONS.udpfsIp[0])
     appendArgument(arguments, newArgument("udpfs_ip", LAUNCHER_OPTIONS.udpfsIp));
   Argument *disableIgr = getArgument(arguments, "luna_neutrino_disable_igr");

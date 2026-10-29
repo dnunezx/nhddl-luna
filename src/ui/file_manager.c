@@ -2469,25 +2469,40 @@ static void uiFileManagerLoop(void) {
 #endif
 #include "vmc_manager.inc"
 
-#define STORAGE_MENU_ROWS 10
+enum {
+  STORAGE_MMCE_GAMEID_ROW = 5, // Immediately below MMCE; library sources stay independent.
+  STORAGE_IP_ROW = 8,
+  STORAGE_APPLY_ROW,
+  STORAGE_RESCAN_ROW,
+  STORAGE_MENU_ROWS
+};
+static int storageSourceForRow(int row) {
+  if (row == STORAGE_MMCE_GAMEID_ROW) return -1;
+  int source = row - (row > STORAGE_MMCE_GAMEID_ROW);
+  return source >= 0 && source < STORAGE_SOURCE_COUNT ? source : -1;
+}
 static int storageRow(int index, char *name, size_t nameSize,
                       char *detail, size_t detailSize, void *context) {
   StorageSettings *settings = context;
-  if (index < STORAGE_SOURCE_COUNT) {
-    ModeType mode = storageSourceMode(index);
-    snprintf(name, nameSize, "%s", storageSourceName(index));
+  int source = storageSourceForRow(index);
+  if (index == STORAGE_MMCE_GAMEID_ROW) {
+    snprintf(name, nameSize, "%s", lunaText("MMCE Game ID switching"));
+    snprintf(detail, detailSize, "%s", lunaText(settings->mmceGameID ? "On" : "Off"));
+  } else if (source >= 0) {
+    ModeType mode = storageSourceMode(source);
+    snprintf(name, nameSize, "%s", storageSourceName(source));
     if (!(settings->enabled & mode)) snprintf(detail, detailSize, lunaText("Disabled"));
     else if (!(STORAGE_SETTINGS.enabled & mode)) snprintf(detail, detailSize, lunaText("Pending scan"));
-    else if (STORAGE_STATUS[index].incomplete ||
-             (STORAGE_STATUS[index].error && STORAGE_STATUS[index].games))
-      snprintf(detail, detailSize, lunaText("Incomplete - %d games"), STORAGE_STATUS[index].games);
-    else if (STORAGE_STATUS[index].error) snprintf(detail, detailSize, lunaText("Scan failed"));
-    else if (!STORAGE_STATUS[index].devices) snprintf(detail, detailSize, lunaText("No device found"));
-    else snprintf(detail, detailSize, lunaText("Ready - %d games"), STORAGE_STATUS[index].games);
+    else if (STORAGE_STATUS[source].incomplete ||
+             (STORAGE_STATUS[source].error && STORAGE_STATUS[source].games))
+      snprintf(detail, detailSize, lunaText("Incomplete - %d games"), STORAGE_STATUS[source].games);
+    else if (STORAGE_STATUS[source].error) snprintf(detail, detailSize, lunaText("Scan failed"));
+    else if (!STORAGE_STATUS[source].devices) snprintf(detail, detailSize, lunaText("No device found"));
+    else snprintf(detail, detailSize, lunaText("Ready - %d games"), STORAGE_STATUS[source].games);
   } else {
-    snprintf(name, nameSize, "%s", index == 7 ? lunaText("UDPFS console IP address") :
-             index == 8 ? lunaText("Apply changes & scan") : lunaText("Rescan all enabled devices"));
-    snprintf(detail, detailSize, "%s", index == 7 ?
+    snprintf(name, nameSize, "%s", index == STORAGE_IP_ROW ? lunaText("UDPFS console IP address") :
+             index == STORAGE_APPLY_ROW ? lunaText("Apply changes & scan") : lunaText("Rescan all enabled devices"));
+    snprintf(detail, detailSize, "%s", index == STORAGE_IP_ROW ?
              (settings->ip[0] ? settings->ip : lunaText("Use IPCONFIG.DAT")) : "");
   }
   return 1;
@@ -2561,7 +2576,8 @@ static void storageSubmenuDraw(void *context, float opacity) {
   }
   if (opacity >= .999f)
     drawListScrollbar(right - 6, top, top + visible * step, STORAGE_MENU_ROWS, first, visible, 7);
-  uiCubeMenuHelpDraw(left,storageX(608),ink,editor->status);
+  uiCubeMenuHelpDraw(left,storageX(608),ink,editor->selected == STORAGE_MMCE_GAMEID_ROW ?
+      lunaText("Switch cards per game and restore the boot card on IGR.") : editor->status);
   const ButtonPrompt prompts[] = {{ICON_DPAD, lunaText("Navigate")},{ICON_CROSS, lunaText("Select")},
       {ICON_SQUARE, lunaText("Rescan")}, {ICON_CIRCLE, lunaText("Back")}};
   uiCubeSubmenuFooterDraw(&(PromptBar){NULL,prompts,4},opacity);
@@ -2572,13 +2588,17 @@ static int storageSubmenuInput(void *context, int input) {
   StorageSettings *settings = &editor->settings;
   char *status = editor->status;
   int selected = editor->selected;
+  int source = storageSourceForRow(selected);
   BrowserSelector *selector = &editor->selector;
     if (input & PAD_CIRCLE) return LUNA_CUBE_SUBMENU_BACK; // Discard pending edits.
     if (input & PAD_UP) selected = (selected + STORAGE_MENU_ROWS - 1) % STORAGE_MENU_ROWS;
     else if (input & PAD_DOWN) selected = (selected + 1) % STORAGE_MENU_ROWS;
-    else if ((input & PAD_CROSS) && selected < STORAGE_SOURCE_COUNT) {
+    else if ((input & PAD_CROSS) && selected == STORAGE_MMCE_GAMEID_ROW) {
+      settings->mmceGameID ^= 1;
+      snprintf(status, sizeof(editor->status), lunaText("Choose Apply changes & scan to save your selection."));
+    } else if ((input & PAD_CROSS) && source >= 0) {
       StorageSettings before = *settings;
-      ModeType mode = storageSourceMode(selected);
+      ModeType mode = storageSourceMode(source);
       settings->enabled ^= mode;
       if ((settings->enabled & MODE_MX4SIO) && (settings->enabled & MODE_MMCE)) {
         settings->enabled &= ~(mode == MODE_MX4SIO ? MODE_MMCE : MODE_MX4SIO);
@@ -2588,7 +2608,7 @@ static int storageSubmenuInput(void *context, int input) {
         *settings = before;
         snprintf(status, sizeof(editor->status), lunaText("This conflicts with the device LUNA was started from."));
       }
-    } else if ((input & PAD_CROSS) && selected == 7) {
+    } else if ((input & PAD_CROSS) && selected == STORAGE_IP_ROW) {
       char ip[16];
       snprintf(ip, sizeof(ip), "%s", settings->ip);
       // The shared keyboard supports digits and dots; an empty value uses IPCONFIG.
@@ -2598,7 +2618,7 @@ static int storageSubmenuInput(void *context, int input) {
           snprintf(status, sizeof(editor->status), lunaText("Apply changes to use this address for scanning and games."));
         } else snprintf(status, sizeof(editor->status), lunaText("Enter a valid unicast IPv4 address, such as 192.168.1.10."));
       }
-    } else if ((input & PAD_CROSS) && selected == 8) {
+    } else if ((input & PAD_CROSS) && selected == STORAGE_APPLY_ROW) {
       if (storageRequiredConflict(settings) || !storageValidSettings(settings)) {
         snprintf(status, sizeof(editor->status), lunaText("These device settings conflict with the startup device."));
         return LUNA_CUBE_SUBMENU_STAY;
@@ -2615,13 +2635,14 @@ static int storageSubmenuInput(void *context, int input) {
         return LUNA_CUBE_SUBMENU_STAY;
       }
       if (!storageRequest(settings, settings->enabled)) return LUNA_CUBE_SUBMENU_DONE;
-    } else if (((input & PAD_CROSS) && selected == 9) ||
-               ((input & PAD_SQUARE) && selected < STORAGE_SOURCE_COUNT)) {
-      if (settings->enabled != STORAGE_SETTINGS.enabled || strcmp(settings->ip, STORAGE_SETTINGS.ip)) {
+    } else if (((input & PAD_CROSS) && selected == STORAGE_RESCAN_ROW) ||
+               ((input & PAD_SQUARE) && source >= 0)) {
+      if (settings->enabled != STORAGE_SETTINGS.enabled || strcmp(settings->ip, STORAGE_SETTINGS.ip) ||
+          settings->mmceGameID != STORAGE_SETTINGS.mmceGameID) {
         snprintf(status, sizeof(editor->status), lunaText("Apply changes before rescanning, or go Back to discard them."));
         return LUNA_CUBE_SUBMENU_STAY;
       }
-      ModeType scan = selected == 9 ? settings->enabled : storageSourceMode(selected);
+      ModeType scan = selected == STORAGE_RESCAN_ROW ? settings->enabled : storageSourceMode(source);
       if (!(scan & settings->enabled)) {
         snprintf(status, sizeof(editor->status), lunaText("Enable this source and apply changes before scanning it."));
         return LUNA_CUBE_SUBMENU_STAY;

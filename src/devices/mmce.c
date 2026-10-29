@@ -1,6 +1,7 @@
 // Implements support for MMCE devices
 #include "common.h"
 #include "devices/devices.h"
+#include "storage.h"
 #include "ui/ui.h"
 #include <errno.h>
 #include <dirent.h>
@@ -43,11 +44,13 @@ int initMMCEDevices(int newDeviceIdx) {
 }
 
 // Uses MMCE devctl calls to switch memory card to given title ID
-void mmceMountVMC(char *titleID) {
+unsigned int mmceMountVMC(char *titleID) {
   // MMCE storage scanning is independent of a card used for physical saves.
   // Its SIO2 driver cannot coexist with the active MX4SIO driver.
-  if ((LAUNCHER_OPTIONS.mode & MODE_MX4SIO) || !titleID || !titleID[0] || strlen(titleID) > 249)
-    return;
+  if (!STORAGE_SETTINGS.mmceGameID || (LAUNCHER_OPTIONS.mode & MODE_MX4SIO) ||
+      !titleID || !titleID[0] || strlen(titleID) > 249)
+    return 0;
+  unsigned int switched = 0;
   // Send GameID to both MMCE devices
   for (int i = '0'; i < '2'; i++) {
     mmceMountpoint[4] = i;
@@ -61,6 +64,7 @@ void mmceMountVMC(char *titleID) {
       continue;
     }
 
+    switched |= 1u << (i - '0');
     // Poll MMCE status until busy bit is clear
     for (int poll = 0; poll < 150; poll++) {
       usleep(100000);
@@ -70,4 +74,5 @@ void mmceMountVMC(char *titleID) {
       }
     }
   }
+  return switched;
 }
