@@ -66,7 +66,7 @@ static const char *appearanceHubDescription(void *context,int row) {
   static const char *const descriptions[]={
     "Preview the background used throughout LUNA.","Choose library views and cover layouts.",
     "Choose the glass tint and Start-menu ring color.","Tune Ambient Orbs or Space Flight.",
-    "Use LUNA's font or the PSBBN keyboard lettering.","Play ambient music while browsing."};
+    "Choose the interface font. Wide menu headings stay unchanged.","Play ambient music while browsing."};
   return descriptions[row];
 }
 static int appearanceRowCount(AppearanceEditor *s) {

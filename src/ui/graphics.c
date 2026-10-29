@@ -64,6 +64,8 @@ static void prepareGridSelector(GSTEXTURE *texture) {
 
 // Keep only the selected font's texture decoded and resident.
 static const BMFont *font = &BMFONT_DEJAVU_SANS;
+// Scoped to the library quick menu; other text keeps its current rendering.
+static int legacyQuickMenuText;
 static UIFont activeUIFont = UI_FONT_DEJAVU;
 static u32 fontVram = GSKIT_ALLOC_ERROR;
 static u32 fontVramSize;
@@ -565,15 +567,30 @@ const BMFontChar *getGlyph(uint32_t character) {
   return NULL;
 }
 
+static uint64_t glassTextColor(uint64_t color) {
+  if (getGlassColorPreset() != GLASS_COLOR_CYBER)
+    return color;
+  const int red = color & 0xFF;
+  const int green = (color >> 8) & 0xFF;
+  const int blue = (color >> 16) & 0xFF;
+  // Keep warning/error hues and text opacity; only neutral/cool ink is green.
+  if (red > green && red > blue)
+    return color;
+  return glassPresetColor(red, green, blue, (color >> 24) & 0xFF);
+}
+
 // Draws glyph at specified coordinates
 static void drawGlyph(const BMFontChar *glyph, float x, float y, int z, uint64_t color) {
+  // Current text gives the extra atlas texel a matching destination pixel.
+  // The quick menu retains 3.1.3's destination bounds.
+  const int padding = legacyQuickMenuText ? 0 : 1;
   gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],   // font page
                             x + glyph->xoffset,                 // x1 (destination)
                             y + glyph->yoffset,                 // y1
                             glyph->x,                           // u1 (source texture)
                             glyph->y,                           // v1
-                            x + glyph->xoffset + glyph->width,  // x2 (destination)
-                            y + glyph->yoffset + glyph->height, // y2
+                            x + glyph->xoffset + glyph->width + padding,  // x2 (destination)
+                            y + glyph->yoffset + glyph->height + padding, // y2
                             glyph->x + glyph->width + 1,        // u2 (source texture, without +1 all characters are cut off on real hardware)
                             glyph->y + glyph->height + 1,       // v2
                             z, color);
@@ -592,6 +609,7 @@ static void beginFontDraw(void) {
 // Draws the text with specified max dimensions relative to x and y
 // Returns the bottom Y coordinate of the last line that can be used to draw the next text
 int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, const char *text) {
+  if (!legacyQuickMenuText) color = glassTextColor(color);
   int curX = x;
   const BMFontChar *glyph;
   const int previousAlphaTest = gsGlobal->Test->ATST;
@@ -630,7 +648,7 @@ int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, c
     curX += glyph->xadvance;
 
     // Account for kerning if kernings are present and next char is not a null terminator
-    if (glyph->kernings && (*cursor != '\0')) {
+    if (!legacyQuickMenuText && glyph->kernings && (*cursor != '\0')) {
       const char *next = cursor;
       uint32_t nextCharacter = lunaUTF8Next(&next);
       for (int k = 0; k < glyph->kerningsCount; k++) {
@@ -669,7 +687,7 @@ float getLineWidth(const char *text) {
 
     lineWidth += glyph->xadvance;
     // Account for kerning
-    if (glyph->kernings && (*cursor != '\0')) {
+    if (!legacyQuickMenuText && glyph->kernings && (*cursor != '\0')) {
       const char *next = cursor;
       uint32_t nextCharacter = lunaUTF8Next(&next);
       for (int k = 0; k < glyph->kerningsCount; k++) {
@@ -690,7 +708,7 @@ float getLineDrawWidth(const char *text) {
     if (character == '\n') break;
     const BMFontChar *glyph = getGlyph(character);
     if (!glyph) continue;
-    float right = pen + glyph->xoffset + glyph->width;
+    float right = pen + glyph->xoffset + glyph->width + 1;
     if (right > extent) extent = right;
     pen += glyph->xadvance;
     if (glyph->kernings && *cursor) {
@@ -709,6 +727,7 @@ float getLineDrawWidth(const char *text) {
 // Returns the bottom Y coordinate of the last line that can be used to draw the next text.
 // Use the faster drawText method if window limits are not important.
 int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_t alignment, const char *text) {
+  if (!legacyQuickMenuText) color = glassTextColor(color);
   if (!x2 && !y2) {
     // If window limits are not set, use faster drawing function
     return drawText(x1, y1, z, 0, 0, color, text);
@@ -787,7 +806,7 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
 
     curX += glyph->xadvance;
     // Account for kerning if kernings are present and next char is not a null terminator
-    if (glyph->kernings && (*cursor != '\0')) {
+    if (!legacyQuickMenuText && glyph->kernings && (*cursor != '\0')) {
       const char *next = cursor;
       uint32_t nextCharacter = lunaUTF8Next(&next);
       for (int k = 0; k < glyph->kerningsCount; k++) {
@@ -808,8 +827,18 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
   return curY + font->lineHeight;
 }
 
+int drawQuickMenuTextWindow(int x1, int y1, int x2, int y2, int z,
+                            uint64_t color, uint8_t alignment, const char *text) {
+  const int previous = legacyQuickMenuText;
+  legacyQuickMenuText = 1;
+  const int bottom = drawTextWindow(x1, y1, x2, y2, z, color, alignment, text);
+  legacyQuickMenuText = previous;
+  return bottom;
+}
+
 void drawTextLineScaled(int x, int y, int right, int z, float scale,
                         uint64_t color, const char *text) {
+  color = glassTextColor(color);
   const int previousAlphaTest = gsGlobal->Test->ATST;
   const int previousAlphaReference = gsGlobal->Test->AREF;
   const int previousAlphaFail = gsGlobal->Test->AFAIL;
@@ -823,10 +852,10 @@ void drawTextLineScaled(int x, int y, int right, int z, float scale,
     if (!glyph) continue;
     float left = curX + glyph->xoffset * scale;
     float top = y + glyph->yoffset * scale;
-    if (left + glyph->width * scale > right) break;
+    if (left + (glyph->width + 1) * scale > right) break;
     gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],
         left, top, glyph->x, glyph->y,
-        left + glyph->width * scale, top + glyph->height * scale,
+        left + (glyph->width + 1) * scale, top + (glyph->height + 1) * scale,
         glyph->x + glyph->width + 1, glyph->y + glyph->height + 1, z, color);
     curX += glyph->xadvance * scale;
     if (glyph->kernings && *cursor) {
@@ -844,7 +873,57 @@ void drawTextLineScaled(int x, int y, int right, int z, float scale,
   gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
 }
 
+void drawTextLineScaledCrisp(int x, int y, int right, int z, float scale,
+                        uint64_t color, const char *text) {
+  color = glassTextColor(color);
+  const int previousAlphaTest = gsGlobal->Test->ATST;
+  const int previousAlphaReference = gsGlobal->Test->AREF;
+  const int previousAlphaFail = gsGlobal->Test->AFAIL;
+  float curX = x;
+  beginFontDraw();
+  const char *cursor = text;
+  while (*cursor) {
+    uint32_t character = lunaUTF8Next(&cursor);
+    if (character == '\n') break;
+    const BMFontChar *glyph = getGlyph(character);
+    if (!glyph) continue;
+    float left = curX + glyph->xoffset * scale;
+    float top = y + glyph->yoffset * scale;
+    if (left + glyph->width * scale > right) break;
+    float endX=left+glyph->width*scale,endY=top+glyph->height*scale;
+    GSTEXTURE *page=fontPages[glyph->page];
+    int savedFilter=page->Filter;
+    {
+      /* Source UVs include the hardware-required extra atlas texel. Give
+       * that transparent padding its matching destination extent too,
+       * instead of compressing width+1 texels into width pixels. */
+      endX=roundf(endX+scale);endY=roundf(endY+scale);
+      left=roundf(left);top=roundf(top);
+      page->Filter=GS_FILTER_NEAREST;
+    }
+    gsKit_prim_sprite_texture(gsGlobal, page,
+        left, top, glyph->x, glyph->y,
+        endX, endY,
+        glyph->x + glyph->width + 1, glyph->y + glyph->height + 1, z, color);
+    page->Filter=savedFilter;
+    curX += glyph->xadvance * scale;
+    if (glyph->kernings && *cursor) {
+      const char *next = cursor;
+      uint32_t nextCharacter = lunaUTF8Next(&next);
+      for (int k = 0; k < glyph->kerningsCount; k++)
+        if (glyph->kernings[k].secondChar == nextCharacter)
+          curX += glyph->kernings[k].amount * scale;
+    }
+  }
+  gsGlobal->Test->ATST = previousAlphaTest;
+  gsGlobal->Test->AREF = previousAlphaReference;
+  gsGlobal->Test->AFAIL = previousAlphaFail;
+  gsKit_set_test(gsGlobal, GS_ATEST_ON);
+  gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+}
+
 int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *text, int scrollX) {
+  color = glassTextColor(color);
   float curX = x1 - scrollX;
   const int previousAlphaTest = gsGlobal->Test->ATST;
   const int previousAlphaReference = gsGlobal->Test->AREF;
@@ -860,16 +939,15 @@ int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *te
       continue;
 
     float glyphLeft = curX + glyph->xoffset;
-    float glyphRight = glyphLeft + glyph->width;
+    float glyphRight = glyphLeft + glyph->width + 1;
     if (glyph->width > 0 && glyphRight > x1 && glyphLeft < x2) {
       float clippedLeft = (glyphLeft < x1) ? x1 : glyphLeft;
       float clippedRight = (glyphRight > x2) ? x2 : glyphRight;
-      float textureScale = (glyph->width + 1.0f) / glyph->width;
-      float u1 = glyph->x + (clippedLeft - glyphLeft) * textureScale;
-      float u2 = glyph->x + (clippedRight - glyphLeft) * textureScale;
+      float u1 = glyph->x + clippedLeft - glyphLeft;
+      float u2 = glyph->x + clippedRight - glyphLeft;
       gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],
                                 clippedLeft, y + glyph->yoffset, u1, glyph->y,
-                                clippedRight, y + glyph->yoffset + glyph->height,
+                                clippedRight, y + glyph->yoffset + glyph->height + 1,
                                 u2, glyph->y + glyph->height + 1, z, color);
     }
 

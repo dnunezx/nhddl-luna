@@ -124,9 +124,9 @@ static void drawQuickMenuText(int x1, int y1, int x2, int y2,
                               uint64_t color, uint8_t alignment,
                               const char *text) {
   // Keep labels distinct from any artwork visible through the glass.
-  drawTextWindow(x1 + 1, y1 + 2, x2 + 1, y2 + 2, 0, ColorBlack,
+  drawQuickMenuTextWindow(x1 + 1, y1 + 2, x2 + 1, y2 + 2, 0, ColorBlack,
                  alignment, text);
-  drawTextWindow(x1, y1, x2, y2, 0, color, alignment, text);
+  drawQuickMenuTextWindow(x1, y1, x2, y2, 0, color, alignment, text);
 }
 
 #ifdef LUNA_ENABLE_PSXCORE

@@ -28,13 +28,14 @@ static void ringText(float cx,float y,float width,float height,uint64_t color,co
   float nativeWidth=getLineWidth(text);
   if(nativeWidth<=0) return;
   /* Width is a ceiling, never a target that stretches shorter words. Keep
-   * one scale for both axes with the shared bitmap-font renderer. */
+   * one scale for both axes and align the line to the physical pixel grid. */
   float linePixels=roundf(ringSY(height));
   float scale=fminf(linePixels/getFontLineHeight(),ringSX(width)/nativeWidth);
   int left=(int)roundf(ringSX(cx)-nativeWidth*scale*.5f);
-  drawTextLineScaled(left,(int)roundf(ringSY(y)),(int)ringSX(638),4,
+  drawTextLineScaledCrisp(left,(int)roundf(ringSY(y)),(int)ringSX(638),4,
       scale,color,text);
 }
+#include "ring_lettering.inc"
 static void ringBracket(float x,float y,float width,float height,int side) {
   float edge=x+side*width*.5f,cap=x-side*width*.5f;
   uint64_t color=ringColor(191,191,191,105);
@@ -68,7 +69,8 @@ static void ringLayoutInit(const RingMenu *menu) {
   }
 }
 static float ringTitleHeight(float size) {
-  return fmaxf(16,20*size*448/480);
+  if(lunaLanguage()!=LUNA_LANGUAGE_ENGLISH)return fmaxf(16,20*size*448/480);
+  return fmaxf(24,36*size*448/480);
 }
 static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
   static const char *labels[]={"Game Library","File Browser","Appearance","Settings"};
@@ -116,10 +118,11 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
     float size=p.scale*(active?1.1f:1);
     float width=widths[slot]*size,height=ringTitleHeight(size);
     const char *label=lunaText(labelKeys[i]);
-    if(lunaLanguage()==LUNA_LANGUAGE_ENGLISH) label=labels[i];
+    int titleItem=lunaLanguage()==LUNA_LANGUAGE_ENGLISH?i:-1;
+    if(titleItem>=0) label=labels[i];
     /* Front-facing floating text, yellow at the focal slot; no cards/icons. */
-    ringText(p.x+1,p.y+1,width,height,ringColor(0,0,16,100),label);
-    ringText(p.x,p.y,width,height,active?ringColor(255,255,0,128):ringColor(235,239,248,128),label);
+    ringTitle(titleItem,p.x+1,p.y+1,width,height,ringColor(0,0,16,100),label);
+    ringTitle(titleItem,p.x,p.y,width,height,active?ringColor(255,255,0,128):ringColor(235,239,248,128),label);
   }
   /* Use the same projected/bobbing point as the selected title, so its
    * description follows it throughout navigation instead of the screen. */
@@ -141,7 +144,7 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
   float textAlpha=infoAge<600?0:infoAge<1000?(blink<1?1-blink:blink-1):1;
   ringOpacity=textAlpha*infoFade;
   if(textAlpha*infoFade>0)
-    drawTextLineScaled((int)roundf(captionCenter-captionWidth*.5f),captionTop,
+    drawTextLineScaledCrisp((int)roundf(captionCenter-captionWidth*.5f),captionTop,
         (int)ringSX(638),4,1,ringColor(235,242,255,128),description);
   if(infoAge>=0 && infoFade>0) {
     static const float target[]={1,-.9f,-.2f,-.9f,-.2f,-.9f,1};
