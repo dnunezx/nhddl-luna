@@ -182,8 +182,6 @@ void launchTitleWithCheatProgress(Target *target, ArgumentList *arguments,
   if (target->device->sync)
     target->device->sync();
 
-  mmceMountVMC(target->id);
-
   // Append bsd and ISO path
   appendArgument(arguments, newArgument(bsdArgument, bsdValue));
   appendArgument(arguments, newArgument(isoArgument, target->fullPath));
