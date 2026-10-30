@@ -32,8 +32,8 @@ ModeType deviceDiscoveryFailures(void);
 void freeDeviceMapEntries(struct DeviceMapEntry *entries);
 void syncDeviceMap(void);
 
-// Uses MMCE devctl calls to switch memory card to given title ID
-void mmceMountVMC(char *titleID);
+// Switch enabled physical MMCE cards and return the slots requiring IGR restore.
+unsigned int mmceMountVMC(char *titleID);
 
 // Name of the APA/PFS metadata partition currently mounted at pfs0:.
 const char *getMountedPFSPartition(void);

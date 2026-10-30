@@ -2,7 +2,6 @@
 #include "common.h"
 #include "devices/devices.h"
 #include "storage.h"
-#include "dprintf.h"
 #include "ui/ui.h"
 #include <errno.h>
 #include <dirent.h>
@@ -46,20 +45,16 @@ int initMMCEDevices(int newDeviceIdx) {
 }
 
 // Uses MMCE devctl calls to switch memory card to given title ID
-void mmceMountVMC(char *titleID) {
-  if (!(STORAGE_SETTINGS.enabled & MODE_MMCE) || !titleID || !titleID[0])
-    return;
-  char mcMountpoint[] = "mcX:";
+unsigned int mmceMountVMC(char *titleID) {
+  // MMCE storage scanning is independent of a card used for physical saves.
+  // Its SIO2 driver cannot coexist with the active MX4SIO driver.
+  if (!STORAGE_SETTINGS.mmceGameID || (LAUNCHER_OPTIONS.mode & MODE_MX4SIO) ||
+      !titleID || !titleID[0] || strlen(titleID) > 249)
+    return 0;
+  unsigned int switched = 0;
   // Send GameID to both MMCE devices
   for (int i = '0'; i < '2'; i++) {
-    mcMountpoint[2] = i;
     mmceMountpoint[4] = i;
-
-    // Do not mount VMC if Neutrino is on the (virtual) memory card
-    if (!strncmp(mcMountpoint, NEUTRINO_ELF_PATH, 3)) {
-      DPRINTF("WARN: Refusing to mount VMC on %s\n", mmceMountpoint);
-      continue;
-    }
 
     // Ping MMCE first to make sure the device is present
     if (fileXioDevctl(mmceMountpoint, 0x1, NULL, 0, NULL, 0) < 0)
@@ -70,13 +65,15 @@ void mmceMountVMC(char *titleID) {
       continue;
     }
 
+    switched |= 1u << (i - '0');
     // Poll MMCE status until busy bit is clear
-    for (int i = 0; i < 15; i++) {
-      sleep(1);
-      if ((fileXioDevctl(mmceMountpoint, 0x2, NULL, 0, NULL, 0) & 1) == 0) {
-        DPRINTF("Mounted VMC for %s on %s\n", titleID, mmceMountpoint);
+    for (int poll = 0; poll < 150; poll++) {
+      usleep(100000);
+      int status = fileXioDevctl(mmceMountpoint, 0x2, NULL, 0, NULL, 0);
+      if (status < 0 || (status & 1) == 0) {
         break;
       }
     }
   }
+  return switched;
 }
