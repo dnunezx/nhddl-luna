@@ -13,7 +13,6 @@
 #include "vmc_create.h"
 #include "storage.h"
 #include "cheat_storage.h"
-#include "ui/options_reveal.h"
 #include "ui/cube_menu.h"
 #include <ctype.h>
 #include <dirent.h>
@@ -25,13 +24,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#define OPTIONS_SELECTOR_GLIDE_DURATION_MS 110
-#define OPTIONS_SELECTOR_ROW_SCALE 256
-
-typedef enum {
-  OPTIONS_PER_GAME
-} OptionsPage;
 
 typedef enum {
   GAME_HUB = -1,
@@ -45,16 +37,6 @@ typedef enum {
   GAME_VIDEO_OUT,
   GAME_DISCS
 } GameSection;
-
-typedef struct {
-  OptionsPage page;
-  int selectedRow;
-  int fromRow;
-  int toRow;
-  uint32_t startMs;
-  int initialized;
-} OptionsSelector;
-
 
 typedef struct {
   char label[160], value[160], description[320];
@@ -72,7 +54,6 @@ typedef struct {
   LunaCheatFile cheatFile;
   int cheatsChanged;
   int cheatLoadResult;
-  int cheatFirstRow;
   char cheatStatus[192];
   char cheatPath[PATH_MAX + 1];
   int saveError;
@@ -84,18 +65,11 @@ typedef struct {
   int ps1CardsChanged;
   char ps1SetName[64], ps1SlotStatus[2][32];
 #endif
-  OptionsPage page;
-  OptionsSelector selector;
   GameSection gameSection;
   int selectedGameHubRow;
   int selectedGameRow;
-  int videoOutOpl;
-  int videoOutFirstRow;
   int workspaceRows[GAME_DISCS + 1];
-  int workspaceFirstRow;
   uint32_t savedAt;
-  const LunaOptionsScene *scene;
-  LunaOptionsReveal transition;
   LunaCubePageFocus pageFocus;
   OptionsWorkspaceRow workspaceRow;
   char workspaceHelp[320];
@@ -116,7 +90,6 @@ static void loadPs1Cards(OptionsMenuState *state) {
     for (int slot = 0; slot < 2; ++slot)
       snprintf(state->ps1SlotStatus[slot], sizeof(state->ps1SlotStatus[slot]), "%s", "Unavailable");
   } else uiPs1VmcDescribe(&state->ps1Cards, state->ps1SetName, state->ps1SlotStatus);
-  state->selector.initialized = 0;
 }
 #endif
 
@@ -140,7 +113,7 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Review every launch argument, including global overrides.",
     "Assign an existing OPL card image from this drive's VMC folder.",
     "Assign an existing OPL card image to the second slot.",
-    "Open the Neutrino and OPL video output modes.",
+    "Open video output modes for the selected game core.",
     "Choose field flipping for a forced video mode.",
     "Choose Inherit to use the Global PS2 logo setting.",
     "Display debug colors while loading.",
@@ -152,7 +125,7 @@ static const char *const gameRowDescriptions[LUNA_GAME_ROW_COUNT] = {
     "Emulate a dual-layer DVD in OPL.",
     "Disable OPL's in-game reset for this title.",
     "Disable Neutrino's in-game return for this title.",
-    "Open the Neutrino and OPL video output modes.",
+    "Open video output modes for the selected game core.",
     "Emulate field flipping when OPL forces a video output mode.",
     "Helps with non-boot/black-screen issues. Off by default.",
     "Send low-resolution gameplay as 480i (NTSC) or 576i (PAL) for TVs and HDMI adapters. Off by default."};
@@ -185,7 +158,7 @@ static int gameUsesOpl(const OptionsMenuState *state) {
 
 static int gameSectionRowCount(const OptionsMenuState *state, GameSection section) {
   if (section == GAME_VIDEO_OUT)
-    return lunaGameVideoModeCount(state->videoOutOpl);
+    return lunaGameVideoModeCount(gameUsesOpl(state));
   if (section == GAME_COMPATIBILITY)
     return gameUsesOpl(state) ? LUNA_OPL_COMPAT_COUNT :
                                LUNA_NEUTRINO_COMPAT_ROW_COUNT;
@@ -202,38 +175,11 @@ static LunaGameRow gameSectionRow(const OptionsMenuState *state,
 }
 
 
-static int optionsHeadingY(void) {
-  return headerHeight - getFontLineHeight() + getFontLineHeight() / 4;
-}
-
-static int optionsMenuTop(void) {
-  return headerHeight + getFontLineHeight() + 8;
-}
-
 static void presentOptionsFrame(void) {
   gsKit_queue_exec(gsGlobal);
   gsKit_finish();
   gsKit_sync_flip(gsGlobal);
   usleep(1000);
-}
-
-static void drawOptionsTextRow(int x, int y, int right, int selected,
-                               int selectorY, const char *label,
-                               const char *value) {
-  if (selected)
-    drawMenuRowSelector(x, selectorY, right);
-  const int textLeft = x + 18, textRight = right - 18;
-  int valueWidth = value ? (int)ceilf(getLineDrawWidth(value)) : 0;
-  int valueLeft = textRight - valueWidth;
-  int labelRight = value ? valueLeft - 16 : textRight;
-  if (selected && value)
-    drawPSBBNFocusGlow(valueLeft, selectorY, right, textRight);
-  uiCubeMenuTextDraw(textLeft, y, labelRight, 0,
-           selected ? ColorSelectedText : HeaderTextColor,
-           label, 0);
-  if (value)
-    uiCubeMenuTextDraw(valueLeft, y, textRight, 0,
-             selected ? ColorSelectedText : FontMainColor, value, 1);
 }
 
 static int gameVMCEnabled(ArgumentList *arguments) {
@@ -269,30 +215,6 @@ static int gameLaunchEnabled(const OptionsMenuState *state) {
   return enabled;
 }
 
-static void drawOptionsMusicNote(int centerX, int y, uint64_t color) {
-  gsKit_prim_line(gsGlobal, centerX - 1, y + 3,
-                  centerX - 1, y + 13, 0, color);
-  gsKit_prim_line(gsGlobal, centerX - 1, y + 3,
-                  centerX + 5, y + 1, 0, color);
-  gsKit_prim_sprite(gsGlobal, centerX - 5, y + 12,
-                    centerX - 1, y + 15, 0, color);
-}
-
-static void drawOptionsSection(int y, const char *title, int musicNotes) {
-  const uint64_t color = HeaderTextColor;
-  const int titleWidth = (int)getLineWidth(title);
-  const int titleX = (gsGlobal->Width - titleWidth) / 2;
-  if (musicNotes)
-    drawOptionsMusicNote(titleX - 14, y, color);
-  else
-    drawGlassDiamond(titleX - 14, y + 8, 6, 0, color);
-  drawText(titleX, y, 0, 0, 0, color, title);
-  if (musicNotes)
-    drawOptionsMusicNote(titleX + titleWidth + 14, y, color);
-  else
-    drawGlassDiamond(titleX + titleWidth + 14, y + 8, 6, 0, color);
-}
-
 static const char *gamePS2LogoValue(const OptionsMenuState *state) {
   Argument *logo = getArgument(state->titleArguments, "logo");
   if (logo == NULL || logo->isGlobal)
@@ -304,7 +226,6 @@ static void reloadGameCheats(OptionsMenuState *state, int reconcile) {
   lunaCheatFileFree(&state->cheatFile);
   state->cheatLoadResult = lunaCheatsLoad(state->target, &state->cheatFile,
       state->cheatPath, sizeof(state->cheatPath), state->cheatStatus, sizeof(state->cheatStatus));
-  state->cheatFirstRow = 0;
   if (state->cheatLoadResult) return;
   int removed = 0;
   for (int i = 0; reconcile && i < state->cheats.count;) {
@@ -335,36 +256,12 @@ static int uiVMCPickerLoop(Target *target,ArgumentList *arguments,LunaGameOption
   return uiVmcPs2Slot(target,arguments,options,slot);
 }
 
-// Returns 1 for Back, -1 if a test launch unexpectedly returns, or 0 to stay.
+// The cube controller owns category selection and Back; the hub only forwards
+// Square for a test launch. Page navigation and edits are handled here.
 static int editGameInput(OptionsMenuState *state, int input) {
+  if (state->gameSection == GAME_HUB && !(input & PAD_SQUARE))
+    return 0;
   if (state->target->platform == TARGET_PS1) {
-    if (input & PAD_TRIANGLE) {
-      if (state->gameSection == GAME_HUB) return 1;
-      state->gameSection = GAME_HUB;
-      state->selectedGameRow = 0;
-      state->selector.initialized = 0;
-      return 0;
-    }
-    if (state->gameSection == GAME_HUB) {
-      if (input & (PAD_UP | PAD_DOWN)) {
-        state->selectedGameHubRow = (state->selectedGameHubRow + ((input & PAD_UP) ? 3 : 1)) % 4;
-        state->vmcStatus[0] = 0;
-        return 0;
-      }
-      if (input & (PAD_CROSS | PAD_CIRCLE)) {
-        state->gameSection = state->selectedGameHubRow == 3 ? GAME_DISCS :
-                             state->selectedGameHubRow == 2 ? GAME_VIDEO :
-                             state->selectedGameHubRow ? GAME_COMPATIBILITY : GAME_MEMORY_CARDS;
-        state->selectedGameRow = 0;
-        state->selector.initialized = 0;
-#ifdef LUNA_ENABLE_PSXCORE
-        if (state->gameSection == GAME_MEMORY_CARDS && !state->ps1CardsReady) loadPs1Cards(state);
-#endif
-        return 0;
-      }
-      if (!(input & PAD_SQUARE)) return 0;
-    }
-
 #ifdef LUNA_ENABLE_PSXCORE
     if (input & PAD_SQUARE)
       return uiLaunchPs1Cards(state->target, state->ps1CardsReady ? &state->ps1Cards : NULL,
@@ -384,7 +281,6 @@ static int editGameInput(OptionsMenuState *state, int input) {
       else if(state->selectedGameRow && (input & (PAD_CROSS|PAD_CIRCLE))) {
 
         int result=uiPs1DiscManage(state->target);
-        state->selector.initialized=0;
         if(result==STORAGE_UI_REFRESH)return result;
       }
 #endif
@@ -422,7 +318,6 @@ static int editGameInput(OptionsMenuState *state, int input) {
         snprintf(state->vmcStatus, sizeof(state->vmcStatus), "%s", "Card selection updated.");
       }
       uiPs1VmcDescribe(&state->ps1Cards, state->ps1SetName, state->ps1SlotStatus);
-      state->selector.initialized = 0;
     }
 #else
     if (input & PAD_SQUARE) return uiLaunchTitleWithCheats(state->target,NULL,NULL);
@@ -434,36 +329,6 @@ static int editGameInput(OptionsMenuState *state, int input) {
     return uiLaunchTitleWithCheats(state->target, state->titleArguments, &state->cheats);
   }
 
-  if (state->gameSection == GAME_HUB) {
-    if (input & PAD_TRIANGLE)
-      return 1;
-    if (input & PAD_UP)
-      state->selectedGameHubRow = (state->selectedGameHubRow +
-                                   GAME_SECTION_COUNT - 1) % GAME_SECTION_COUNT;
-    else if (input & PAD_DOWN)
-      state->selectedGameHubRow = (state->selectedGameHubRow + 1) % GAME_SECTION_COUNT;
-    else if (state->selectedGameHubRow == GAME_CORE &&
-             (input & (PAD_CROSS | PAD_CIRCLE | PAD_LEFT | PAD_RIGHT))) {
-      if (lunaOplDevice(state->target->device->mode) != NULL &&
-          lunaGameOptionsCycleCore(&state->gameOptions, state->titleArguments,
-                                   state->coreSetting, (input & PAD_LEFT) ? -1 : 1))
-        state->titleArgumentsChanged = 1;
-    }
-    else if (input & (PAD_CROSS | PAD_CIRCLE)) {
-      state->gameSection = (GameSection)state->selectedGameHubRow;
-      state->selectedGameRow = 0;
-      state->vmcStatus[0] = '\0';
-      state->selector.initialized = 0;
-      if (state->gameSection == GAME_CHEATS) reloadGameCheats(state, 0);
-    }
-    return 0;
-  }
-  if (input & PAD_TRIANGLE) {
-    state->gameSection = state->gameSection == GAME_VIDEO_OUT ? GAME_VIDEO : GAME_HUB;
-    state->selectedGameRow = 0;
-    state->selector.initialized = 0;
-    return 0;
-  }
   if (state->gameSection == GAME_CHEATS) {
     int count = 3 + state->cheatFile.entryCount;
     if (input & PAD_UP) state->selectedGameRow = (state->selectedGameRow + count - 1) % count;
@@ -495,20 +360,13 @@ static int editGameInput(OptionsMenuState *state, int input) {
     return 0;
   }
   if (state->gameSection == GAME_VIDEO_OUT) {
-    if ((input & (PAD_LEFT | PAD_RIGHT)) &&
-        lunaOplDevice(state->target->device->mode) != NULL) {
-      state->videoOutOpl = !state->videoOutOpl;
-      int mode = state->videoOutOpl ? state->gameOptions.oplVideoMode :
-                                     state->gameOptions.videoMode;
-      state->selectedGameRow = mode > 0 ? mode : 0;
-      state->videoOutFirstRow = 0;
-      state->selector.initialized = 0;
-    } else if (input & (PAD_CROSS | PAD_CIRCLE)) {
-      int current = state->videoOutOpl ? state->gameOptions.oplVideoMode :
+    // The inactive core stays visible, but only Game Core can activate it.
+    if (input & (PAD_CROSS | PAD_CIRCLE)) {
+      int current = gameUsesOpl(state) ? state->gameOptions.oplVideoMode :
                                         state->gameOptions.videoMode;
       int mode = current == state->selectedGameRow ? 0 : state->selectedGameRow;
       if (lunaGameOptionsSetVideoMode(&state->gameOptions, state->titleArguments,
-                                     state->videoOutOpl, mode))
+                                     gameUsesOpl(state), mode))
         state->titleArgumentsChanged = 1;
     }
     return 0;
@@ -527,7 +385,6 @@ static int editGameInput(OptionsMenuState *state, int input) {
         if (lunaGameOptionsSetVMCPair(&state->gameOptions,state->titleArguments,"","")) {
           state->titleArgumentsChanged = 1;
           state->selectedGameRow = 0;
-          state->selector.initialized = 0;
           snprintf(state->vmcStatus, sizeof(state->vmcStatus),
                    lunaText("Virtual cards disabled."));
         } else {
@@ -548,12 +405,9 @@ static int editGameInput(OptionsMenuState *state, int input) {
   if ((selectedRow == LUNA_GAME_VIDEO_MODE || selectedRow == LUNA_GAME_OPL_VIDEO_MODE) &&
       (input & (PAD_CROSS | PAD_CIRCLE))) {
     state->gameSection = GAME_VIDEO_OUT;
-    state->videoOutOpl = gameUsesOpl(state);
-    int mode = state->videoOutOpl ? state->gameOptions.oplVideoMode :
+    int mode = gameUsesOpl(state) ? state->gameOptions.oplVideoMode :
                                    state->gameOptions.videoMode;
     state->selectedGameRow = mode > 0 ? mode : 0;
-    state->videoOutFirstRow = 0;
-    state->selector.initialized = 0;
   } else if ((selectedRow == LUNA_GAME_VMC_SLOT1 || selectedRow == LUNA_GAME_VMC_SLOT2) &&
       (input & (PAD_CROSS | PAD_CIRCLE))) {
     int slot = selectedRow - LUNA_GAME_VMC_SLOT1;
@@ -726,15 +580,13 @@ static int handleGameInput(OptionsMenuState *state, int input) {
 
 // Runs settings for the selected game.
 // Returns -1 if a test launch unexpectedly returns.
-int uiTitleOptionsLoop(Target *target, const LunaOptionsScene *scene) {
+int uiTitleOptionsLoop(Target *target) {
   int res = 0;
   OptionsMenuState state = {
       .target = target,
       .logoSetting = loadPS2LogoEnabled(target),
       .coreSetting = loadGameCoreOpl(target),
-      .page = OPTIONS_PER_GAME,
-      .gameSection = GAME_HUB,
-      .scene = scene};
+      .gameSection = GAME_HUB};
 
   // Load arguments from config files
   state.titleArguments = target->platform == TARGET_PS1 ? calloc(1,sizeof(ArgumentList)) :
@@ -750,26 +602,33 @@ int uiTitleOptionsLoop(Target *target, const LunaOptionsScene *scene) {
     state.saveError = 1;
     state.saveErrorLabel = lunaText("Could not read cheat settings. Change a cheat option to reset.");
   }
-  uiFileManagerSetBackdrop(optionsWorkspaceBackdrop,&state);
-  lunaOptionsRevealStart(&state.transition,1,uiNowMs());
+  uiFileManagerSetPageSection("Game Options");
   optionsCubeLoop(&state);
   res=state.result;
-  // Storage refreshes may end a page directly; finish restoring its library.
-  if(res>=0 && state.transition.position>0) {
-    lunaOptionsRevealStart(&state.transition,0,uiNowMs());
-    int done;
-    do {
-      gsKit_clear(gsGlobal,BGColor);gsKit_TexManager_nextFrame(gsGlobal);
-      gsKit_set_test(gsGlobal,GS_ZTEST_OFF);
-      done=optionsCubeBackground(&state,1);
-      gsKit_set_test(gsGlobal,GS_ZTEST_ON);
-      presentOptionsFrame();
-    } while(!done);
-  }
-  uiFileManagerSetBackdrop(NULL,NULL);
+  uiFileManagerSetPageSection(NULL);
   freeArgumentList(state.titleArguments);
   lunaCheatFileFree(&state.cheatFile);
   return res;
+}
+
+static Argument *optionsArgumentAt(ArgumentList *arguments,int row) {
+  Argument *argument=arguments->first;
+  while(argument && row-->0)argument=argument->next;
+  return argument;
+}
+static const char *optionsArgumentLabel(void *context,int row) {
+  OptionsMenuState *state=context;
+  Argument *argument=optionsArgumentAt(state->titleArguments,row);
+  if(!argument)return "";
+  const char *value=argument->value?argument->value:"";
+  snprintf(state->workspaceRow.label,sizeof(state->workspaceRow.label),"%s%s%s%s",
+      argument->isGlobal?"[G] ":"",argument->arg,value[0]?": ":"",value);
+  return state->workspaceRow.label;
+}
+static const char *optionsArgumentValue(void *context,int row) {
+  OptionsMenuState *state=context;
+  Argument *argument=optionsArgumentAt(state->titleArguments,row);
+  return argument && !argument->isDisabled?"On":"Off";
 }
 
 // LUNA's advanced view of the merged game and global launch arguments.
@@ -782,52 +641,15 @@ static int uiArgumentListLoop(OptionsMenuState *state) {
   int saveError = 0;
   int changed = 0;
   Argument *curArgument = titleArguments->first;
+  LunaCubePageFocus focus={.selected=-1,.glideMs=110};
   while (1) {
-    gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
-    uiCubeHubDrawBackdrop();
-    gsKit_set_test(gsGlobal,GS_ZTEST_OFF);
-    gsKit_prim_sprite(gsGlobal,0,0,gsGlobal->Width,gsGlobal->Height,11,GS_SETREG_RGBA(0,0,0,64));
-    drawGlassPanelWithFillAlpha(30,48,gsGlobal->Width-30,gsGlobal->Height-footerHeight,12,0x7c);
-    const int baseX = keepoutArea + 10;
-    const int lineHeight = getFontLineHeight();
-    const int menuTop = optionsMenuTop();
-    const int menuBottom = gsGlobal->Height - footerHeight - lineHeight;
-    const int rowStep = lineHeight + lineHeight / 3;
-    int visible=(menuBottom-menuTop)/rowStep;
-    if (visible<1) visible=1;
-    int first=selectedArgIdx/visible*visible;
-
-    drawOptionsSection(optionsHeadingY(),
-                       lunaText("Launch arguments"), 0);
-    snprintf(lineBuffer, sizeof(lineBuffer), "%.38s  (%s)", target->name, target->id);
-    drawTextWindow(baseX, menuTop - lineHeight, gsGlobal->Width - baseX,
-                   menuTop, 0, HeaderTextColor, ALIGN_HCENTER, lineBuffer);
-    if (titleArguments->total == 0)
-      drawTextWindow(baseX + 18, menuTop, gsGlobal->Width - baseX, 0, 0,
-                     FontMainColor, ALIGN_LEFT, lunaText("No launch arguments set"));
-
-    Argument *argument = titleArguments->first;
-    for (int index = 0; argument != NULL; index++, argument = argument->next) {
-      int y = menuTop + (index-first) * rowStep;
-      if (y < menuTop || y + lineHeight > menuBottom)
-        continue;
-      const char *value = argument->value != NULL ? argument->value : "";
-      snprintf(lineBuffer, sizeof(lineBuffer), "%s%s%s%s",
-               argument->isGlobal ? "[G] " : "",
-               argument->arg, value[0] ? ": " : "", value);
-      drawOptionsTextRow(baseX, y, gsGlobal->Width - baseX,
-                         index == selectedArgIdx, y, lineBuffer,
-                         argument->isDisabled ? lunaText("Off") : lunaText("On"));
-    }
-    if (!saveError)
-      drawTextWindow(baseX + 18, menuBottom, gsGlobal->Width - baseX,
-                     gsGlobal->Height - footerHeight, 0, HeaderTextColor,
-                     ALIGN_LEFT, lunaText("[G] Inherited from global settings"));
+    LunaCubePage page={.title="Launch arguments",.sectionTitle="Game Options",
+        .subtitle=target->name,.count=titleArguments->total,
+        .label=optionsArgumentLabel,.value=optionsArgumentValue,.context=state,
+        .status=saveError?"Could not save game settings":"[G] Inherited from global settings",
+        .libraryFooter=1};
+    uiCubeHubPageDraw(&page,selectedArgIdx,&focus);
     uiCubeOptionsFooterDraw("Toggle",1);
-    if (saveError)
-      drawTextWindow(baseX, menuBottom, gsGlobal->Width - baseX,
-                     gsGlobal->Height - footerHeight, 0, ErrorTextColor, ALIGN_HCENTER,
-                     lunaText("Could not save game settings"));
     gsKit_set_test(gsGlobal, GS_ZTEST_ON);
     presentOptionsFrame();
 

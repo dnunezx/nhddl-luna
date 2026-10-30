@@ -115,6 +115,7 @@ typedef struct {
   int fromY;
   int toY;
   uint32_t startMs;
+  LunaCubePageFocus pageFocus;
 } BrowserSelector;
 
 static int browserSelectorProgress(const BrowserSelector *menu, uint32_t now) {
@@ -142,6 +143,10 @@ static int browserSelectorY(BrowserSelector *menu, int selected, int first, int 
 
 static void (*browserBackdrop)(void *);
 static void *browserBackdropContext;
+static const char *browserPageSection;
+void uiFileManagerSetPageSection(const char *sectionTitle) {
+  browserPageSection=sectionTitle;
+}
 void uiFileManagerSetBackdrop(void (*draw)(void *), void *context) {
   browserBackdrop=draw; browserBackdropContext=context;
 }
@@ -166,10 +171,7 @@ static void drawBrowserSheetPanel(int panelLeft, int panelTop,
   }
   gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 0,
                     glassPresetColor(0x02, 0x07, 0x16, 0x38));
-  gsKit_prim_sprite(gsGlobal, panelLeft + 2, panelTop + 2,
-                    panelRight - 2, panelBottom - 2, 1,
-                    glassPresetColor(0x02, 0x08, 0x18, 0x48));
-  drawGlassPanel(panelLeft, panelTop, panelRight, panelBottom, 2);
+  uiCubePanelGlassDraw(panelLeft, panelTop, panelRight, panelBottom, 2, 0x54);
 }
 
 static void drawBrowserSheet(int fileManager) {
@@ -202,13 +204,8 @@ static void drawFileManagerModal(int left, int top, int right, int bottom,
                     GS_SETREG_RGBA(0x00, 0x03, 0x0A, 0x48));
   gsKit_prim_sprite(gsGlobal, left + 5, top + 6, right + 5, bottom + 6, 11,
                     GS_SETREG_RGBA(0, 0, 0, 0x50));
-  gsKit_prim_sprite(gsGlobal, left, top, right, bottom, 12,
-                    glassPresetColor(0x10, 0x20, 0x34, 0x7C));
+  uiCubePanelGlassDraw(left, top, right, bottom, 12, 0x7C);
   uint64_t edge = glassPresetColor(0x89, 0xAE, 0xC6, 0x40);
-  gsKit_prim_sprite(gsGlobal, left, top, right, top + 1, 13, edge);
-  gsKit_prim_sprite(gsGlobal, left, top, left + 1, bottom, 13, edge);
-  gsKit_prim_sprite(gsGlobal, right - 1, top, right, bottom, 13, edge);
-  gsKit_prim_sprite(gsGlobal, left, bottom - 1, right, bottom, 13, edge);
   int line = getFontLineHeight();
   char fitted[PATH_MAX + 64];
   fileManagerFitText(title, right - left - 28, fitted, sizeof(fitted), 0);
@@ -282,12 +279,58 @@ static void drawBrowserRow(int y, int selected, const char *name,
                    detail,1);
 }
 
+typedef struct {
+  int (*row)(int, char *, size_t, char *, size_t, void *);
+  void *context;
+  char name[PATH_MAX + 3], detail[32];
+} BrowserPageRows;
+
+static const char *browserPageLabel(void *context,int index) {
+  BrowserPageRows *rows=context;
+  rows->name[0]=rows->detail[0]=0;
+  rows->row(index,rows->name,sizeof(rows->name),rows->detail,sizeof(rows->detail),rows->context);
+  return rows->name;
+}
+
+static const char *browserPageValue(void *context,int index) {
+  BrowserPageRows *rows=context;
+  browserPageLabel(context,index);
+  return rows->detail;
+}
+
+static void drawBrowserPageFooter(PromptBar footer) {
+  ButtonPrompt prompts[MENU_PROMPT_MAX];
+  int count=footer.count<MENU_PROMPT_MAX?footer.count:MENU_PROMPT_MAX;
+  for(int i=0;i<count;i++) {
+    prompts[i]=footer.items[i];
+    if(prompts[i].icon==ICON_TRIANGLE && !strcmp(prompts[i].label,lunaText("Back")))
+      prompts[i].icon=ICON_CIRCLE;
+  }
+  footer.items=prompts;footer.count=count;
+  drawMenuPromptBar(&fileFooterTransitions[0],20,gsGlobal->Height-footerHeight+8,
+      gsGlobal->Width-20,gsGlobal->Height,8,FontMainColor,footer,1);
+}
+
 static void drawBrowserFrameSelected(const char *heading, const char *path,
                              const char *status, PromptBar footer,
                              int count, int selected, int first,
                              int (*row)(int, char *, size_t, char *, size_t,
                                         void *), void *context,
                              BrowserSelector *selector) {
+  if(browserPageSection) {
+    BrowserPageRows rows={.row=row,.context=context};
+    LunaCubePageFocus localFocus={.selected=-1,.glideMs=BROWSER_SELECTOR_GLIDE_MS};
+    LunaCubePageFocus *focus=selector?&selector->pageFocus:&localFocus;
+    if(selector && selector->selected<0)*focus=localFocus;
+    LunaCubePage page={.title=heading,.subtitle=path,.sectionTitle=browserPageSection,
+        .count=count,.label=browserPageLabel,.value=browserPageValue,
+        .context=&rows,.status=status,.libraryFooter=1};
+    uiCubeHubPageDraw(&page,selected,focus);
+    if(selector)selector->selected=selected;
+    drawBrowserPageFooter(footer);
+    presentBrowserFrame();
+    return;
+  }
   int left = keepoutArea + 30;
   int right = gsGlobal->Width - left;
   int lineHeight = getFontLineHeight();
@@ -582,10 +625,19 @@ static int editBrowserText(const char *title, char *name, size_t capacity,
     int left = keepoutArea + 24, right = gsGlobal->Width - left;
     int line = getFontLineHeight();
     int top = 54, bottom = gsGlobal->Height - 24;
+    if(browserPageSection) {
+      left=gsGlobal->Width*32/640;right=gsGlobal->Width*506/640;
+      top=gsGlobal->Height*99/480;bottom=gsGlobal->Height*382/480;
+    }
     int length = strlen(name);
     char visible[FILE_MANAGER_NAME_MAX + 8];
     fileManagerFitText(name, right - left - 40, visible, sizeof(visible), 1);
-    drawFileManagerModal(left, top, right, bottom, title);
+    if(browserPageSection) {
+      LunaCubePageFocus focus={.selected=-1};
+      LunaCubePage page={.title=title,.sectionTitle=browserPageSection,
+          .count=-1,.libraryFooter=1};
+      uiCubeHubPageDraw(&page,0,&focus);
+    } else drawFileManagerModal(left, top, right, bottom, title);
     int fieldTop = top + line + 32;
     gsKit_prim_sprite(gsGlobal, left + 14, fieldTop, right - 14,
                       fieldTop + line + 12, 14,
@@ -618,8 +670,9 @@ static int editBrowserText(const char *title, char *name, size_t capacity,
     drawMenuPromptBar(&fileFooterTransitions[3],left + 14, bottom - 2 * line - 16, right - 14,
                   bottom - line - 16, 15, HeaderTextColor,
                   (PromptBar){NULL, edit, 4},1);
-    drawFileManagerModalHelp(left, right, bottom, PROMPT_TWO(
-        ICON_START, lunaText("Save"), ICON_CIRCLE, lunaText("Cancel")));
+    PromptBar done=PROMPT_TWO(ICON_START,lunaText("Save"),ICON_CIRCLE,lunaText("Cancel"));
+    if(browserPageSection)drawBrowserPageFooter(done);
+    else drawFileManagerModalHelp(left,right,bottom,done);
     presentBrowserFrame();
     int input = waitForInput(-1);
     if (input & PAD_CIRCLE)
@@ -2754,6 +2807,7 @@ int uiMainMenuLoop(int hasLibrary, Target *target) {
   uiRingSetColor((LunaRingColor)appearance.ringColor);
   uiRingSetEffectsColor((LunaRingColor)appearance.ringEffectsColor);
   for (;;) {
+    uiCubePanelGlassClose();
     int action = uiRingMenuLoop(hasLibrary, startMenuStatus(hasLibrary));
     // Consume the activation press before entering another interactive screen.
     waitMenuButtonRelease();

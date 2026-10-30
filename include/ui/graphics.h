@@ -119,7 +119,7 @@ int drawQuickMenuTextWindow(int x1, int y1, int x2, int y2, int z,
 void drawTextLineScaled(int x, int y, int right, int z, float scale,
                         uint64_t color, const char *text);
 
-// Menu text: uniform scale, pixel-aligned glyphs and matching atlas padding.
+// Authored Start-ring text: preserve its pixel alignment and atlas padding.
 void drawTextLineScaledCrisp(int x, int y, int right, int z, float scale,
                            uint64_t color, const char *text);
 
@@ -134,7 +134,11 @@ uint8_t getFontLineHeight();
 
 // Gets the line width for the first line in text
 float getLineWidth(const char *text);
-// Includes glyph overhang and the crisp renderer's extra atlas texel.
+
+// Scope the Start ring's existing text layout; returns the previous setting.
+int setAuthoredTextLayout(int enabled);
+
+// Includes glyph overhang for the active text layout.
 float getLineDrawWidth(const char *text);
 
 // Returns icon width

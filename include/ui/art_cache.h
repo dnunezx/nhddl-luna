@@ -47,7 +47,6 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
                         int useFullResolution);
 void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx);
 void refreshOrbitCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx);
-int collectionArtBackgroundAvailable(void);
 // Retain cached pixels while changing active/background artwork priority.
 void setCollectionArtForeground(int foreground);
 // Returns whether entry covers were available before scheduling fresh loads.

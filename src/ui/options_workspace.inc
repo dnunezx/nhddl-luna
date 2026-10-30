@@ -67,10 +67,10 @@ static void owDescribeRow(OptionsMenuState *s, GameSection section, int row,
         lunaText("selected"),lunaText(s->cheats.enabled ? "Changes save automatically. Square to test." :
                                                       "Cheats are off; selections are retained."));
   } else if (section == GAME_VIDEO_OUT) {
-    label=lunaGameVideoModeLabel(s->videoOutOpl,row);
-    value=(s->videoOutOpl ? s->gameOptions.oplVideoMode : s->gameOptions.videoMode)==row ? "On" : "Off";
-    help=row==0 ? "Keep the game's original output. Left/right changes tabs." :
-                  "Select one output per core. Left/right changes tabs.";
+    label=lunaGameVideoModeLabel(gameUsesOpl(s),row);
+    value=(gameUsesOpl(s) ? s->gameOptions.oplVideoMode : s->gameOptions.videoMode)==row ? "On" : "Off";
+    help=row==0 ? "Keep the game's original output." :
+                  "Select an output for the selected game core.";
   } else {
     LunaGameRow option=gameSectionRow(s,section,row);
     label=gameRowLabels[option]; help=gameRowDescriptions[option];
@@ -106,35 +106,12 @@ static void owSummary(OptionsMenuState *s, GameSection section, char *out, size_
   } else if (section==GAME_DISCS) {
     snprintf(out,size,"%u %s",s->target->discs ? s->target->discs->count : 1,lunaText("discs"));
   } else if (section==GAME_VIDEO_OUT) {
-    snprintf(out,size,"%s",s->videoOutOpl ? "OPL" : "Neutrino");
+    snprintf(out,size,"%s",gameUsesOpl(s) ? "OPL" : "Neutrino");
   } else {
     LunaGameRow option=section==GAME_CORE ? LUNA_GAME_CORE : s->target->platform==TARGET_PS1 ?
         LUNA_GAME_PS1_HDTV_FIX : gameUsesOpl(s) ? LUNA_GAME_OPL_VIDEO_MODE : LUNA_GAME_VIDEO_MODE;
     snprintf(out,size,"%s",lunaGameOptionsValue(&s->gameOptions,option));
   }
-}
-
-static int optionsCubeBackground(void *context,int closing) {
-  OptionsMenuState *s=context;
-  if(closing && s->transition.opening)
-    lunaOptionsRevealStart(&s->transition,0,uiNowMs());
-  int done=lunaOptionsRevealTick(&s->transition,uiNowMs());
-  if(s->scene && s->scene->drawLibrary)
-    s->scene->drawLibrary(s->scene->context,s->transition.position);
-  else drawSharedLibraryBackground(uiNowMs());
-  gsKit_set_test(gsGlobal,GS_ZTEST_OFF);
-  gsGlobal->PrimAlphaEnable=GS_SETTING_ON;
-  gsKit_set_primalpha(gsGlobal,GS_SETREG_ALPHA(0,1,0,1,0),0);
-  gsKit_set_test(gsGlobal,GS_ATEST_OFF);
-  gsKit_prim_sprite(gsGlobal,0,0,gsGlobal->Width,gsGlobal->Height,1,
-      GS_SETREG_RGBA(0,0,0,(int)(128*s->transition.shade)));
-  return closing && done;
-}
-
-static void optionsWorkspaceBackdrop(void *context) {
-  (void)context;
-  uiCubeHubDrawBackdrop();
-  gsKit_set_test(gsGlobal,GS_ZTEST_OFF);
 }
 
 static const char *optionsCubeDescription(void *context,int row) {
@@ -200,15 +177,17 @@ static void optionsCubeDraw(void *context,float opacity) {
   OptionsMenuState *s=((OptionsCubeCategory *)context)->state;
   int count=owRowCount(s,s->gameSection);
   if(s->selectedGameRow<0 || s->selectedGameRow>=count)s->selectedGameRow=0;
-  char title[96];
-  snprintf(title,sizeof(title),"%s%s%s",owSectionLabel(s->gameSection),
-      s->gameSection==GAME_VIDEO_OUT?" / ":"",
-      s->gameSection==GAME_VIDEO_OUT?(s->videoOutOpl?"OPL":"Neutrino"):"");
-  LunaCubePage page={.title=title,.count=count,.label=optionsCubeLabel,
+  static const char *const coreTabs[]={"Neutrino","OPL"};
+  int showCoreTabs=s->target->platform!=TARGET_PS1 &&
+      (s->gameSection==GAME_COMPATIBILITY || s->gameSection==GAME_VIDEO ||
+       s->gameSection==GAME_VIDEO_OUT);
+  LunaCubePage page={.title=owSectionLabel(s->gameSection),.count=count,.label=optionsCubeLabel,
     .value=optionsCubeValue,.description=optionsCubeRowDescription,
     .adjust=optionsCubeAdjust,.context=s,.sectionTitle="Game Options",
     .subtitle=s->target->name,.libraryFooter=1,
-    .stackedValues=s->gameSection==GAME_MEMORY_CARDS || s->gameSection==GAME_CORE};
+    .stackedValues=s->gameSection==GAME_MEMORY_CARDS || s->gameSection==GAME_CORE,
+    .tabs=showCoreTabs?coreTabs:NULL,.tabCount=showCoreTabs?2:0,
+    .selectedTab=gameUsesOpl(s)};
   uiCubeSubmenuPageDraw(&page,s->selectedGameRow,&s->pageFocus,opacity);
   if(!s->saveError && s->savedAt && uiNowMs()-s->savedAt<1800U)
     drawTextWindow(gsGlobal->Width*525/640,gsGlobal->Height*22/480,
@@ -246,8 +225,8 @@ static int optionsCubeHubInput(void *context,int input) {
 }
 
 static void optionsCubeFooter(void *context,float pageProgress) {
-  OptionsMenuState *s=context;
-  uiCubeOptionsFooterTransitionDraw(s->transition.position,pageProgress);
+  (void)context;
+  uiCubeOptionsFooterTransitionDraw(1,pageProgress);
 }
 
 static void optionsCubeLoop(OptionsMenuState *s) {
@@ -265,6 +244,6 @@ static void optionsCubeLoop(OptionsMenuState *s) {
     .submenus=submenus,.submenuCount=count,.confirmRow=-1,.context=s,
     .description=optionsCubeDescription,.subtitle=s->target->name,
     .libraryFooter=1,
-    .background=optionsCubeBackground,.input=optionsCubeHubInput,.footer=optionsCubeFooter};
+    .input=optionsCubeHubInput,.footer=optionsCubeFooter};
   uiCubeHubLoop(&s->selectedGameHubRow,NULL,&hub);
 }

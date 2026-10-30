@@ -64,8 +64,17 @@ static void prepareGridSelector(GSTEXTURE *texture) {
 
 // Keep only the selected font's texture decoded and resident.
 static const BMFont *font = &BMFONT_DEJAVU_SANS;
-// Scoped to the library quick menu; other text keeps its current rendering.
-static int legacyQuickMenuText;
+// Ordinary UI text retains 3.1.3 sampling and advances. The Start ring
+// scopes its authored text layout around the whole frame, including prompts.
+static int authoredTextLayout;
+// Quick-menu labels have already received their palette color.
+static int quickMenuTextColor;
+
+int setAuthoredTextLayout(int enabled) {
+  const int previous = authoredTextLayout;
+  authoredTextLayout = enabled != 0;
+  return previous;
+}
 static UIFont activeUIFont = UI_FONT_DEJAVU;
 static u32 fontVram = GSKIT_ALLOC_ERROR;
 static u32 fontVramSize;
@@ -581,9 +590,9 @@ static uint64_t glassTextColor(uint64_t color) {
 
 // Draws glyph at specified coordinates
 static void drawGlyph(const BMFontChar *glyph, float x, float y, int z, uint64_t color) {
-  // Current text gives the extra atlas texel a matching destination pixel.
-  // The quick menu retains 3.1.3's destination bounds.
-  const int padding = legacyQuickMenuText ? 0 : 1;
+  // Preserve the proven native GS bounds; authored ring text keeps its
+  // existing destination padding without changing ordinary UI glyphs.
+  const int padding = authoredTextLayout ? 1 : 0;
   gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],   // font page
                             x + glyph->xoffset,                 // x1 (destination)
                             y + glyph->yoffset,                 // y1
@@ -609,7 +618,7 @@ static void beginFontDraw(void) {
 // Draws the text with specified max dimensions relative to x and y
 // Returns the bottom Y coordinate of the last line that can be used to draw the next text
 int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, const char *text) {
-  if (!legacyQuickMenuText) color = glassTextColor(color);
+  if (!quickMenuTextColor) color = glassTextColor(color);
   int curX = x;
   const BMFontChar *glyph;
   const int previousAlphaTest = gsGlobal->Test->ATST;
@@ -648,7 +657,7 @@ int drawText(int x, int y, int z, int maxWidth, int maxHeight, uint64_t color, c
     curX += glyph->xadvance;
 
     // Account for kerning if kernings are present and next char is not a null terminator
-    if (!legacyQuickMenuText && glyph->kernings && (*cursor != '\0')) {
+    if (authoredTextLayout && glyph->kernings && (*cursor != '\0')) {
       const char *next = cursor;
       uint32_t nextCharacter = lunaUTF8Next(&next);
       for (int k = 0; k < glyph->kerningsCount; k++) {
@@ -687,7 +696,7 @@ float getLineWidth(const char *text) {
 
     lineWidth += glyph->xadvance;
     // Account for kerning
-    if (!legacyQuickMenuText && glyph->kernings && (*cursor != '\0')) {
+    if (authoredTextLayout && glyph->kernings && (*cursor != '\0')) {
       const char *next = cursor;
       uint32_t nextCharacter = lunaUTF8Next(&next);
       for (int k = 0; k < glyph->kerningsCount; k++) {
@@ -708,10 +717,10 @@ float getLineDrawWidth(const char *text) {
     if (character == '\n') break;
     const BMFontChar *glyph = getGlyph(character);
     if (!glyph) continue;
-    float right = pen + glyph->xoffset + glyph->width + 1;
+    float right = pen + glyph->xoffset + glyph->width + (authoredTextLayout ? 1 : 0);
     if (right > extent) extent = right;
     pen += glyph->xadvance;
-    if (glyph->kernings && *cursor) {
+    if (authoredTextLayout && glyph->kernings && *cursor) {
       const char *next = cursor;
       uint32_t nextCharacter = lunaUTF8Next(&next);
       for (int k = 0; k < glyph->kerningsCount; k++)
@@ -727,7 +736,7 @@ float getLineDrawWidth(const char *text) {
 // Returns the bottom Y coordinate of the last line that can be used to draw the next text.
 // Use the faster drawText method if window limits are not important.
 int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_t alignment, const char *text) {
-  if (!legacyQuickMenuText) color = glassTextColor(color);
+  if (!quickMenuTextColor) color = glassTextColor(color);
   if (!x2 && !y2) {
     // If window limits are not set, use faster drawing function
     return drawText(x1, y1, z, 0, 0, color, text);
@@ -806,7 +815,7 @@ int drawTextWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_
 
     curX += glyph->xadvance;
     // Account for kerning if kernings are present and next char is not a null terminator
-    if (!legacyQuickMenuText && glyph->kernings && (*cursor != '\0')) {
+    if (authoredTextLayout && glyph->kernings && (*cursor != '\0')) {
       const char *next = cursor;
       uint32_t nextCharacter = lunaUTF8Next(&next);
       for (int k = 0; k < glyph->kerningsCount; k++) {
@@ -864,10 +873,12 @@ int drawQuickMenuTextWindow(int x1, int y1, int x2, int y2, int z,
     memcpy(fitted + best, "...", 4);
     text = fitted;
   }
-  const int previous = legacyQuickMenuText;
-  legacyQuickMenuText = 1;
+  const int previous = quickMenuTextColor;
+  const int previousLayout = setAuthoredTextLayout(0);
+  quickMenuTextColor = 1;
   const int bottom = drawTextWindow(x1, y1, x2, y2, z, color, alignment, text);
-  legacyQuickMenuText = previous;
+  quickMenuTextColor = previous;
+  setAuthoredTextLayout(previousLayout);
   return bottom;
 }
 
@@ -877,6 +888,7 @@ void drawTextLineScaled(int x, int y, int right, int z, float scale,
   const int previousAlphaTest = gsGlobal->Test->ATST;
   const int previousAlphaReference = gsGlobal->Test->AREF;
   const int previousAlphaFail = gsGlobal->Test->AFAIL;
+  const int padding = authoredTextLayout ? 1 : 0;
   float curX = x;
   beginFontDraw();
   const char *cursor = text;
@@ -887,13 +899,13 @@ void drawTextLineScaled(int x, int y, int right, int z, float scale,
     if (!glyph) continue;
     float left = curX + glyph->xoffset * scale;
     float top = y + glyph->yoffset * scale;
-    if (left + (glyph->width + 1) * scale > right) break;
+    if (left + (glyph->width + padding) * scale > right) break;
     gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],
         left, top, glyph->x, glyph->y,
-        left + (glyph->width + 1) * scale, top + (glyph->height + 1) * scale,
+        left + (glyph->width + padding) * scale, top + (glyph->height + padding) * scale,
         glyph->x + glyph->width + 1, glyph->y + glyph->height + 1, z, color);
     curX += glyph->xadvance * scale;
-    if (glyph->kernings && *cursor) {
+    if (authoredTextLayout && glyph->kernings && *cursor) {
       const char *next = cursor;
       uint32_t nextCharacter = lunaUTF8Next(&next);
       for (int k = 0; k < glyph->kerningsCount; k++)
@@ -959,6 +971,7 @@ void drawTextLineScaledCrisp(int x, int y, int right, int z, float scale,
 
 int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *text, int scrollX) {
   color = glassTextColor(color);
+  const int padding = authoredTextLayout ? 1 : 0;
   float curX = x1 - scrollX;
   const int previousAlphaTest = gsGlobal->Test->ATST;
   const int previousAlphaReference = gsGlobal->Test->AREF;
@@ -974,20 +987,21 @@ int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *te
       continue;
 
     float glyphLeft = curX + glyph->xoffset;
-    float glyphRight = glyphLeft + glyph->width + 1;
+    float glyphRight = glyphLeft + glyph->width + padding;
     if (glyph->width > 0 && glyphRight > x1 && glyphLeft < x2) {
       float clippedLeft = (glyphLeft < x1) ? x1 : glyphLeft;
       float clippedRight = (glyphRight > x2) ? x2 : glyphRight;
-      float u1 = glyph->x + clippedLeft - glyphLeft;
-      float u2 = glyph->x + clippedRight - glyphLeft;
+      float textureScale = (glyph->width + 1.0f) / (glyph->width + padding);
+      float u1 = glyph->x + (clippedLeft - glyphLeft) * textureScale;
+      float u2 = glyph->x + (clippedRight - glyphLeft) * textureScale;
       gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],
                                 clippedLeft, y + glyph->yoffset, u1, glyph->y,
-                                clippedRight, y + glyph->yoffset + glyph->height + 1,
+                                clippedRight, y + glyph->yoffset + glyph->height + padding,
                                 u2, glyph->y + glyph->height + 1, z, color);
     }
 
     curX += glyph->xadvance;
-    if (glyph->kernings && *cursor != '\0') {
+    if (authoredTextLayout && glyph->kernings && *cursor != '\0') {
       const char *next = cursor;
       uint32_t nextCharacter = lunaUTF8Next(&next);
       for (int k = 0; k < glyph->kerningsCount; k++) {

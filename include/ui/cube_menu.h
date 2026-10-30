@@ -12,7 +12,7 @@ enum { LUNA_CUBE_BACK, LUNA_CUBE_VMC, LUNA_CUBE_STORAGE,
        LUNA_CUBE_LANGUAGE, LUNA_CUBE_EXIT, LUNA_CUBE_SHUTDOWN, LUNA_CUBE_DEFAULTS };
 typedef struct {
   const char *title;
-  int count;
+  int count; // -1 leaves the list area free for custom controls.
   const char *(*label)(void *context, int row);
   const char *(*value)(void *context, int row);
   const char *(*description)(void *context, int row);
@@ -23,6 +23,9 @@ typedef struct {
   const char *subtitle;
   int libraryFooter;
   int stackedValues;
+  // Optional tab labels; the caller owns which tab is accessible.
+  const char *const *tabs;
+  int tabCount, selectedTab;
 } LunaCubePage;
 enum { LUNA_CUBE_SUBMENU_STAY, LUNA_CUBE_SUBMENU_BACK, LUNA_CUBE_SUBMENU_DONE };
 typedef struct {
@@ -54,6 +57,9 @@ int uiCubeHubLoop(int *selected, const char *status, const LunaCubeHub *hub);
 // Redraw the active hub or page beneath a blocking picker, without presenting.
 void uiCubeHubDrawBackdrop(void);
 // CubeGlass panel in screen pixels; borrows scratch pages after the live scene.
+// Nested sheets borrow the active hub's materials; Close releases standalone panels only.
+void uiCubePanelGlassDraw(int left, int top, int right, int bottom, int z, int fillAlpha);
+void uiCubePanelGlassClose(void);
 int uiCubeQuickMenuGlassDraw(int left, int top, int right, int bottom);
 void uiCubeQuickMenuGlassClose(void);
 // Game Options uses the library footer's margins, height, and prompt spacing.
@@ -64,6 +70,9 @@ typedef struct {
   unsigned int startMs;
   int glideMs;
 } LunaCubePageFocus;
+// Replace the active page's contents while retaining its expanded crystal.
+void uiCubeHubPageDraw(const LunaCubePage *page, int selected,
+                       LunaCubePageFocus *focus);
 // Draw page contents into the shared settings scene without presenting a frame.
 void uiCubeSubmenuPageDraw(const LunaCubePage *page, int selected,
                          LunaCubePageFocus *focus, float opacity);

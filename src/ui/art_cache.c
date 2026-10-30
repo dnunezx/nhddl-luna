@@ -2452,10 +2452,6 @@ static void prioritizeCollectionVisibleArt(TargetList *titles, int selectedTitle
   }
 }
 
-int collectionArtBackgroundAvailable(void) {
-  return collectionArtThreadId >= 0;
-}
-
 static int serviceCollectionCoversInternal(TargetList *titles, int selectedTitleIdx,
                                       int direction, int fastScrolling, int flowOffset,
                                       int entering) {

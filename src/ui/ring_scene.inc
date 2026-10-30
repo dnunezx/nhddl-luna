@@ -73,6 +73,7 @@ static float ringTitleHeight(float size) {
   return fmaxf(24,36*size*448/480);
 }
 static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
+  const int previousTextLayout=setAuthoredTextLayout(1);
   static const char *labels[]={"Game Library","File Browser","Appearance","Settings"};
   static const char *labelKeys[]={"Return to Library","File Explorer","Appearance","System Configuration"};
   static const char *details[]={"Your games, ready to play.","Explore connected devices.","Customize your library.","Make LUNA your own."};
@@ -164,5 +165,6 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
       HeaderTextColor,(PromptBar){NULL,prompts,3},menu->closing?1-ringClamp(menu->exit/2000):ringClamp(menu->entry/600));
   gsKit_set_primalpha(gsGlobal,savedBlend,savedPabe); gsGlobal->PrimAlphaEnable=savedAlpha;
   *gsGlobal->Test=savedTest; gsKit_set_test(gsGlobal,GS_ZTEST_ON);
+  setAuthoredTextLayout(previousTextLayout);
   gsKit_queue_exec(gsGlobal); gsKit_finish(); gsKit_sync_flip(gsGlobal); usleep(1000);
 }

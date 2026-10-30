@@ -1,25 +1,32 @@
-/* A thin CubeGlass slab for the library quick-menu overlay. */
+/* Screen-space CubeGlass panels share materials with an active crystal hub. */
 static int cubeQuickGlassActive;
+static int cubePanelGlassActive;
 static GlassColorPreset cubeQuickGlassTheme;
 
-void uiCubeQuickMenuGlassClose(void) {
-  if (!cubeQuickGlassActive) return;
+void uiCubePanelGlassClose(void) {
+  if (!cubePanelGlassActive) return;
   cubeMaterialClose();
+  cubePanelGlassActive = 0;
   cubeQuickGlassActive = 0;
 }
 
-int uiCubeQuickMenuGlassDraw(int left, int top, int right, int bottom) {
+void uiCubeQuickMenuGlassClose(void) {
+  if (cubeQuickGlassActive) uiCubePanelGlassClose();
+}
+
+static int cubePanelGlassDraw(int left, int top, int right, int bottom,
+                              int z, int fillAlpha) {
   if (right <= left || bottom <= top || left >= gsGlobal->Width ||
       top >= gsGlobal->Height || right <= 0 || bottom <= 0)
     return 0;
   const GlassColorPreset theme = getGlassColorPreset();
-  if (!cubeQuickGlassActive || theme != cubeQuickGlassTheme) {
-    if (cubeQuickGlassActive) cubeMaterialClose();
+  if (!activeCubeMenu && (!cubePanelGlassActive || theme != cubeQuickGlassTheme)) {
+    uiCubePanelGlassClose();
     cubeMaterialInit();
-    cubeQuickGlassActive = 1;
+    cubePanelGlassActive = 1;
     cubeQuickGlassTheme = theme;
-    // Only quick-menu materials use the UI palette. Hub initialization rebuilds
-    // its own neutral maps, so the shared CubeGlass appearance stays unchanged.
+    // Standalone panels use the UI palette. Nested sheets borrow the hub's
+    // neutral maps without changing its material pixels or texture ownership.
     if (theme != GLASS_COLOR_ORIGINAL) {
       for (int map = 0; map < 4; map++) {
         for (int pixel = 0; pixel < 4096; pixel++) {
@@ -30,7 +37,8 @@ int uiCubeQuickMenuGlassDraw(int left, int top, int right, int bottom) {
       }
     }
   }
-  if (!cubeWorkReady) return 0;
+  // A background change may have recreated the scratch pages since init.
+  cubeWorkReady = uiBorrowBackgroundWorkPages(cubeWork);
 
   const float x1 = left * 640.0f / gsGlobal->Width;
   const float y1 = top * 480.0f / gsGlobal->Height;
@@ -76,12 +84,24 @@ int uiCubeQuickMenuGlassDraw(int left, int top, int right, int bottom) {
   gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
   gsKit_set_test(gsGlobal, GS_ATEST_OFF);
   gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
-  if (theme != GLASS_COLOR_ORIGINAL) {
+  if (fillAlpha > 0 || theme != GLASS_COLOR_ORIGINAL) {
     gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
-    gsKit_prim_sprite(gsGlobal, left, top, right, bottom, 0,
-        glassPresetColor(5, 13, 34, theme == GLASS_COLOR_BLACK ? 0x48 : 0x28));
+    gsKit_prim_sprite(gsGlobal, left, top, right, bottom, z,
+        glassPresetColor(5, 13, 34, fillAlpha > 0 ? fillAlpha :
+                         theme == GLASS_COLOR_BLACK ? 0x48 : 0x28));
   }
-  cubeGlassDraw(&scene, (CubeVec){0, 0, 0});
+  if (cubeWorkReady) cubeGlassDraw(&scene, (CubeVec){0, 0, 0});
+  else {
+    // Keep the same slab, gloss and contour when refraction scratch is absent.
+    // An opaque-enough base keeps instructions readable in this reduced pass.
+    gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+    gsKit_prim_sprite(gsGlobal, left, top, right, bottom, z,
+        glassPresetColor(5, 13, 34, 0x68));
+    cubeRenderScene = &scene;
+    cubeTarget(-1);
+    cubeGlassFaces(&scene, (CubeVec){0, 0, 0}, CUBE_GLOSS, (CubeVec){0, 0, 0}, 1);
+    cubeGlassHighlight(&scene, (CubeVec){0, 0, 0});
+  }
   cubeRestoreGlassState();
   cubeSceneScale = savedScale;
   cubeSceneOffsetX = savedX;
@@ -91,4 +111,14 @@ int uiCubeQuickMenuGlassDraw(int left, int top, int right, int bottom) {
   *gsGlobal->Test = savedTest;
   gsKit_set_test(gsGlobal, savedTest.ATE ? GS_ATEST_ON : GS_ATEST_OFF);
   return 1;
+}
+
+void uiCubePanelGlassDraw(int left, int top, int right, int bottom, int z, int fillAlpha) {
+  cubePanelGlassDraw(left, top, right, bottom, z, fillAlpha);
+}
+
+int uiCubeQuickMenuGlassDraw(int left, int top, int right, int bottom) {
+  int drawn = cubePanelGlassDraw(left, top, right, bottom, 0, 0);
+  if (drawn && !activeCubeMenu) cubeQuickGlassActive = 1;
+  return drawn;
 }

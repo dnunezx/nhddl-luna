@@ -20,6 +20,8 @@ static float randomUnit(void) {
 static int clampSetting(int value, int maximum) {
   return value < 0 ? 0 : value > maximum ? maximum : value;
 }
+int lunaSpaceSpeed(void) { return speedSetting; }
+int lunaSpaceDepth(void) { return depthSetting; }
 void lunaSpaceSetSpeed(int setting) { speedSetting = clampSetting(setting, 8); }
 void lunaSpaceSetDepth(int setting) { depthSetting = clampSetting(setting, 4); }
 static void initSpace(uint32_t nowMs) {
@@ -81,6 +83,41 @@ int lunaSpaceProject(int index, int width, int height, LunaSpacePoint *point) {
   return point->x >= -48 && point->x <= width + 48 && point->y >= -48 && point->y <= height + 48;
 }
 #ifndef LUNA_SPACE_MODEL_ONLY
+/* One small alpha mask keeps every star round without extra geometry. */
+enum { SPACE_STAR_SIZE = 32 };
+static u32 spaceStarPixels[SPACE_STAR_SIZE * SPACE_STAR_SIZE] __attribute__((aligned(128)));
+static GSTEXTURE spaceStarTexture;
+void resetSpaceFlightTexture(void) {
+  // The UI has discarded the previous GS context and its texture residency.
+  spaceStarTexture = (GSTEXTURE){0};
+}
+static int prepareSpaceStarTexture(void) {
+  if (!spaceStarTexture.Mem) {
+    for (int y = 0; y < SPACE_STAR_SIZE; ++y) {
+      for (int x = 0; x < SPACE_STAR_SIZE; ++x) {
+        const float dx = (x - 15.5f) / 14.5f;
+        const float dy = (y - 15.5f) / 14.5f;
+        const float radius = sqrtf(dx * dx + dy * dy);
+        const float fade = fmaxf(0, 1 - radius);
+        const uint32_t alpha = (uint32_t)(128 * fade * fade * (3 - 2 * fade));
+        // Neutral RGB preserves the existing tints, even at transparent edges.
+        spaceStarPixels[y * SPACE_STAR_SIZE + x] = 0x00808080U | (alpha << 24);
+      }
+    }
+    spaceStarTexture.Width = spaceStarTexture.Height = SPACE_STAR_SIZE;
+    spaceStarTexture.PSM = GS_PSM_CT32;
+    spaceStarTexture.Mem = spaceStarPixels;
+    spaceStarTexture.Filter = GS_FILTER_LINEAR;
+    spaceStarTexture.Delayed = GS_SETTING_ON;
+  }
+  return bindTextureSafe(gsGlobal, &spaceStarTexture);
+}
+static void drawSpaceStar(float x, float y, float radius, uint64_t color) {
+  gsKit_prim_sprite_texture(gsGlobal, &spaceStarTexture,
+      x - radius, y - radius, 0.5f, 0.5f,
+      x + radius, y + radius, SPACE_STAR_SIZE - 0.5f, SPACE_STAR_SIZE - 0.5f,
+      0, color);
+}
 enum { SPACE_GLOW_SEGMENTS = 24 };
 static struct { float x, y; } spaceGlow[SPACE_GLOW_SEGMENTS + 1];
 static int spaceGlowWidth, spaceGlowHeight;
@@ -120,6 +157,7 @@ void drawSpaceFlight(uint32_t nowMs) {
         0, GS_SETREG_RGBA(0x12, 0x38, 0x68, 0x12),
         GS_SETREG_RGBA(0x12, 0x38, 0x68, 0), GS_SETREG_RGBA(0x12, 0x38, 0x68, 0));
   }
+  const int starsReady = prepareSpaceStarTexture();
   for (int i = 0; i < LUNA_SPACE_POINTS; ++i) {
     LunaSpacePoint p;
     if (!lunaSpaceProject(i, w, h, &p)) continue;
@@ -128,12 +166,10 @@ void drawSpaceFlight(uint32_t nowMs) {
     const int r = warm ? 0xC0 : 0x60, g = warm ? 0xB0 : 0xA0;
     gsKit_prim_line_goraud(gsGlobal, p.tailX, p.tailY, p.x, p.y, 0,
         GS_SETREG_RGBA(r, g, 0xE0, alpha / 6), GS_SETREG_RGBA(r, g, 0xE0, alpha));
-    const float glow = p.size * 2.5f;
-    gsKit_prim_sprite(gsGlobal, p.x - glow, p.y - glow, p.x + glow, p.y + glow,
-        0, GS_SETREG_RGBA(r, g, 0xE0, alpha / 9));
-    gsKit_prim_sprite(gsGlobal, p.x - p.size * 0.5f, p.y - p.size * 0.5f,
-        p.x + p.size * 0.5f, p.y + p.size * 0.5f, 0,
-        GS_SETREG_RGBA(0xD0, 0xE0, 0xF0, alpha));
+    if (starsReady) {
+      drawSpaceStar(p.x, p.y, p.size * 2.5f, GS_SETREG_RGBA(r, g, 0xE0, alpha / 9));
+      drawSpaceStar(p.x, p.y, p.size * 0.5f, GS_SETREG_RGBA(0xD0, 0xE0, 0xF0, alpha));
+    }
   }
   /* Options composes text/panels with depth testing disabled. Restore the
      complete caller TEST state instead of imposing library defaults. */

@@ -138,6 +138,7 @@ static void cubeStep(CubeMenu *m,uint32_t now) {
 #include <dmaKit.h>
 #include <unistd.h>
 static int cubeBackdropOnly;
+static int cubePageSceneOnly;
 #include "cube_draw.inc"
 static CubeMenu *activeCubeMenu;
 static const LunaCubeHub *activeCubeHub;
@@ -154,6 +155,15 @@ void uiCubeHubDrawBackdrop(void) {
   cubeBackdropOnly=saved;
 }
 
+void uiCubeHubPageDraw(const LunaCubePage *page,int selected,LunaCubePageFocus *focus) {
+  int saved=cubePageSceneOnly;
+  cubePageSceneOnly=1;
+  uiCubeHubDrawBackdrop();
+  cubePageSceneOnly=saved;
+  gsKit_set_test(gsGlobal,GS_ZTEST_OFF);
+  uiCubeSubmenuPageDraw(page,selected,focus,1);
+}
+
 static void cubeHubClose(void) {
   activeCubeMenu=NULL;activeCubeHub=NULL;activeCubeSubmenu=NULL;
   cubeMaterialClose();
@@ -162,7 +172,7 @@ static void cubeHubClose(void) {
 int uiCubeHubLoop(int *selected,const char *status,const LunaCubeHub *hub) {
   static CubeMenu menu;
   if(!hub||!hub->labels||hub->count<1||hub->count>CUBE_COUNT)return -1;
-  uiCubeQuickMenuGlassClose();
+  uiCubePanelGlassClose();
   int initial=*selected;
   if(initial<0||initial>=hub->count)initial=0;
   cubeInit(&menu,uiNowMs(),initial,gsGlobal->Mode==GS_MODE_PAL?50:60);

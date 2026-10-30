@@ -9,6 +9,8 @@ int uiMainMenuLoop(int hasLibrary, Target *target);
 void uiVmcSetLibrary(TargetList *library);
 // Draw-only backdrop for pickers opened by another workspace; clear on return.
 void uiFileManagerSetBackdrop(void (*draw)(void *), void *context);
+// Opt in only while Game Options owns the active crystal page; NULL on return.
+void uiFileManagerSetPageSection(const char *sectionTitle);
 int uiVmcPs2Slot(Target *target, ArgumentList *arguments, LunaGameOptions *options, int slot);
 int uiVmcPs2Policy(Target *target, ArgumentList *arguments, LunaGameOptions *options);
 const char *uiVmcCheckPs2(Target *target, ArgumentList *arguments);

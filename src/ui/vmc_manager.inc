@@ -185,10 +185,11 @@ static int vmcAssignToGame(int platform,const char *path) {
 static int vmcCardMenu(int platform,const char *path,VmcAssignCard assign,void *context) {
   static const char *const actions[]={"Create","Assign","Duplicate","Import","Export","Back Up","Restore","Recover"};
   static const char *const candidates[]={"Current card","Staged replacement","Previous card","Recovery stage","Previous PS1 save","PS1 save candidate","PS1 staged save","PS1 recovery copy","Earlier PS1 recovery","PS1 pair recovery","Create blank missing card"};
+  int action=0;
   for(;;) {
     const char *cardError=lunaVmcReady(path,platform);
-    int action=ps1Action("Virtual Memory Cards",path,cardError?cardError:
-        "Replacing a shared card affects every game using it. Replacements are backed up first.",actions,8,0);
+    action=ps1Action("Virtual Memory Cards",path,cardError?cardError:
+        "Replacing a shared card affects every game using it. Replacements are backed up first.",actions,8,browserPageSection?action:0);
     if(action<0)return 0;
     const char *error=NULL;char source[256],folder[256],destination[256],backup[LUNA_VMC_PATH];
     if(action==1) {if(assign){if(assign(path,context))return 1;}else vmcAssignToGame(platform,path);continue;}
@@ -336,10 +337,10 @@ static int vmcSubmenuInput(void *context,int input) {
   }
   return LUNA_CUBE_SUBMENU_STAY;
 }
-int uiVmcPs2Slot(Target *target,ArgumentList *arguments,LunaGameOptions *options,int slot) {
+static int uiVmcPs2SlotPage(Target *target,ArgumentList *arguments,LunaGameOptions *options,int slot,int *selected) {
   VmcAssignment assignment={.target=target,.arguments=arguments,.options=options,.slot=slot};
   static const char *const actions[]={"Choose existing cards","Create","Manage card","Physical card"};
-  int action=ps1Action("Virtual Memory Cards",target->name,"Choose an action for this slot.",actions,4,0);if(action<0)return 0;
+  int action=*selected=ps1Action("Virtual Memory Cards",target->name,"Choose an action for this slot.",actions,4,*selected);if(action<0)return 0;
   if(action==3)return lunaGameOptionsSetVMC(options,arguments,slot,"");
   const char *root=storageVMCRoot(target->device);if(!root){ps1Message("File cards need enabled local storage.");return 0;}
   if(action==0)return vmcBrowse(LUNA_VMC_PS2,root,vmcAssignSelected,&assignment);
@@ -353,10 +354,26 @@ int uiVmcPs2Slot(Target *target,ArgumentList *arguments,LunaGameOptions *options
   const char *error=vmcPs2Path(target,card->value,path);if(error){ps1Message(error);return 0;}
   return vmcCardMenu(LUNA_VMC_PS2,path,vmcAssignSelected,&assignment);
 }
-int uiVmcPs2Policy(Target *target,ArgumentList *arguments,LunaGameOptions *options) {
+int uiVmcPs2Slot(Target *target,ArgumentList *arguments,LunaGameOptions *options,int slot) {
+  int selected=0;
+  do {
+    int changed=uiVmcPs2SlotPage(target,arguments,options,slot,&selected);
+    if(changed || selected<0)return changed;
+  } while(browserPageSection);
+  return 0;
+}
+static int uiVmcPs2PolicyPage(Target *target,ArgumentList *arguments,LunaGameOptions *options,int *selected) {
   static const char *const choices[]={"Create cards for this game","Choose existing cards","Use shared cards"};
-  int choice=ps1Action("Card assignment",target->name,"Choose how this game uses memory cards.",choices,3,0);if(choice<0)return 0;
-  if(choice==1) {static const char *const slots[]={"Slot 1","Slot 2"};int slot=ps1Action("Choose existing cards",target->name,"Choose a slot.",slots,2,0);return slot<0?0:uiVmcPs2Slot(target,arguments,options,slot);}
+  int choice=*selected=ps1Action("Card assignment",target->name,"Choose how this game uses memory cards.",choices,3,*selected);if(choice<0)return 0;
+  if(choice==1) {
+    static const char *const slots[]={"Slot 1","Slot 2"};int slot=0;
+    do {
+      slot=ps1Action("Choose existing cards",target->name,"Choose a slot.",slots,2,slot);
+      if(slot<0)return 0;
+      if(uiVmcPs2Slot(target,arguments,options,slot))return 1;
+    } while(browserPageSection);
+    return 0;
+  }
   const char *root=storageVMCRoot(target->device);if(!root){ps1Message("File cards need enabled local storage.");return 0;}
   char directory[256],paths[2][256];if(!vmcStorageDirectory(LUNA_VMC_PS2,root,directory))return 0;
   if(!ps1Confirm(choice?"Use shared cards?":"Create cards for this game?","This changes both slot assignments. Existing card images will be preserved."))return 0;
@@ -375,10 +392,18 @@ int uiVmcPs2Policy(Target *target,ArgumentList *arguments,LunaGameOptions *optio
   }
   return lunaGameOptionsSetVMCPair(options,arguments,paths[0],paths[1]);
 }
+int uiVmcPs2Policy(Target *target,ArgumentList *arguments,LunaGameOptions *options) {
+  int selected=0;
+  do {
+    int changed=uiVmcPs2PolicyPage(target,arguments,options,&selected);
+    if(changed || selected<0)return changed;
+  } while(browserPageSection);
+  return 0;
+}
 #ifdef LUNA_ENABLE_PSXCORE
-int uiPs1VmcSlot(Target *target,LunaPsxVmcSettings *settings,int slot) {
+static int uiPs1VmcSlotPage(Target *target,LunaPsxVmcSettings *settings,int slot,int *selected) {
   static const char *const choices[]={"Choose existing cards","Create","Manage card"};
-  int choice=ps1Action("Virtual Memory Cards",target->name,"Both slots use one save drive. Each slot can use a different card.",choices,3,0);if(choice<0)return 0;
+  int choice=*selected=ps1Action("Virtual Memory Cards",target->name,"Both slots use one save drive. Each slot can use a different card.",choices,3,*selected);if(choice<0)return 0;
   VmcAssignment assignment={.target=target,.slot=slot,.ps1=settings};
   char root[8],cards[2][NP_FILE_PATH_BYTES],directory[256],path[256];const char *error=lunaPsxVmcResolve(settings,root,cards);
   if(error){ps1Message(error);return 0;}
@@ -389,21 +414,39 @@ int uiPs1VmcSlot(Target *target,LunaPsxVmcSettings *settings,int slot) {
   }
   snprintf(path,sizeof(path),"%s%s",root,cards[slot]);return vmcCardMenu(LUNA_VMC_PS1,path,vmcAssignSelected,&assignment);
 }
-int uiPs1VmcPolicy(Target *target,LunaPsxVmcSettings *settings) {
+int uiPs1VmcSlot(Target *target,LunaPsxVmcSettings *settings,int slot) {
+  int selected=0;
+  do {
+    int changed=uiPs1VmcSlotPage(target,settings,slot,&selected);
+    if(changed || selected<0)return changed;
+  } while(browserPageSection);
+  return 0;
+}
+static int uiPs1VmcPolicyPage(Target *target,LunaPsxVmcSettings *settings,int *selected) {
   static const char *const choices[]={"Create cards for this game","Choose existing cards","Use shared cards"};
-  int choice=ps1Action("Card assignment",target->name,"All discs in this game use the same slot assignments.",choices,3,0);if(choice<0)return 0;
+  int choice=*selected=ps1Action("Card assignment",target->name,"All discs in this game use the same slot assignments.",choices,3,*selected);if(choice<0)return 0;
   if(choice==1) {
     static const char *const actions[]={"Slot 1","Slot 2","Named pair presets"};
-    int action=ps1Action("Choose existing cards",target->name,"Choose a slot or a pair preset.",actions,3,0);
-    return action<0?0:action==2?uiPs1VmcPicker(target,settings):uiPs1VmcSlot(target,settings,action);
+    int action=0;
+    do {
+      action=ps1Action("Choose existing cards",target->name,"Choose a slot or a pair preset.",actions,3,action);
+      if(action<0)return 0;
+      if(action==2?uiPs1VmcPicker(target,settings):uiPs1VmcSlot(target,settings,action))return 1;
+    } while(browserPageSection);
+    return 0;
   }
   if(choice==2) {
     static const char *const actions[]={"Default shared cards","Named pair presets"};
-    int action=ps1Action("Use shared cards",target->name,"Games selecting the same cards share saved data.",actions,2,0);
-    if(action<0)return 0;
-    if(action==1)return uiPs1VmcPicker(target,settings);
-    if(!ps1Confirm("Use default shared cards?","Both slots will use the default shared pair. Existing images are preserved."))return 0;
-    settings->mode=LUNA_PS1_CARDS_DEFAULT;memset(settings->key,0,sizeof(settings->key));memset(settings->volume,0,16);memset(settings->cards,0,sizeof(settings->cards));return 1;
+    int action=0;
+    do {
+      action=ps1Action("Use shared cards",target->name,"Games selecting the same cards share saved data.",actions,2,action);
+      if(action<0)return 0;
+      if(action==1) { if(uiPs1VmcPicker(target,settings))return 1; }
+      else if(ps1Confirm("Use default shared cards?","Both slots will use the default shared pair. Existing images are preserved.")) {
+        settings->mode=LUNA_PS1_CARDS_DEFAULT;memset(settings->key,0,sizeof(settings->key));memset(settings->volume,0,16);memset(settings->cards,0,sizeof(settings->cards));return 1;
+      }
+    } while(browserPageSection);
+    return 0;
   }
   char name[49];snprintf(name,sizeof(name),"%.48s",target->id && target->id[0]?target->id:"Game Cards");
   for(unsigned i=0;name[i];++i)
@@ -414,5 +457,13 @@ int uiPs1VmcPolicy(Target *target,LunaPsxVmcSettings *settings) {
   const char *error=lunaPsxVmcCreate(settings->gameRoot,name,key);if(!error)error=lunaPsxVmcVolume(settings->gameRoot,next.volume,0);
   if(error){ps1Message(error);return 0;}
   next.mode=LUNA_PS1_CARDS_CUSTOM;memset(next.cards,0,sizeof(next.cards));snprintf(next.key,sizeof(next.key),"%s",key);*settings=next;return 1;
+}
+int uiPs1VmcPolicy(Target *target,LunaPsxVmcSettings *settings) {
+  int selected=0;
+  do {
+    int changed=uiPs1VmcPolicyPage(target,settings,&selected);
+    if(changed || selected<0)return changed;
+  } while(browserPageSection);
+  return 0;
 }
 #endif

@@ -142,7 +142,7 @@ static void drawGameModeToast(void) {
   const int textLeft = left + 12;
   const int right = textLeft + (int)getLineWidth(label) + 12;
   gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
-  drawGlassPanelWithFillAlpha(left, top, right, bottom, 0, 0x78);
+  uiCubePanelGlassDraw(left, top, right, bottom, 0, 0x78);
   drawQuickMenuText(textLeft, top + 8, right - 12, bottom - 8,
                     FontMainColor, ALIGN_LEFT | ALIGN_VCENTER, label);
   gsKit_set_test(gsGlobal, GS_ZTEST_ON);
@@ -184,8 +184,7 @@ static void drawLibraryQuickMenu(int progress, UILibraryView view,
   gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
   gsKit_prim_sprite(gsGlobal, 0, 0, gsGlobal->Width, gsGlobal->Height, 0,
                     glassPresetColor(0x00, 0x04, 0x0A, (0x14 * progress) / 1000));
-  if (!uiCubeQuickMenuGlassDraw(left, top, right, top + height))
-    drawGlassPanelWithFillAlpha(left, top, right, top + height, 0, 0x78);
+  uiCubeQuickMenuGlassDraw(left, top, right, top + height);
   drawQuickMenuText(left + 16, top + 10, right - 16,
                  top + rowHeight + 10, FontMainColor,
                  ALIGN_LEFT | ALIGN_VCENTER,
@@ -259,6 +258,7 @@ int uiInit() {
   resetGlassVisuals(uiNowMs());
   resetAmbientOrbsTextures();
   resetNeoBackground();
+  resetSpaceFlightTexture();
   resetAnimatedWallpapers();
   gsGlobal = gsKit_init_global();
   if (gsGlobal == NULL)
@@ -321,7 +321,7 @@ int uiInit() {
 void closeUI() {
   if (gsGlobal == NULL)
     return;
-  uiCubeQuickMenuGlassClose();
+  uiCubePanelGlassClose();
   gsKit_queue_exec(gsGlobal);
   gsKit_finish();
   dmaKit_wait_fast();
@@ -332,7 +332,6 @@ void closeUI() {
   gsGlobal = NULL;
 }
 
-#include "options_library.inc"
 
 // Main UI loop. Displays the target list.
 int uiLoop(TargetList *titles, int preparedCollectionIdx) {
@@ -564,9 +563,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     const UILibraryView nextView = lunaNavNextView(view, enabledViews);
     const char *nextViewLabel = nextView == view ? lunaText("Only view") :
                                 lunaNavViewLabel(nextView);
-    OptionsLibrarySnapshot optionsLibrary={.view=view,.titles=titles,.selected=selectedTitleIdx,
-        .maxTitles=maxTitlesPerPage,.favorites=favoritesOnly,.entry=1000,.fade=1000,
-        .listEntry=1000,.outgoing=-1,.flags=favoriteFlags,.nextLabel=nextViewLabel,.now=uiNowMs()};
+    const uint32_t libraryFrameMs = uiNowMs();
 
 #ifdef LUNA_CAMERA_ANIMATIONS
     lunaCameraViewCheck(view == UI_VIEW_PSBBN,
@@ -670,7 +667,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     }
 
     if (view == UI_VIEW_3D) {
-      drawCaseGrid(titles, selectedTitleIdx, optionsLibrary.now);
+      drawCaseGrid(titles, selectedTitleIdx, libraryFrameMs);
     } else if (lunaNavIsCollection(view) || view == UI_VIEW_ORBIT || view == UI_VIEW_ORBS) {
       TargetList *flowTitles = titles;
       int flowSelectedTitleIdx = selectedTitleIdx;
@@ -800,9 +797,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         if (collectionFromList)
           collectionEntryProgress = 1000;
 #endif
-        optionsLibrary.flow=flowOffset; optionsLibrary.outgoing=psbbnOutgoingTitleIdx;
-        optionsLibrary.fast=collectionScan.active; optionsLibrary.entry=collectionEntryProgress;
-        optionsLibrary.fade=collectionEntryFade; optionsLibrary.now=now;
         if (view == UI_VIEW_COLLECTION_V2)
           drawPSBBNCollectionV2(flowTitles, flowSelectedTitleIdx, flowOffset,
                                 favoritesOnly, collectionEntryProgress, now);
@@ -813,8 +807,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                               collectionEntryProgress,
                               collectionEntryFade, now, nextViewLabel);
       } else if (view == UI_VIEW_ORBIT) {
-        optionsLibrary.flow=flowOffset; optionsLibrary.now=now;
-        optionsLibrary.entry=libraryViewEntryProgress(entryView,view,entryStartMs,entryDurationMs,now);
         drawOrbit(titles, selectedTitleIdx, psbbnCoverTextures, flowOffset,
                   orbitRandomActive, libraryViewEntryProgress(entryView, view, entryStartMs, entryDurationMs, now),
                   now, nextViewLabel);
@@ -835,9 +827,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
           entryStartMs = now;
           entryPending = 0;
         }
-        optionsLibrary.flow=flowOffset; optionsLibrary.visualFocus=visualFocus;
-        optionsLibrary.fast=scrollFast.active; optionsLibrary.now=now;
-        optionsLibrary.entry=libraryViewEntryProgress(entryView,view,entryStartMs,entryDurationMs,now);
         drawOrbsView(titles, selectedTitleIdx, flowOffset, visualFocus,
                      scrollFast.active, libraryViewEntryProgress(entryView, view, entryStartMs, entryDurationMs, now),
                      now, nextViewLabel);
@@ -855,11 +844,6 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
           listEntryProgress = lunaNavEase(
               (int)(elapsed * 1000U / classicEntryListSlideDurationMs));
       }
-      optionsLibrary.artTarget=classicDisplayedArtTarget;
-      optionsLibrary.cover=(classicDisplayedCoverAvailable && !favoritesEmpty) ? coverTexture : NULL;
-      optionsLibrary.disc=(classicDisplayedDiscAvailable && !favoritesEmpty) ? discTexture : NULL;
-      optionsLibrary.coverPending=coverPending && !favoritesEmpty;
-      optionsLibrary.listEntry=listEntryProgress; optionsLibrary.now=frameNowMs;
       drawTitleList(titles, selectedTitleIdx, maxTitlesPerPage,
                     classicDisplayedArtTarget,
                     (classicDisplayedCoverAvailable && !favoritesEmpty) ? coverTexture : NULL,
@@ -1457,8 +1441,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     } else if ((input & PAD_TRIANGLE) && titles->total > 0) {
       prevInput = 0; // Reset previous input
       // Enter title options screen
-      LunaOptionsScene optionsScene={.drawLibrary=drawOptionsLibraryScene,.context=&optionsLibrary};
-      if ((res = uiTitleOptionsLoop(curTarget,&optionsScene)) < 0) {
+      if ((res = uiTitleOptionsLoop(curTarget)) < 0) {
         // Something went wrong, main loop must exit immediately
         ambientStop();
         freeTargetList(favoriteTitles);
@@ -1472,14 +1455,17 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         storageRememberSelection(curTarget, view);
         break;
       }
-      // Options has already restored the live library scene and wallpaper.
+      // Resume the retained library view and selection directly.
       libraryReturnFadeStartMs = 0;
       if (!(enabledViews & (1U << view)))
         forceViewSwitch = 1;
-      optionsTriangleHeld = (pollInput() & PAD_TRIANGLE) != 0;
+      // Consume Back before Circle can change the retained library view.
+      while (pollInput() & (PAD_CROSS | PAD_CIRCLE | PAD_TRIANGLE | PAD_START))
+        usleep(1000);
+      optionsTriangleHeld = 0;
       input = 0;
     } else if (input & PAD_START) {
-      uiCubeQuickMenuGlassClose();
+      uiCubePanelGlassClose();
       uiVmcSetLibrary(allTitles);
       int menuResult = uiMainMenuLoop(1,curTarget);
       uiVmcSetLibrary(NULL);
@@ -1515,7 +1501,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   }
 
 exit:
-  uiCubeQuickMenuGlassClose();
+  uiCubePanelGlassClose();
 #ifdef LUNA_CAMERA_ANIMATIONS
   lunaCameraMenuReturnCancel();
   lunaCameraChannelCancel();
@@ -1614,7 +1600,7 @@ static void drawPsxDiscSwapMessage(const Target *target,int startDisc) {
   drawSharedLibraryBackground(uiNowMs());
   // Use the selected glass tint with a dense fill for readable swap instructions.
   gsGlobal->PrimAlphaEnable=GS_SETTING_ON;
-  drawGlassPanelWithFillAlpha(panelLeft,panelTop,panelRight,panelBottom,0,0x78);
+  uiCubePanelGlassDraw(panelLeft,panelTop,panelRight,panelBottom,0,0x78);
   snprintf(text,sizeof(text),"%s %d",lunaText("Start disc"),startDisc+1);
   drawPsxSwapHeading(left,top,right,1.3f,text);
   top+=line+2;

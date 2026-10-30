@@ -36,16 +36,17 @@ static void cubeMenuTextScaled(int left,int top,int right,int z,float scale,uint
     memcpy(fitted,text,best);memcpy(fitted+best,"...",4);shown=fitted;
   }
   int x=rightAligned?right-(int)ceilf(getLineDrawWidth(shown)*scale):left;
-  drawTextLineScaledCrisp(x,top,right,z,scale,color,shown);
+  drawTextLineScaled(x,top,right,z,scale,color,shown);
 }
 void uiCubeMenuTextDraw(int left,int top,int right,int z,uint64_t color,
                         const char *text,int rightAligned) {
   cubeMenuTextScaled(left,top,right,z,1,color,text,rightAligned);
 }
-void uiCubeMenuHelpDraw(int left,int right,uint64_t color,const char *text) {
+static void cubeMenuHelpDrawAt(int left,int right,int y,uint64_t color,const char *text) {
   if(!text||!text[0])return;
-  const float scale=.8f;
-  int y=(int)cubeSY(390),step=(int)ceilf(getFontLineHeight()*scale);
+  // Keep help at native font resolution; two lines still end above the footer.
+  const float scale=1;
+  int step=(int)ceilf(getFontLineHeight()*scale);
   char line[512];
   const char *rest=text;
   size_t length=strlen(text),cut=0;
@@ -65,6 +66,10 @@ void uiCubeMenuHelpDraw(int left,int right,uint64_t color,const char *text) {
     }
   }
   cubeMenuTextScaled(left,y,right,7,scale,color,rest,0);
+}
+
+void uiCubeMenuHelpDraw(int left,int right,uint64_t color,const char *text) {
+  cubeMenuHelpDrawAt(left,right,(int)cubeSY(382),color,text);
 }
 
 static void cubeText(float cx,float y,uint64_t color,const char *text) {
@@ -107,6 +112,8 @@ void uiCubeSubmenuPageDraw(const LunaCubePage *page,int selected,
   int left=(int)cubeSX(32),right=(int)cubeSX(506),line=getFontLineHeight();
   int step=(page->stackedValues?2*line:line)+line/3;
   int top=(int)cubeSY(127),bottom=(int)cubeSY(370);
+  int tabTop=top;
+  if(page->tabs && page->tabCount>0)top+=line+line/3+6;
   int visible=(bottom-top)/step;
   if(visible<1)visible=1;
   int first=selected/visible*visible,y=top+(selected-first)*step;
@@ -136,6 +143,23 @@ void uiCubeSubmenuPageDraw(const LunaCubePage *page,int selected,
   /* The expanded crystal supplies the pane's glass and rim. */
   gsKit_prim_sprite(gsGlobal,cubeSX(22),cubeSY(99),cubeSX(518),cubeSY(383),5,
       glassPresetColor(5,13,34,(int)(48*opacity)));
+  if(page->tabs && page->tabCount>0) {
+    const int gap=32,padding=8;
+    int width=(page->tabCount-1)*gap;
+    for(int tab=0;tab<page->tabCount;tab++)
+      width+=(int)ceilf(getLineDrawWidth(lunaText(page->tabs[tab])))+2*padding;
+    int x=left+(right-left-width)/2;
+    for(int tab=0;tab<page->tabCount;tab++) {
+      const char *label=lunaText(page->tabs[tab]);
+      int tabWidth=(int)ceilf(getLineDrawWidth(label))+2*padding;
+      int active=tab==page->selectedTab;
+      if(active && opacity>.01f)
+        drawPSBBNFocusGlow(x+padding,tabTop,x+tabWidth-padding+18,x+tabWidth-padding);
+      uiCubeMenuTextDraw(x+padding,tabTop,x+tabWidth-padding,7,
+          active?bright:cubeColor(72,75,80,opacity),label,0);
+      x+=tabWidth+gap;
+    }
+  }
   if(page->count>0)uiCubeSubmenuFocusDraw(left-4,focusY-1,right-10,
       focusY+(page->stackedValues?2*line:line)+2,opacity);
   int maxLabel=0,maxValue=0;
@@ -169,11 +193,13 @@ void uiCubeSubmenuPageDraw(const LunaCubePage *page,int selected,
   }
   if(page->count==0)drawTextWindow(textLeft,top,textRight,top+line,7,ink,
                                   ALIGN_LEFT,lunaText("Nothing to show"));
-  if(opacity>=.999f)drawListScrollbar(right-6,top,top+visible*step,
+  if(opacity>=.999f && page->count>=0)drawListScrollbar(right-6,top,top+visible*step,
                                      page->count,first,visible,7);
   const char *description=page->description&&page->count>0?
       page->description(page->context,selected):page->status;
-  uiCubeMenuHelpDraw(left,(int)cubeSX(608),ink,lunaText(description));
+  // Game Options help sits below the crystal's bottom rim, above its footer.
+  cubeMenuHelpDrawAt(left,(int)cubeSX(608),(int)cubeSY(page->libraryFooter?398:382),
+      ink,lunaText(description));
   if(!page->libraryFooter) {
     ButtonPrompt prompts[]={{ICON_DPAD,lunaText("Navigate")},
         {ICON_CROSS,lunaText(page->adjust?"Change":page->value?"Select":"Open")},{ICON_CIRCLE,lunaText("Back")}};
@@ -224,6 +250,7 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
   }
   if(m->submenuOpen)cubeGlassDraw(&scene[m->selected%CUBE_COUNT],camera);
   cubeRestoreGlassState();
+  if(!cubePageSceneOnly) {
   drawLunaLogo(cubeSX(60),cubeSY(20),cubeSX(78),6,cubeColor(185,210,235,text));
   uiCubeMenuTextDraw((int)cubeSX(60),(int)cubeSY(128),(int)cubeSX(310),6,
       cubeColor(232,232,70,text),lunaText(hub->title),0);
@@ -274,6 +301,7 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
     float pageProgress=cubeSmooth((submenuProgress-.28f)/.72f);
     if(hub->footer)hub->footer(hub->context,pageProgress);
     else uiCubeOptionsFooterTransitionDraw(overall,pageProgress);
+  }
   }
   cubeSceneScale=1;cubeSceneOffsetX=cubeSceneOffsetY=0;
   gsKit_set_primalpha(gsGlobal,savedBlend,savedPabe);gsGlobal->PrimAlphaEnable=savedAlpha;

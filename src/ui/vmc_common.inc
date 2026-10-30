@@ -28,6 +28,15 @@ static int ps1Confirm(const char *title, const char *detail) {
   return ps1Action(title, "Virtual Memory Cards", detail, actions, 2, 0) == 1;
 }
 static void ps1StatusFrame(const char *message, PromptBar footer) {
+  if(browserPageSection) {
+    LunaCubePageFocus focus={.selected=-1};
+    LunaCubePage page={.title="Virtual Memory Cards",.sectionTitle=browserPageSection,
+        .count=-1,.status=message,.libraryFooter=1};
+    uiCubeHubPageDraw(&page,0,&focus);
+    drawBrowserPageFooter(footer);
+    presentBrowserFrame();
+    return;
+  }
   int left = keepoutArea + 30, right = gsGlobal->Width - left;
   gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
   drawBrowserSheet(0);
