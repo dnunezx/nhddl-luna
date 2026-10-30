@@ -148,7 +148,8 @@ void uiFileManagerSetPageSection(const char *sectionTitle) {
   browserPageSection=sectionTitle;
 }
 void uiFileManagerSetBackdrop(void (*draw)(void *), void *context) {
-  browserBackdrop=draw; browserBackdropContext=context;
+  browserBackdrop=draw;
+  browserBackdropContext=context;
 }
 
 static void drawBrowserSheetPanel(int panelLeft, int panelTop,

@@ -234,26 +234,35 @@ TargetList *storageRefresh(TargetList *previous) {
   ModeType scan = requestPending ? pendingScan : desired.enabled;
   int restart = requestPending && storageNeedsRestart(&desired);
   if (restart) scan = desired.enabled;
-  struct DeviceMapEntry oldMap[MAX_DEVICES];
-  syncDeviceMap();
-  memcpy(oldMap, deviceModeMap, sizeof(oldMap));
-  // The old map owns its allocations until the replacement is ready.
-  if (previous)
-    for (Target *t = previous->first; t; t = t->next)
-      t->device = &oldMap[t->device - deviceModeMap];
-  memset(deviceModeMap, 0, sizeof(oldMap));
-  snprintf(LAUNCHER_OPTIONS.udpfsIp, sizeof(LAUNCHER_OPTIONS.udpfsIp), "%s", desired.ip);
-  if ((desired.enabled & MODE_UDPFS) && !desired.ip[0]) parseIPConfig();
   ModeType wanted = desired.enabled | requiredModes | MODE_BASIC;
+  // Startup already discovered drives to locate Neutrino. Reuse a successful
+  // map while its drivers are unchanged, including any mounted PFS metadata.
+  // Explicit rescans, missing drivers, empty maps and discovery errors retry normally.
+  int reuseInitialMap = previous == NULL && !requestPending &&
+      deviceModeMap[0].mountpoint != NULL && !deviceDiscoveryFailures() &&
+      (LAUNCHER_OPTIONS.mode & wanted) == wanted;
+  struct DeviceMapEntry oldMap[MAX_DEVICES] = {0};
   StorageStatus previousStatus[STORAGE_SOURCE_COUNT];
   memcpy(previousStatus, STORAGE_STATUS, sizeof(previousStatus));
-  ModeType failed = initStorageModules(wanted, restart);
-  ModeType loaded = LAUNCHER_OPTIONS.mode;
-  // Disabled library sources must not incur device readiness probes.
-  LAUNCHER_OPTIONS.mode = wanted & ~failed;
-  initDeviceMap();
-  LAUNCHER_OPTIONS.mode = loaded;
-  failed |= deviceDiscoveryFailures();
+  ModeType failed = MODE_NONE;
+  if (!reuseInitialMap) {
+    syncDeviceMap();
+    memcpy(oldMap, deviceModeMap, sizeof(oldMap));
+    // The old map owns its allocations until the replacement is ready.
+    if (previous)
+      for (Target *t = previous->first; t; t = t->next)
+        t->device = &oldMap[t->device - deviceModeMap];
+    memset(deviceModeMap, 0, sizeof(oldMap));
+    snprintf(LAUNCHER_OPTIONS.udpfsIp, sizeof(LAUNCHER_OPTIONS.udpfsIp), "%s", desired.ip);
+    if ((desired.enabled & MODE_UDPFS) && !desired.ip[0]) parseIPConfig();
+    failed = initStorageModules(wanted, restart);
+    ModeType loaded = LAUNCHER_OPTIONS.mode;
+    // Disabled library sources must not incur device readiness probes.
+    LAUNCHER_OPTIONS.mode = wanted & ~failed;
+    initDeviceMap();
+    LAUNCHER_OPTIONS.mode = loaded;
+    failed |= deviceDiscoveryFailures();
+  }
   if (previous && (failed & desired.enabled)) {
     refreshError = -EIO;
     goto fail;
@@ -324,14 +333,16 @@ TargetList *storageRefresh(TargetList *previous) {
   STORAGE_SETTINGS = desired;
   requestPending = 0;
   if (previous) freeTargetList(previous);
-  freeDeviceMapEntries(oldMap);
+  if (!reuseInitialMap) freeDeviceMapEntries(oldMap);
   return next;
 fail:
   freeTargetList(next);
-  freeDeviceMapEntries(deviceModeMap);
-  memcpy(deviceModeMap, oldMap, sizeof(oldMap));
-  if (previous) for (Target *t = previous->first; t; t = t->next)
-    t->device = &deviceModeMap[t->device - oldMap];
+  if (!reuseInitialMap) {
+    freeDeviceMapEntries(deviceModeMap);
+    memcpy(deviceModeMap, oldMap, sizeof(oldMap));
+    if (previous) for (Target *t = previous->first; t; t = t->next)
+      t->device = &deviceModeMap[t->device - oldMap];
+  }
   requestPending = 0;
   for (int s = 0; s < STORAGE_SOURCE_COUNT; s++) {
     STORAGE_STATUS[s] = previousStatus[s];

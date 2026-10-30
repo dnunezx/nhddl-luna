@@ -46,5 +46,8 @@ void drawOrbsView(TargetList *titles, int selectedTitleIdx,
                   const char *nextViewLabel);
 
 void drawOrbitLibraryBackground(uint32_t nowMs);
+// Game Options draws the live background once, independently of frozen artwork.
+void beginOptionsLibraryBackground(uint32_t nowMs, int orbit);
+void endOptionsLibraryBackground(void);
 
 #endif

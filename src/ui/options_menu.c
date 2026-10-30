@@ -14,6 +14,7 @@
 #include "storage.h"
 #include "cheat_storage.h"
 #include "ui/cube_menu.h"
+#include "ui/options_reveal.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -70,6 +71,8 @@ typedef struct {
   int selectedGameRow;
   int workspaceRows[GAME_DISCS + 1];
   uint32_t savedAt;
+  const LunaOptionsScene *scene;
+  LunaOptionsReveal transition;
   LunaCubePageFocus pageFocus;
   OptionsWorkspaceRow workspaceRow;
   char workspaceHelp[320];
@@ -580,13 +583,14 @@ static int handleGameInput(OptionsMenuState *state, int input) {
 
 // Runs settings for the selected game.
 // Returns -1 if a test launch unexpectedly returns.
-int uiTitleOptionsLoop(Target *target) {
+int uiTitleOptionsLoop(Target *target, const LunaOptionsScene *scene) {
   int res = 0;
   OptionsMenuState state = {
       .target = target,
       .logoSetting = loadPS2LogoEnabled(target),
       .coreSetting = loadGameCoreOpl(target),
-      .gameSection = GAME_HUB};
+      .gameSection = GAME_HUB,
+      .scene = scene};
 
   // Load arguments from config files
   state.titleArguments = target->platform == TARGET_PS1 ? calloc(1,sizeof(ArgumentList)) :
@@ -603,8 +607,24 @@ int uiTitleOptionsLoop(Target *target) {
     state.saveErrorLabel = lunaText("Could not read cheat settings. Change a cheat option to reset.");
   }
   uiFileManagerSetPageSection("Game Options");
+  uiFileManagerSetBackdrop(optionsWorkspaceBackdrop, &state);
+  lunaOptionsRevealStart(&state.transition, 1, uiNowMs());
   optionsCubeLoop(&state);
   res=state.result;
+  // A nested action can leave the hub directly; restore the library on return.
+  if (res >= 0 && state.transition.position > 0) {
+    lunaOptionsRevealStart(&state.transition, 0, uiNowMs());
+    int done;
+    do {
+      gsKit_clear(gsGlobal, BGColor);
+      gsKit_TexManager_nextFrame(gsGlobal);
+      gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
+      done = optionsCubeBackground(&state, 1);
+      gsKit_set_test(gsGlobal, GS_ZTEST_ON);
+      presentOptionsFrame();
+    } while (!done);
+  }
+  uiFileManagerSetBackdrop(NULL, NULL);
   uiFileManagerSetPageSection(NULL);
   freeArgumentList(state.titleArguments);
   lunaCheatFileFree(&state.cheatFile);

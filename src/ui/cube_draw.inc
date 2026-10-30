@@ -251,7 +251,10 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
   if(m->submenuOpen)cubeGlassDraw(&scene[m->selected%CUBE_COUNT],camera);
   cubeRestoreGlassState();
   if(!cubePageSceneOnly) {
-  drawLunaLogo(cubeSX(60),cubeSY(20),cubeSX(78),6,cubeColor(185,210,235,text));
+  if(hub->gameOptionsLogo)
+    drawGameOptionsLogo(cubeSX(60),cubeSY(20),cubeSX(78),6,cubeColor(185,210,235,text));
+  else
+    drawLunaLogo(cubeSX(60),cubeSY(20),cubeSX(78),6,cubeColor(185,210,235,text));
   uiCubeMenuTextDraw((int)cubeSX(60),(int)cubeSY(128),(int)cubeSX(310),6,
       cubeColor(232,232,70,text),lunaText(hub->title),0);
   if(status)cubeText(320,53,cubeColor(215,229,244,text),status);

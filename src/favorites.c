@@ -15,6 +15,19 @@
 static const char favoritesPath[] = "/favorites.txt";
 static const char favoritesTempPath[] = "/favorites.txt.tmp";
 static const char favoritesComplete[] = "# LUNA_FAVORITES_COMPLETE\n";
+#define FAVORITE_SET_PATH_BYTES 64
+
+typedef struct {
+  const char *path;
+  Target *target;
+} FavoriteIndexEntry;
+
+typedef struct {
+  TargetList *titles;
+  FavoriteIndexEntry *entries;
+  size_t count;
+  int attempted;
+} FavoriteLookup;
 
 static int favoriteFileMissing(const char *path) {
   // BDM reports raw FatFs missing-file/path results instead of POSIX ENOENT.
@@ -32,15 +45,82 @@ static struct DeviceMapEntry *favoriteDevice(Target *target) {
   return target->device->metadev ? target->device->metadev : target->device;
 }
 
-static const char *relativeTargetPath(Target *target) {
+static const char *relativeTargetPath(Target *target, char setPath[FAVORITE_SET_PATH_BYTES]) {
   // Synthetic identity is stable across starting-disc and playlist-name changes.
-  static char setPath[64];
   if (target->discs && target->discs->key[0]) {
-    snprintf(setPath, sizeof(setPath), "/@PS1SET/%s", target->discs->key);
+    snprintf(setPath, FAVORITE_SET_PATH_BYTES, "/@PS1SET/%s", target->discs->key);
     return setPath;
   }
   int relativeIndex = getRelativePathIdx(target->fullPath);
   return target->fullPath + ((relativeIndex < 0) ? 0 : relativeIndex);
+}
+
+static int compareFavoriteKey(const FavoriteIndexEntry *entry,
+                               struct DeviceMapEntry *device, const char *path) {
+  uintptr_t left = (uintptr_t)favoriteDevice(entry->target);
+  uintptr_t right = (uintptr_t)device;
+  if (left != right) return left < right ? -1 : 1;
+  return strcmp(entry->path, path);
+}
+
+static int compareFavoriteEntries(const void *left, const void *right) {
+  const FavoriteIndexEntry *a = left, *b = right;
+  return compareFavoriteKey(a, favoriteDevice(b->target), b->path);
+}
+
+static void buildFavoriteLookup(FavoriteLookup *lookup) {
+  size_t count = 0, setBytes = 0;
+  for (Target *t = lookup->titles->first; t; t = t->next) {
+    if (count == SIZE_MAX) return;
+    count++;
+    if (t->discs && t->discs->key[0]) {
+      if (setBytes > SIZE_MAX - FAVORITE_SET_PATH_BYTES) return;
+      setBytes += FAVORITE_SET_PATH_BYTES;
+    }
+  }
+  if (!count || count > (SIZE_MAX - setBytes) / sizeof(*lookup->entries)) return;
+  FavoriteIndexEntry *entries = malloc(count * sizeof(*entries) + setBytes);
+  if (!entries) return; // Preserve the existing loader under memory pressure.
+  char *setPath = (char *)(entries + count);
+  size_t next = 0;
+  for (Target *t = lookup->titles->first; t; t = t->next) {
+    entries[next++] = (FavoriteIndexEntry){relativeTargetPath(t, setPath), t};
+    if (t->discs && t->discs->key[0]) setPath += FAVORITE_SET_PATH_BYTES;
+  }
+  qsort(entries, count, sizeof(*entries), compareFavoriteEntries);
+  lookup->entries = entries;
+  lookup->count = count;
+}
+
+static void matchFavorite(FavoriteLookup *lookup, struct DeviceMapEntry *device,
+                           const char *path, uint8_t *flags, size_t flagCount) {
+  // Empty files need no index; failed allocations should not retry per record.
+  if (!lookup->attempted) {
+    lookup->attempted = 1;
+    buildFavoriteLookup(lookup);
+  }
+  if (lookup->entries) {
+    size_t low = 0, high = lookup->count;
+    while (low < high) {
+      size_t middle = low + (high - low) / 2;
+      if (compareFavoriteKey(&lookup->entries[middle], device, path) < 0)
+        low = middle + 1;
+      else
+        high = middle;
+    }
+    // Preserve all matches when multiple library entries share the same key.
+    for (; low < lookup->count &&
+           !compareFavoriteKey(&lookup->entries[low], device, path); ++low) {
+      Target *target = lookup->entries[low].target;
+      if (target->idx < flagCount) flags[target->idx] = 1;
+    }
+    return;
+  }
+  char setPath[FAVORITE_SET_PATH_BYTES];
+  for (Target *target = lookup->titles->first; target; target = target->next)
+    if (target->idx < flagCount && favoriteDevice(target) == device) {
+      if (!strcmp(path, relativeTargetPath(target, setPath))) flags[target->idx] = 1;
+    }
 }
 
 static int deviceWasVisited(TargetList *titles, Target *stop, struct DeviceMapEntry *device) {
@@ -55,7 +135,7 @@ static int deviceWasVisited(TargetList *titles, Target *stop, struct DeviceMapEn
 
 // Only a complete staged record may override the primary file. A save interrupted
 // while writing its list must not hide the previous selection with a valid prefix.
-static int readFavoriteFile(const char *path, int staged, TargetList *titles,
+static int readFavoriteFile(const char *path, int staged, FavoriteLookup *lookup,
                              struct DeviceMapEntry *device, uint8_t *flags,
                              size_t flagCount) {
   FILE *file = fopen(path, "r");
@@ -77,15 +157,9 @@ static int readFavoriteFile(const char *path, int staged, TargetList *titles,
       break;
     }
     favorite[length] = '\0';
-    if (!length || !titles || !flags)
+    if (!length || !lookup || !flags)
       continue;
-    for (Target *target = titles->first; target; target = target->next)
-      if (target->idx < flagCount && favoriteDevice(target) == device) {
-        int match = !strcmp(favorite, relativeTargetPath(target));
-        if (target->discs) for (unsigned disc=0; disc<target->discs->count; ++disc)
-          if (!strcmp(favorite, target->discs->paths[disc])) match=1;
-        if (match) flags[target->idx] = 1;
-      }
+    matchFavorite(lookup, device, favorite, flags, flagCount);
   }
   if (ferror(file))
     result = -EIO;
@@ -97,7 +171,6 @@ static int readFavoriteFile(const char *path, int staged, TargetList *titles,
 }
 
 int loadFavoriteFlags(TargetList *titles, uint8_t *flags, size_t flagCount) {
-  Target *deviceTarget;
   int loaded = 0;
 
   if (titles == NULL || flags == NULL || flagCount < (size_t)titles->total)
@@ -107,22 +180,31 @@ int loadFavoriteFlags(TargetList *titles, uint8_t *flags, size_t flagCount) {
   if (!candidate)
     return -ENOMEM;
 
-  for (deviceTarget = titles->first; deviceTarget != NULL; deviceTarget = deviceTarget->next) {
+  FavoriteLookup lookup = {.titles = titles};
+  // Metadata drives are bounded in production; retain the full-list fallback
+  // for callers supplying more devices than the normal device map can hold.
+  struct DeviceMapEntry *visited[MAX_DEVICES];
+  size_t visitedCount = 0;
+  for (Target *deviceTarget = titles->first; deviceTarget; deviceTarget = deviceTarget->next) {
     struct DeviceMapEntry *device = favoriteDevice(deviceTarget);
     char path[PATH_MAX];
-    if (deviceWasVisited(titles, deviceTarget, device))
-      continue;
+    size_t i = 0;
+    while (i < visitedCount && visited[i] != device) i++;
+    if (i < visitedCount || (visitedCount == MAX_DEVICES &&
+        deviceWasVisited(titles, deviceTarget, device))) continue;
+    if (visitedCount < MAX_DEVICES) visited[visitedCount++] = device;
     const char *paths[] = {favoritesTempPath, favoritesPath};
     for (int attempt = 0; attempt < 2; attempt++) {
       memset(candidate, 0, flagCount);
       if (buildConfigFilePath(path, sizeof(path), device->mountpoint, paths[attempt]) ||
-          readFavoriteFile(path, attempt == 0, titles, device, candidate, flagCount))
+          readFavoriteFile(path, attempt == 0, &lookup, device, candidate, flagCount))
         continue;
       for (size_t i = 0; i < flagCount; i++)
         if (candidate[i] && !flags[i]) { flags[i] = 1; loaded++; }
       break;
     }
   }
+  free(lookup.entries);
   free(candidate);
   return loaded;
 }
@@ -159,9 +241,10 @@ int saveFavoriteFlags(TargetList *titles, const uint8_t *flags, size_t flagCount
     return -EIO;
   }
 
+  char setPath[FAVORITE_SET_PATH_BYTES];
   for (target = titles->first; target != NULL; target = target->next) {
     if (target->idx < flagCount && flags[target->idx] && favoriteDevice(target) == device &&
-        fprintf(file, "%s\n", relativeTargetPath(target)) < 0) {
+        fprintf(file, "%s\n", relativeTargetPath(target, setPath)) < 0) {
       fclose(file);
       remove(tempPath);
       return -EIO;

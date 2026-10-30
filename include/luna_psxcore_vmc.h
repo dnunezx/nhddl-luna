@@ -32,6 +32,5 @@ const char *lunaPsxVmcCreate(const char *root, const char *name, char key[49]);
 const char *lunaPsxVmcCard(const char *path, unsigned char hash[32]);
 const char *lunaPsxVmcBackup(const char *base, char out[256]);
 const char *lunaPsxVmcReplace(const char *base, const char *source, int slot);
-const char *lunaPsxVmcExport(const char *source, const char *destination);
 const char *lunaPsxVmcRecover(const char *base, int slot, const char *suffix);
 #endif

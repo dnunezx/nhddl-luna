@@ -7,7 +7,7 @@
 int uiMainMenuLoop(int hasLibrary, Target *target);
 #include "ui/game_options.h"
 void uiVmcSetLibrary(TargetList *library);
-// Draw-only backdrop for pickers opened by another workspace; clear on return.
+// Game Options supplies its live backdrop while a nested picker is open.
 void uiFileManagerSetBackdrop(void (*draw)(void *), void *context);
 // Opt in only while Game Options owns the active crystal page; NULL on return.
 void uiFileManagerSetPageSection(const char *sectionTitle);

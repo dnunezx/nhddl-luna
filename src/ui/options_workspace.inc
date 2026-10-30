@@ -114,6 +114,29 @@ static void owSummary(OptionsMenuState *s, GameSection section, char *out, size_
   }
 }
 
+static int optionsCubeBackground(void *context,int closing) {
+  OptionsMenuState *s=context;
+  if(closing && s->transition.opening)
+    lunaOptionsRevealStart(&s->transition,0,uiNowMs());
+  int done=lunaOptionsRevealTick(&s->transition,uiNowMs());
+  if(s->scene && s->scene->drawLibrary)
+    s->scene->drawLibrary(s->scene->context,s->transition.position);
+  else drawSharedLibraryBackground(uiNowMs());
+  gsKit_set_test(gsGlobal,GS_ZTEST_OFF);
+  gsGlobal->PrimAlphaEnable=GS_SETTING_ON;
+  gsKit_set_primalpha(gsGlobal,GS_SETREG_ALPHA(0,1,0,1,0),0);
+  gsKit_set_test(gsGlobal,GS_ATEST_OFF);
+  gsKit_prim_sprite(gsGlobal,0,0,gsGlobal->Width,gsGlobal->Height,1,
+      GS_SETREG_RGBA(0,0,0,(int)(128*s->transition.shade)));
+  return closing && done;
+}
+
+static void optionsWorkspaceBackdrop(void *context) {
+  (void)context;
+  uiCubeHubDrawBackdrop();
+  gsKit_set_test(gsGlobal,GS_ZTEST_OFF);
+}
+
 static const char *optionsCubeDescription(void *context,int row) {
   OptionsMenuState *s=context;
   if(s->saveError)return s->saveErrorLabel?s->saveErrorLabel:"Could not save game settings";
@@ -225,8 +248,8 @@ static int optionsCubeHubInput(void *context,int input) {
 }
 
 static void optionsCubeFooter(void *context,float pageProgress) {
-  (void)context;
-  uiCubeOptionsFooterTransitionDraw(1,pageProgress);
+  OptionsMenuState *s=context;
+  uiCubeOptionsFooterTransitionDraw(s->transition.position,pageProgress);
 }
 
 static void optionsCubeLoop(OptionsMenuState *s) {
@@ -243,7 +266,7 @@ static void optionsCubeLoop(OptionsMenuState *s) {
   LunaCubeHub hub={.title="Game Options",.labels=labels,.count=count,
     .submenus=submenus,.submenuCount=count,.confirmRow=-1,.context=s,
     .description=optionsCubeDescription,.subtitle=s->target->name,
-    .libraryFooter=1,
-    .input=optionsCubeHubInput,.footer=optionsCubeFooter};
+    .libraryFooter=1,.gameOptionsLogo=1,
+    .background=optionsCubeBackground,.input=optionsCubeHubInput,.footer=optionsCubeFooter};
   uiCubeHubLoop(&s->selectedGameHubRow,NULL,&hub);
 }

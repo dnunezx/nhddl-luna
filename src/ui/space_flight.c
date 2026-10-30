@@ -20,8 +20,6 @@ static float randomUnit(void) {
 static int clampSetting(int value, int maximum) {
   return value < 0 ? 0 : value > maximum ? maximum : value;
 }
-int lunaSpaceSpeed(void) { return speedSetting; }
-int lunaSpaceDepth(void) { return depthSetting; }
 void lunaSpaceSetSpeed(int setting) { speedSetting = clampSetting(setting, 8); }
 void lunaSpaceSetDepth(int setting) { depthSetting = clampSetting(setting, 4); }
 static void initSpace(uint32_t nowMs) {

@@ -470,14 +470,6 @@ static const char *snapshot(const char *base,char out[256],int recovery) {
   return newFile(path,"LUNA PS1 shared backup 2\n",25);
 }
 const char *lunaPsxVmcBackup(const char *base,char out[256]) {return snapshot(base,out,0);}
-const char *lunaPsxVmcExport(const char *source,const char *destination) {
-  unsigned char hash[32],check[32];const char *error=lunaPsxVmcCard(source,hash);if(error)return error;
-  if(strlen(destination)>240 || !missing(destination))return "Choose an unused, shorter export path.";
-  char stage[256];snprintf(stage,sizeof(stage),"%s.new",destination);
-  error=copyVerified(source,stage);if(error)return error;
-  error=lunaPsxVmcCard(stage,check);if(error || memcmp(hash,check,32))return "The export failed verification.";
-  return fileXioRename(stage,destination)<0?"Cannot publish the verified export.":NULL;
-}
 const char *lunaPsxVmcReplace(const char *base,const char *source,int slot) {
   if(slot < -1 || slot > 1)return "Choose a valid slot.";
   const char *error=checkRecovery(base);if(error)return error;

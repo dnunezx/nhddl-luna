@@ -6,6 +6,7 @@
 #include "ui/utf8.h"
 #include "ui/navigation.h"
 #include "ui/icons.h"
+#include "ui/game_options_logo.h"
 #include "ui/grid_selector.h"
 #include "ui/view_internal.h"
 #include <dmaKit.h>
@@ -27,6 +28,7 @@ GSTEXTURE **fontPages;
 // Graphics textures
 GSTEXTURE *icons;
 GSTEXTURE *gridSelector;
+static GSTEXTURE gameOptionsLogo;
 
 // The supplied selector is opaque, with its glow composited on black. Convert
 // it once into a transparent overlay so grid covers remain visible beneath it.
@@ -145,7 +147,27 @@ static void releaseGraphicsResources(void) {
   releaseGraphicsTexture(gridSelector);
   free(gridSelector);
   gridSelector = NULL;
+  releaseGraphicsTexture(&gameOptionsLogo);
   graphicsInitialized = 0;
+}
+
+static void prepareGameOptionsLogo(void) {
+  // Power-of-two backing with transparent padding; the wordmark is 78 x 12.
+  gameOptionsLogo.Width = 128;
+  gameOptionsLogo.Height = 16;
+  gameOptionsLogo.PSM = GS_PSM_CT32;
+  gameOptionsLogo.Filter = GS_FILTER_NEAREST;
+  gameOptionsLogo.Mem = memalign(128, 128 * 16 * sizeof(u32));
+  if (gameOptionsLogo.Mem == NULL)
+    return;
+  u32 *pixels = gameOptionsLogo.Mem;
+  for (int i = 0; i < 128 * 16; i++)
+    pixels[i] = 0x00ffffff;
+  for (int y = 0; y < GAME_OPTIONS_LOGO_HEIGHT; y++)
+    for (int x = 0; x < GAME_OPTIONS_LOGO_WIDTH; x++) {
+      const u32 alpha = GAME_OPTIONS_LOGO_ALPHA[y * GAME_OPTIONS_LOGO_WIDTH + x] * 128U / 255U;
+      pixels[(y + 1) * 128 + x + 1] = 0x00ffffff | (alpha << 24);
+    }
 }
 
 static void prepareFontPageAlpha(GSTEXTURE *page) {
@@ -232,6 +254,7 @@ int initGraphics() {
   }
   prepareIconsAlpha();
   if(!bindTextureSafe(gsGlobal,icons))goto fail;
+  prepareGameOptionsLogo();
 
   gridSelector = calloc(sizeof(GSTEXTURE), 1);
   if (gridSelector != NULL &&
@@ -327,6 +350,34 @@ void drawLunaLogo(float centerX,float top,float width,int z,uint64_t color) {
       left+width,y+width*109.0f/710.0f,LUNA_LOGO.x+LUNA_LOGO.width-.5f,
       LUNA_LOGO.y+LUNA_LOGO.height-.5f,z,tint);
   icons->Filter=filter;
+  gsKit_set_primalpha(gsGlobal,savedBlend,savedPabe);
+  gsGlobal->PrimAlphaEnable=savedAlpha;
+  *gsGlobal->Test=savedTest;
+  gsKit_set_test(gsGlobal,savedTest.ATE?GS_ATEST_ON:GS_ATEST_OFF);
+}
+
+void drawGameOptionsLogo(float centerX,float top,float width,int z,uint64_t color) {
+  if(width<=0||((color>>24)&255)==0)return;
+  GSTEXTURE *texture=&gameOptionsLogo;
+  texture->Filter=fabsf(width-GAME_OPTIONS_LOGO_WIDTH)<.01f?GS_FILTER_NEAREST:GS_FILTER_LINEAR;
+  // Keep a usable logo if this optional texture cannot be allocated or bound.
+  if(texture->Mem==NULL||!bindTextureSafe(gsGlobal,texture)) {
+    drawLunaLogo(centerX,top,width,z,color);
+    return;
+  }
+  GSTEST savedTest=*gsGlobal->Test;
+  uint64_t savedBlend=gsGlobal->PrimAlpha;
+  int savedAlpha=gsGlobal->PrimAlphaEnable,savedPabe=gsGlobal->PABE;
+  gsKit_set_test(gsGlobal,GS_ATEST_OFF);
+  gsGlobal->PrimAlphaEnable=GS_SETTING_ON;
+  gsKit_set_primalpha(gsGlobal,GS_SETREG_ALPHA(0,1,0,1,0),0);
+  float left=roundf(centerX-width*.5f),y=roundf(top);
+  uint64_t tint=GS_SETREG_RGBA((color&255)/2,((color>>8)&255)/2,
+      ((color>>16)&255)/2,(color>>24)&255);
+  // Full texel bounds and native-size sampling avoid another filtering pass.
+  gsKit_prim_sprite_texture(gsGlobal,texture,left,y,1,1,
+      left+width,y+width*GAME_OPTIONS_LOGO_HEIGHT/GAME_OPTIONS_LOGO_WIDTH,
+      1+GAME_OPTIONS_LOGO_WIDTH,1+GAME_OPTIONS_LOGO_HEIGHT,z,tint);
   gsKit_set_primalpha(gsGlobal,savedBlend,savedPabe);
   gsGlobal->PrimAlphaEnable=savedAlpha;
   *gsGlobal->Test=savedTest;

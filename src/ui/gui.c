@@ -334,6 +334,8 @@ void closeUI() {
 
 
 // Main UI loop. Displays the target list.
+#include "options_library.inc"
+
 int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   int res = 0;
   uint8_t *favoriteFlags = NULL;
@@ -564,6 +566,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     const char *nextViewLabel = nextView == view ? lunaText("Only view") :
                                 lunaNavViewLabel(nextView);
     const uint32_t libraryFrameMs = uiNowMs();
+    OptionsLibrarySnapshot optionsLibrary={.view=view,.titles=titles,.selected=selectedTitleIdx,
+        .maxTitles=maxTitlesPerPage,.favorites=favoritesOnly,.entry=1000,.fade=1000,
+        .listEntry=1000,.outgoing=-1,.flags=favoriteFlags,.nextLabel=nextViewLabel,.now=libraryFrameMs};
 
 #ifdef LUNA_CAMERA_ANIMATIONS
     lunaCameraViewCheck(view == UI_VIEW_PSBBN,
@@ -797,6 +802,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         if (collectionFromList)
           collectionEntryProgress = 1000;
 #endif
+        optionsLibrary.flow=flowOffset; optionsLibrary.outgoing=psbbnOutgoingTitleIdx;
+        optionsLibrary.fast=collectionScan.active; optionsLibrary.entry=collectionEntryProgress;
+        optionsLibrary.fade=collectionEntryFade; optionsLibrary.now=now;
         if (view == UI_VIEW_COLLECTION_V2)
           drawPSBBNCollectionV2(flowTitles, flowSelectedTitleIdx, flowOffset,
                                 favoritesOnly, collectionEntryProgress, now);
@@ -807,6 +815,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                               collectionEntryProgress,
                               collectionEntryFade, now, nextViewLabel);
       } else if (view == UI_VIEW_ORBIT) {
+        optionsLibrary.flow=flowOffset; optionsLibrary.now=now;
+        optionsLibrary.entry=libraryViewEntryProgress(entryView,view,entryStartMs,entryDurationMs,now);
         drawOrbit(titles, selectedTitleIdx, psbbnCoverTextures, flowOffset,
                   orbitRandomActive, libraryViewEntryProgress(entryView, view, entryStartMs, entryDurationMs, now),
                   now, nextViewLabel);
@@ -830,6 +840,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         drawOrbsView(titles, selectedTitleIdx, flowOffset, visualFocus,
                      scrollFast.active, libraryViewEntryProgress(entryView, view, entryStartMs, entryDurationMs, now),
                      now, nextViewLabel);
+        optionsLibrary.flow=flowOffset; optionsLibrary.visualFocus=visualFocus;
+        optionsLibrary.fast=scrollFast.active; optionsLibrary.now=now;
+        optionsLibrary.entry=libraryViewEntryProgress(entryView,view,entryStartMs,entryDurationMs,now);
       }
     } else {
       int favoritesEmpty = favoritesOnly && titles->total == 0;
@@ -844,6 +857,11 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
           listEntryProgress = lunaNavEase(
               (int)(elapsed * 1000U / classicEntryListSlideDurationMs));
       }
+      optionsLibrary.artTarget=classicDisplayedArtTarget;
+      optionsLibrary.cover=(classicDisplayedCoverAvailable && !favoritesEmpty) ? coverTexture : NULL;
+      optionsLibrary.disc=(classicDisplayedDiscAvailable && !favoritesEmpty) ? discTexture : NULL;
+      optionsLibrary.coverPending=coverPending && !favoritesEmpty;
+      optionsLibrary.listEntry=listEntryProgress; optionsLibrary.now=frameNowMs;
       drawTitleList(titles, selectedTitleIdx, maxTitlesPerPage,
                     classicDisplayedArtTarget,
                     (classicDisplayedCoverAvailable && !favoritesEmpty) ? coverTexture : NULL,
@@ -1441,7 +1459,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     } else if ((input & PAD_TRIANGLE) && titles->total > 0) {
       prevInput = 0; // Reset previous input
       // Enter title options screen
-      if ((res = uiTitleOptionsLoop(curTarget)) < 0) {
+      LunaOptionsScene optionsScene={.drawLibrary=drawOptionsLibraryScene,.context=&optionsLibrary};
+      if ((res = uiTitleOptionsLoop(curTarget,&optionsScene)) < 0) {
         // Something went wrong, main loop must exit immediately
         ambientStop();
         freeTargetList(favoriteTitles);

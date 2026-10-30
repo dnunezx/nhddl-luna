@@ -1540,7 +1540,10 @@ static void drawBiosSystemConfiguration(uint32_t frameNowMs) {
 #include "ui/camera_transitions.h"
 #endif
 
+static int optionsBackgroundDrawn;
+
 static void drawLibraryBackground(uint32_t frameNowMs, int orbit) {
+  if (optionsBackgroundDrawn) return;
 #ifdef LUNA_CAMERA_ANIMATIONS
   lunaCameraSceneBeforeBackground();
 #endif
@@ -1576,6 +1579,16 @@ void drawSharedLibraryBackground(uint32_t nowMs) {
 
 void drawOrbitLibraryBackground(uint32_t nowMs) {
   drawLibraryBackground(nowMs,1);
+}
+
+void beginOptionsLibraryBackground(uint32_t nowMs, int orbit) {
+  optionsBackgroundDrawn=0;
+  drawLibraryBackground(nowMs,orbit);
+  optionsBackgroundDrawn=1;
+}
+
+void endOptionsLibraryBackground(void) {
+  optionsBackgroundDrawn=0;
 }
 
 int orbsVisualCacheIndex(int flowOffset) {

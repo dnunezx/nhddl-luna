@@ -99,9 +99,10 @@ int initBDMDevices(int deviceIdx) {
     deviceModeMap[deviceIdx].mode = MODE_NONE;
     mountpoint[4] = i + '0';
 
-    // Wait for IOP to initialize device driver
-    for (int attempts = 0; attempts < delayAttempts; attempts++) {
-      sleep(1);
+    // Probe immediately, retaining the full readiness window for slow devices.
+    for (int attempts = 0; attempts <= delayAttempts; attempts++) {
+      if (attempts > 0)
+        sleep(1);
       directory = opendir(mountpoint);
       if (directory != NULL) {
         closedir(directory);

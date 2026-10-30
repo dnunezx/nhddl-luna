@@ -31,7 +31,6 @@ GSTEXTURE *classicPreviousCoverTexture;
 GSTEXTURE *discTexture;
 GSTEXTURE *psbbnCoverTextures[PSBBN_COVER_CACHE_COUNT];
 uint8_t psbbnCoverLoaded[PSBBN_COVER_CACHE_COUNT];
-static uint8_t psbbnCoverFullResolution[PSBBN_COVER_CACHE_COUNT];
 static void *psbbnCoverSourcePixels[PSBBN_COVER_CACHE_COUNT];
 static int psbbnCoverSourceWidth[PSBBN_COVER_CACHE_COUNT];
 static int psbbnCoverSourceHeight[PSBBN_COVER_CACHE_COUNT];
@@ -708,7 +707,6 @@ static void releasePSBBNCoverCacheEntry(int cacheIdx) {
   psbbnCoverSourceWidth[cacheIdx] = 0;
   psbbnCoverSourceHeight[cacheIdx] = 0;
   psbbnCoverLoaded[cacheIdx] = 0;
-  psbbnCoverFullResolution[cacheIdx] = 0;
   collectionCoverAttempted[cacheIdx] = 0;
   collectionCoverResolved[cacheIdx] = 0;
   collectionCoverResidentLevel[cacheIdx] = 0;
@@ -925,7 +923,6 @@ static int loadPSBBNCoverArt(struct DeviceMapEntry *device, char *titleID, int c
   psbbnCoverLoaded[cacheIdx] = 1;
   collectionCoverResidentLevel[cacheIdx] = selected ? 2 : 0;
   snprintf(collectionCoverKeys[cacheIdx], sizeof(collectionCoverKeys[cacheIdx]), "%s", artPathBuffer);
-  psbbnCoverFullResolution[cacheIdx] = selected != 0;
   // Upload when drawn, including synchronous fallback loads made while the
   // splash owns rendering. Prepared hidden covers need only ordinary RAM.
   return 0;
@@ -2125,7 +2122,6 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
     void *recycledPreview = collectionCoverPreviewPixels[0];
     int recycledWidth = psbbnCoverSourceWidth[0];
     int recycledHeight = psbbnCoverSourceHeight[0];
-    uint8_t recycledFullResolution = psbbnCoverFullResolution[0];
     uint8_t recycledLevel = collectionCoverResidentLevel[0];
     for (int cacheIdx = 0; cacheIdx < PSBBN_COVER_CACHE_COUNT - 1; cacheIdx++) {
       psbbnCoverTextures[cacheIdx] = psbbnCoverTextures[cacheIdx + 1];
@@ -2135,7 +2131,6 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
       collectionCoverPreviewPixels[cacheIdx] = collectionCoverPreviewPixels[cacheIdx + 1];
       psbbnCoverSourceWidth[cacheIdx] = psbbnCoverSourceWidth[cacheIdx + 1];
       psbbnCoverSourceHeight[cacheIdx] = psbbnCoverSourceHeight[cacheIdx + 1];
-      psbbnCoverFullResolution[cacheIdx] = psbbnCoverFullResolution[cacheIdx + 1];
       collectionCoverResidentLevel[cacheIdx] = collectionCoverResidentLevel[cacheIdx + 1];
       strcpy(collectionCoverKeys[cacheIdx], collectionCoverKeys[cacheIdx + 1]);
     }
@@ -2145,7 +2140,6 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
     collectionCoverPreviewPixels[PSBBN_COVER_CACHE_COUNT - 1] = recycledPreview;
     psbbnCoverSourceWidth[PSBBN_COVER_CACHE_COUNT - 1] = recycledWidth;
     psbbnCoverSourceHeight[PSBBN_COVER_CACHE_COUNT - 1] = recycledHeight;
-    psbbnCoverFullResolution[PSBBN_COVER_CACHE_COUNT - 1] = recycledFullResolution;
     collectionCoverResidentLevel[PSBBN_COVER_CACHE_COUNT - 1] = recycledLevel;
     strcpy(collectionCoverKeys[PSBBN_COVER_CACHE_COUNT - 1], recycledKey);
     releasePSBBNCoverCacheEntry(PSBBN_COVER_CACHE_COUNT - 1);
@@ -2163,7 +2157,6 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
     void *recycledPreview = collectionCoverPreviewPixels[PSBBN_COVER_CACHE_COUNT - 1];
     int recycledWidth = psbbnCoverSourceWidth[PSBBN_COVER_CACHE_COUNT - 1];
     int recycledHeight = psbbnCoverSourceHeight[PSBBN_COVER_CACHE_COUNT - 1];
-    uint8_t recycledFullResolution = psbbnCoverFullResolution[PSBBN_COVER_CACHE_COUNT - 1];
     uint8_t recycledLevel = collectionCoverResidentLevel[PSBBN_COVER_CACHE_COUNT - 1];
     for (int cacheIdx = PSBBN_COVER_CACHE_COUNT - 1; cacheIdx > 0; cacheIdx--) {
       psbbnCoverTextures[cacheIdx] = psbbnCoverTextures[cacheIdx - 1];
@@ -2173,7 +2166,6 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
       collectionCoverPreviewPixels[cacheIdx] = collectionCoverPreviewPixels[cacheIdx - 1];
       psbbnCoverSourceWidth[cacheIdx] = psbbnCoverSourceWidth[cacheIdx - 1];
       psbbnCoverSourceHeight[cacheIdx] = psbbnCoverSourceHeight[cacheIdx - 1];
-      psbbnCoverFullResolution[cacheIdx] = psbbnCoverFullResolution[cacheIdx - 1];
       collectionCoverResidentLevel[cacheIdx] = collectionCoverResidentLevel[cacheIdx - 1];
       strcpy(collectionCoverKeys[cacheIdx], collectionCoverKeys[cacheIdx - 1]);
     }
@@ -2183,7 +2175,6 @@ void refreshPSBBNCovers(TargetList *titles, int selectedTitleIdx, int previousTi
     collectionCoverPreviewPixels[0] = recycledPreview;
     psbbnCoverSourceWidth[0] = recycledWidth;
     psbbnCoverSourceHeight[0] = recycledHeight;
-    psbbnCoverFullResolution[0] = recycledFullResolution;
     collectionCoverResidentLevel[0] = recycledLevel;
     strcpy(collectionCoverKeys[0], recycledKey);
     releasePSBBNCoverCacheEntry(0);
@@ -2209,7 +2200,6 @@ static void refreshBackgroundCovers(TargetList *titles, int selectedTitleIdx,
     void *recycledPreview = collectionCoverPreviewPixels[0];
     int recycledWidth = psbbnCoverSourceWidth[0];
     int recycledHeight = psbbnCoverSourceHeight[0];
-    uint8_t recycledFull = psbbnCoverFullResolution[0];
     uint8_t recycledLevel = collectionCoverResidentLevel[0];
     uint8_t recycledResolved = collectionCoverResolved[0];
     for (int i = 0; i < PSBBN_COVER_CACHE_COUNT - 1; i++) {
@@ -2222,7 +2212,6 @@ static void refreshBackgroundCovers(TargetList *titles, int selectedTitleIdx,
       collectionCoverPreviewPixels[i] = collectionCoverPreviewPixels[i + 1];
       psbbnCoverSourceWidth[i] = psbbnCoverSourceWidth[i + 1];
       psbbnCoverSourceHeight[i] = psbbnCoverSourceHeight[i + 1];
-      psbbnCoverFullResolution[i] = psbbnCoverFullResolution[i + 1];
       collectionCoverResidentLevel[i] = collectionCoverResidentLevel[i + 1];
       strcpy(collectionCoverKeys[i], collectionCoverKeys[i + 1]);
     }
@@ -2232,7 +2221,6 @@ static void refreshBackgroundCovers(TargetList *titles, int selectedTitleIdx,
     collectionCoverPreviewPixels[PSBBN_COVER_CACHE_COUNT - 1] = recycledPreview;
     psbbnCoverSourceWidth[PSBBN_COVER_CACHE_COUNT - 1] = recycledWidth;
     psbbnCoverSourceHeight[PSBBN_COVER_CACHE_COUNT - 1] = recycledHeight;
-    psbbnCoverFullResolution[PSBBN_COVER_CACHE_COUNT - 1] = recycledFull;
     collectionCoverResidentLevel[PSBBN_COVER_CACHE_COUNT - 1] = recycledLevel;
     collectionCoverResolved[PSBBN_COVER_CACHE_COUNT - 1] = recycledResolved;
     strcpy(collectionCoverKeys[PSBBN_COVER_CACHE_COUNT - 1], recycledKey);
@@ -2247,7 +2235,6 @@ static void refreshBackgroundCovers(TargetList *titles, int selectedTitleIdx,
     void *recycledPreview = collectionCoverPreviewPixels[PSBBN_COVER_CACHE_COUNT - 1];
     int recycledWidth = psbbnCoverSourceWidth[PSBBN_COVER_CACHE_COUNT - 1];
     int recycledHeight = psbbnCoverSourceHeight[PSBBN_COVER_CACHE_COUNT - 1];
-    uint8_t recycledFull = psbbnCoverFullResolution[PSBBN_COVER_CACHE_COUNT - 1];
     uint8_t recycledLevel = collectionCoverResidentLevel[PSBBN_COVER_CACHE_COUNT - 1];
     uint8_t recycledResolved = collectionCoverResolved[PSBBN_COVER_CACHE_COUNT - 1];
     for (int i = PSBBN_COVER_CACHE_COUNT - 1; i > 0; i--) {
@@ -2260,7 +2247,6 @@ static void refreshBackgroundCovers(TargetList *titles, int selectedTitleIdx,
       collectionCoverPreviewPixels[i] = collectionCoverPreviewPixels[i - 1];
       psbbnCoverSourceWidth[i] = psbbnCoverSourceWidth[i - 1];
       psbbnCoverSourceHeight[i] = psbbnCoverSourceHeight[i - 1];
-      psbbnCoverFullResolution[i] = psbbnCoverFullResolution[i - 1];
       collectionCoverResidentLevel[i] = collectionCoverResidentLevel[i - 1];
       strcpy(collectionCoverKeys[i], collectionCoverKeys[i - 1]);
     }
@@ -2270,7 +2256,6 @@ static void refreshBackgroundCovers(TargetList *titles, int selectedTitleIdx,
     collectionCoverPreviewPixels[0] = recycledPreview;
     psbbnCoverSourceWidth[0] = recycledWidth;
     psbbnCoverSourceHeight[0] = recycledHeight;
-    psbbnCoverFullResolution[0] = recycledFull;
     collectionCoverResidentLevel[0] = recycledLevel;
     collectionCoverResolved[0] = recycledResolved;
     strcpy(collectionCoverKeys[0], recycledKey);
@@ -2616,7 +2601,6 @@ static void setCollectionCoverResidentSize(int cacheIdx, int level) {
   texture->Height = level == 2 ? psbbnCoverSourceHeight[cacheIdx] :
                     level == 1 ? PSBBN_PREVIEW_SIZE : PSBBN_THUMBNAIL_SIZE;
   collectionCoverResidentLevel[cacheIdx] = level;
-  psbbnCoverFullResolution[cacheIdx] = level == 2;
 }
 
 int prepareCollectionCoverTexture(int cacheIdx) {
@@ -2793,7 +2777,6 @@ void artCacheShutdown(void) {
     psbbnCoverSourceWidth[i] = 0;
     psbbnCoverSourceHeight[i] = 0;
     psbbnCoverLoaded[i] = 0;
-    psbbnCoverFullResolution[i] = 0;
   }
   for (int buffer = 0; buffer < GRID_PAGE_BUFFERS; buffer++) {
     for (int i = 0; i < GRID_CACHE_PAGE_SIZE; i++) {
