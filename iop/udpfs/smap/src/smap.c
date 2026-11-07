@@ -202,10 +202,15 @@ static int InitPHY(struct SmapDriverData *SmapDrivPrivData)
 
     RepeatAutoNegoProcess:
         for (AutoNegoRetries = 0; AutoNegoRetries < 3; AutoNegoRetries++) {
-            for (i = 0; i < 15; i++) {
-                DelayThread(200000);
+            /* Wait up to 3 seconds as before, but stop as soon as negotiation
+             * has completed with the link up. */
+            for (i = 0; i < 30; i++) {
+                DelayThread(100000);
                 if (SmapDrivPrivData->NetDevStopFlag)
                     return 0;
+                value = _smap_read_phy(SmapDrivPrivData->emac3_regbase, SMAP_DsPHYTER_BMSR);
+                if ((value & (SMAP_PHY_BMSR_ANCP | 0x10 | SMAP_PHY_BMSR_LINK)) == (SMAP_PHY_BMSR_ANCP | SMAP_PHY_BMSR_LINK))
+                    break;
             }
 
             value = _smap_read_phy(SmapDrivPrivData->emac3_regbase, SMAP_DsPHYTER_BMSR);
