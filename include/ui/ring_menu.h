@@ -12,6 +12,6 @@ void uiRingSetColor(LunaRingColor color);
 LunaRingColor uiRingGetColor(void);
 void uiRingSetEffectsColor(LunaRingColor color);
 void uiRingSetOrbInteriorColor(LunaRingColor color);
-int uiRingMenuLoop(int hasLibrary, const char *status);
+int uiRingMenuLoop(int hasLibrary, const char *status, int showEntryBurst);
 
 #endif

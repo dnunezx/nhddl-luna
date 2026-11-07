@@ -81,7 +81,7 @@ static void ringRipple(const RingWave *wave) {
 }
 static void ringDrawEffects(RingMenu *menu) {
   int bound=bindTextureSafe(gsGlobal,&ringOrbTexture);
-  int burstBound=ringBurstTexture.Mem&&bindTextureSafe(gsGlobal,&ringBurstTexture);
+  int burstBound=menu->showEntryBurst&&ringBurstTexture.Mem&&bindTextureSafe(gsGlobal,&ringBurstTexture);
   gsKit_set_primalpha(gsGlobal,GS_SETREG_ALPHA(0,2,0,1,0),0);
   if(bound) {
     /* Type2: three satellites begin at -2 rad and converge to each label's
@@ -100,7 +100,7 @@ static void ringDrawEffects(RingMenu *menu) {
     }
     for(int j=0;j<RING_PARTICLE_COUNT;j++) {
       RingParticle *p=&menu->particles[j];
-      if(!p->active) continue;
+      if(!p->active || (p->burst&&!menu->showEntryBurst)) continue;
       int coloredBurst=p->burst&&ringOrbInteriorColorPreset!=LUNA_RING_ORIGINAL;
       if(coloredBurst&&!burstBound)continue;
       float age=p->age*.001f;

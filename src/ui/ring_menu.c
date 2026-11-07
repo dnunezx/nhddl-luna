@@ -50,7 +50,7 @@ typedef struct {
   uint32_t random;
   int particleCursor, burstDone, moveEffect;
   uint32_t lastMs;
-  int selected, closing;
+  int selected, closing, showEntryBurst;
 } RingMenu;
 
 static float ringClamp(float x) { return fminf(1, fmaxf(0, x)); }
@@ -133,10 +133,11 @@ static void ringMove(RingMenu *menu, int direction) {
 #include <unistd.h>
 
 #include "ring_scene.inc"
-int uiRingMenuLoop(int hasLibrary, const char *status) {
+int uiRingMenuLoop(int hasLibrary, const char *status, int showEntryBurst) {
   /* Bounded effect pool stays off the nested library/menu thread's stack. */
   static RingMenu menu;
   ringInit(&menu,uiNowMs(),hasLibrary?3:1);
+  menu.showEntryBurst = showEntryBurst;
   ringLayoutInit(&menu);
   ringLetteringInit();
   ringEffectsInit();

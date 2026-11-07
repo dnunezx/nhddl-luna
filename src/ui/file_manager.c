@@ -2810,9 +2810,10 @@ int uiMainMenuLoop(int hasLibrary, Target *target) {
   uiRingSetColor((LunaRingColor)appearance.ringColor);
   uiRingSetEffectsColor((LunaRingColor)appearance.ringEffectsColor);
   uiRingSetOrbInteriorColor((LunaRingColor)appearance.ringOrbInteriorColor);
+  int showEntryBurst = 1;
   for (;;) {
     uiCubePanelGlassClose();
-    int action = uiRingMenuLoop(hasLibrary, startMenuStatus(hasLibrary));
+    int action = uiRingMenuLoop(hasLibrary, startMenuStatus(hasLibrary), showEntryBurst);
     // Consume the activation press before entering another interactive screen.
     waitMenuButtonRelease();
     if (action == LUNA_RING_LIBRARY) return 0;
@@ -2822,5 +2823,6 @@ int uiMainMenuLoop(int hasLibrary, Target *target) {
       int result = uiSystemSettingsLoop(hasLibrary,target);
       if (result >= 0) return result;
     }
+    showEntryBurst = 0;
   }
 }
