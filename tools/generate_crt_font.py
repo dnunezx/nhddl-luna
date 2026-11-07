@@ -17,6 +17,8 @@ BASELINE = 15
 FIRST_CHAR = 32
 LAST_CHAR = 126
 EXTRA_CHARS = sorted(set("¡¿ÀÁÂÃÇÉÊÍÑÓÔÕÚÜàáâãçéêíñóôõúü"), key=ord)
+# Append Slovak glyphs so existing atlas positions stay fixed.
+EXTRA_CHARS += sorted(set("ÁÄČĎÉÍĹĽŇÓÔŔŠŤÚÝŽáäčďéíĺľňóôŕšťúýž„“") - set(EXTRA_CHARS), key=ord)
 CHAR_CODES = list(range(FIRST_CHAR, LAST_CHAR + 1)) + [ord(c) for c in EXTRA_CHARS]
 
 

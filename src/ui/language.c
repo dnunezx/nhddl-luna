@@ -4,15 +4,15 @@
 #include <stdio.h>
 #include <string.h>
 
-typedef struct { const char *english, *spanish, *portuguese; } Translation;
+typedef struct { const char *english, *spanish, *portuguese, *slovak; } Translation;
 // Sorted by English key; keep keys and printf placeholders identical to source.
 static const Translation translations[] = {
 #include "language_catalog.inc"
 };
 static LunaLanguage activeLanguage;
 static char languagePath[PATH_MAX + 1];
-static const char *const codes[] = {"en", "es", "pt-BR"};
-static const char *const names[] = {"English", "Español", "Português"};
+static const char *const codes[] = {"en", "es", "pt-BR", "sk"};
+static const char *const names[] = {"English", "Español", "Português", "Slovenčina"};
 
 LunaLanguage lunaLanguage(void) { return activeLanguage; }
 const char *lunaLanguageName(LunaLanguage language) {
@@ -28,8 +28,9 @@ const char *lunaText(const char *english) {
     if (order < 0) right = middle;
     else if (order > 0) left = middle + 1;
     else {
-      const char *value = activeLanguage == LUNA_LANGUAGE_SPANISH ?
-          translations[middle].spanish : translations[middle].portuguese;
+      const char *value = translations[middle].portuguese;
+      if (activeLanguage == LUNA_LANGUAGE_SPANISH) value = translations[middle].spanish;
+      if (activeLanguage == LUNA_LANGUAGE_SLOVAK) value = translations[middle].slovak;
       return value && value[0] ? value : english;
     }
   }

@@ -13,6 +13,8 @@ HEADER = ROOT / "include/ui/psbbn_font.h"
 FIRST, LAST = 32, 126
 ATLAS_WIDTH, ATLAS_HEIGHT = 256, 256
 EXTRA_CHARS = sorted(set("¡¿ÀÁÂÃÇÉÊÍÑÓÔÕÚÜàáâãçéêíñóôõúü"), key=ord)
+# Append Slovak glyphs so all existing atlas positions remain unchanged.
+EXTRA_CHARS += sorted(set("ÁÄČĎÉÍĹĽŇÓÔŔŠŤÚÝŽáäčďéíĺľňóôŕšťúýž„“") - set(EXTRA_CHARS), key=ord)
 # The keyboard texture puts these descenders unusually high in their cells.
 # Align their lowercase bodies and let their tails fall below the baseline.
 DESCENDER_OFFSETS = {"g": 2, "p": 1, "q": 1, "y": 1}
@@ -30,6 +32,8 @@ def main():
         parts = unicodedata.normalize("NFD", char)
         base = parts[0] if len(parts) == 2 else char
         inverted = char in "¡¿"
+        if char in "„“":
+            base = '"'
         if inverted:
             base = "!" if char == "¡" else "?"
         # Accented glyphs retain the PSBBN keyboard's native letter shapes.
@@ -46,6 +50,9 @@ def main():
         yoffset = top + 2 + DESCENDER_OFFSETS.get(base, 0)
         if inverted:
             pixels = pixels.transpose(Image.Transpose.ROTATE_180)
+        elif char in "„“":
+            # Slovak double quotation marks use the original keyboard quote.
+            yoffset = 14 if char == "„" else 2
         elif len(parts) == 2:
             accent = parts[1]
             if accent == '\u0327':  # Cedilla below the original C/c.
@@ -54,6 +61,12 @@ def main():
                 draw = ImageDraw.Draw(combined)
                 mid = width // 2
                 draw.line([(mid, height), (mid + 1, height + 1), (mid - 1, height + 2)], fill="white")
+            elif accent == '\u030c' and base in 'dltL':
+                # These Slovak letters use the caron beside the ascender.
+                combined = Image.new("RGBA", (width + 3, height))
+                combined.paste(pixels, (0, 0))
+                draw = ImageDraw.Draw(combined)
+                draw.line([(width + 2, 0), (width + 1, 2)], fill="white")
             else:
                 combined = Image.new("RGBA", (width, height + 4))
                 combined.paste(pixels, (0, 4))
@@ -66,6 +79,7 @@ def main():
                 elif accent == '\u0308':
                     draw.rectangle((mid - 2, 0, mid - 1, 1), fill="white")
                     draw.rectangle((mid + 1, 0, mid + 2, 1), fill="white")
+                elif accent == '\u030c': draw.line([(mid - 2, 0), (mid, 2), (mid + 2, 0)], fill="white")
                 else: raise ValueError(f"Unsupported accent: {char}")
                 yoffset -= 4
             pixels = combined
