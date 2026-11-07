@@ -44,16 +44,22 @@ int initMMCEDevices(int newDeviceIdx) {
 }
 
 // Uses MMCE devctl calls to switch memory card to given title ID
-unsigned int mmceMountVMC(char *titleID) {
+unsigned int mmceMountVMC(char *titleID, int switchLauncherCard) {
   // MMCE storage scanning is independent of a card used for physical saves.
   // Its SIO2 driver cannot coexist with the active MX4SIO driver.
   if (!STORAGE_SETTINGS.mmceGameID || (LAUNCHER_OPTIONS.mode & MODE_MX4SIO) ||
       !titleID || !titleID[0] || strlen(titleID) > 249)
     return 0;
   unsigned int switched = 0;
+  char launcherCard[] = "mc0:";
   // Send GameID to both MMCE devices
   for (int i = '0'; i < '2'; i++) {
     mmceMountpoint[4] = i;
+    launcherCard[2] = i;
+    // Warksmith's boot-card guard: only switch the launcher card when the
+    // game core can restore it before returning to LUNA.
+    if (!switchLauncherCard && !strncmp(NEUTRINO_ELF_PATH, launcherCard, 4))
+      continue;
 
     // Ping MMCE first to make sure the device is present
     if (fileXioDevctl(mmceMountpoint, 0x1, NULL, 0, NULL, 0) < 0)

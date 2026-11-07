@@ -37,7 +37,7 @@ void freeDeviceMapEntries(struct DeviceMapEntry *entries);
 void syncDeviceMap(void);
 
 // Switch enabled physical MMCE cards and return the slots requiring IGR restore.
-unsigned int mmceMountVMC(char *titleID);
+unsigned int mmceMountVMC(char *titleID, int switchLauncherCard);
 
 // Name of the APA/PFS metadata partition currently mounted at pfs0:.
 const char *getMountedPFSPartition(void);
