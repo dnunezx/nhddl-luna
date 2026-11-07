@@ -1,5 +1,6 @@
 // LUNA appearance preferences: one validated record per metadata location.
 #include "ui/appearance.h"
+#include "ui/neo.h"
 #include "ui/ring_menu.h"
 #include "ui/view_state.h"
 #include "devices/devices.h"
@@ -13,27 +14,35 @@
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h>
 
-#define APPEARANCE_VERSION 5U
+#define APPEARANCE_VERSION 7U
 #define RECORD_LIMIT 2048
-#define RECORD_WRITE_SIZE 512
+#define RECORD_WRITE_SIZE 1024
 static const char *const recordNames[] = {
   "/appearance.cfg", "/appearance.cfg.tmp", "/appearance.cfg.bak"
 };
 static const char *const backgrounds[] = {
   "stars", "orbs", "red-clouds", "midnight-cubes", "system-config", "neo",
-  "aurora", "ronin", "torch", "tempest", "space-flight"
+  "aurora", "ronin", "torch", "tempest", "space-flight", "underground", "static-x", "phantom"
 };
-static const char *const glasses[] = {"original", "white-gray", "black", "cyber"};
+static const char *const glasses[] = {"original", "white-gray", "black", "cyber", "underground", "static-x", "phantom"};
 static const char *const fonts[] = {"dejavu", "psbbn"};
 static const char *const switches[] = {"off", "on"};
 static const char *const layouts[] = {"separate", "overlap"};
 static const char *const cases[] = {"tall", "square"};
 static const char *const themes[] = {"luna", "ps2-original"};
 static const char *const colors[] = {"original", "cyan", "violet", "rose", "green", "gold", "white"};
-static const char *const ringColors[] = {"original","cyan","blue","violet","rose","green","white"};
+static const char *const ringColors[] = {"original","cyan","blue","violet","rose","green","white","crimson"};
+static const char *const ringInteriorColors[] = {"original","cyan","blue","violet","rose","green","white","crimson","dark"};
 static const char *const spaceSpeeds[] = {"0","1","2","3","4","5","6","7","8"};
 static const char *const spaceDepths[] = {"0","1","2","3","4"};
+static const char *const neoSpeeds[] = {"slow","normal","fast"};
+static const char *const neoDensities[] = {"sparse","normal","dense"};
+static const char *const neoColors[] = {"green","cyan","blue","violet","red","amber","white"};
+_Static_assert(sizeof(neoSpeeds)/sizeof(*neoSpeeds)==NEO_SPEED_COUNT,"Update Neo speed storage names");
+_Static_assert(sizeof(neoDensities)/sizeof(*neoDensities)==NEO_DENSITY_COUNT,"Update Neo density storage names");
+_Static_assert(sizeof(neoColors)/sizeof(*neoColors)==NEO_COLOR_COUNT,"Update Neo color storage names");
 _Static_assert(sizeof(ringColors)/sizeof(*ringColors)==LUNA_RING_COLOR_COUNT,"Update ring color storage names");
+_Static_assert(sizeof(ringInteriorColors)/sizeof(*ringInteriorColors)==LUNA_RING_INTERIOR_COLOR_COUNT,"Update ring interior color storage names");
 static const char *const views[UI_VIEW_ID_LIMIT] = {
   [UI_VIEW_CLASSIC] = "classic", [UI_VIEW_PSBBN] = "collection",
   [UI_VIEW_ORBIT] = "orbit", [UI_VIEW_ORBS] = "scroll", [UI_VIEW_3D] = "3d",
@@ -66,7 +75,8 @@ static const AppearanceField fields[] = {
   FIELD(orbsColor, colors, 0), FIELD(tailsColor, colors, 0),
   FIELD(orbShapes, shapes, 1), FIELD(ringColor, ringColors, 0),
   FIELD(spaceSpeed, spaceSpeeds, 0), FIELD(spaceDepth, spaceDepths, 0),
-  FIELD(ringEffectsColor, ringColors, 0)
+  FIELD(ringEffectsColor, ringColors, 0), FIELD(ringOrbInteriorColor, ringInteriorColors, 0),
+  FIELD(neoSpeed, neoSpeeds, 0), FIELD(neoDensity, neoDensities, 0), FIELD(neoColor, neoColors, 0)
 };
 #define FIELD_COUNT (sizeof(fields)/sizeof(*fields))
 typedef struct {
@@ -195,6 +205,9 @@ static int readRecord(const char *path, AppearanceRecord *record) {
   // Older records retain Space Flight's original speed and depth defaults.
   record->settings.spaceSpeed=4;
   record->settings.spaceDepth=2;
+  record->settings.neoSpeed=NEO_SPEED_NORMAL;
+  record->settings.neoDensity=NEO_DENSITY_NORMAL;
+  record->settings.neoColor=NEO_COLOR_GREEN;
   char *line = lineEnd + 1;
   lineEnd = strchr(line, '\n');
   if (!lineEnd) return -EINVAL;
@@ -218,7 +231,7 @@ static int readRecord(const char *path, AppearanceRecord *record) {
     line = lineEnd + 1;
   }
   // Appended fields default to Original; retain older records' required keys.
-  unsigned count=FIELD_COUNT-(version<5U?1:0)-(version==1U?3:version==2U?2:0);
+  unsigned count=FIELD_COUNT-(version<7U?3:0)-(version<6U?1:0)-(version<5U?1:0)-(version==1U?3:version==2U?2:0);
   uint32_t required=(1U << count)-1U;
   // Introduce the new view once; subsequent records preserve its On/Off choice.
   if (version < 4U && (record->settings.enabledViews & (1U << UI_VIEW_PSBBN)))

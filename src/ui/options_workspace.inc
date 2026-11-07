@@ -48,7 +48,7 @@ static void owDescribeRow(OptionsMenuState *s, GameSection section, int row,
     }
   } else if (section == GAME_MEMORY_CARDS) {
     static const char *const labels[]={"VMC slot 1","VMC slot 2","Card assignment","Disable virtual cards"};
-    label=labels[row]; value=row<2 ? s->gameOptions.vmcSlotLabel[row] : ">";
+    label=labels[row]; value=row<2 ? s->gameOptions.vmcSlotLabel[row] : row==2 ? "" : ">";
     help=row==2 ? "Create cards for this game, choose existing cards or use shared cards." :
          row==3 ? "Use physical cards in both slots for this game." : gameRowDescriptions[LUNA_GAME_VMC_SLOT1+row];
   } else if (section == GAME_CHEATS) {
@@ -64,7 +64,7 @@ static void owDescribeRow(OptionsMenuState *s, GameSection section, int row,
     }
     if (s->cheatLoadResult || row==2) help=s->cheatStatus;
     else if (row<3) snprintf(out->description,sizeof(out->description),"%d %s. %s",s->cheats.count,
-        lunaText("selected"),lunaText(s->cheats.enabled ? "Changes save automatically. Square to test." :
+        lunaText("selected"),lunaText(s->cheats.enabled ? "Changes save automatically." :
                                                       "Cheats are off; selections are retained."));
   } else if (section == GAME_VIDEO_OUT) {
     label=lunaGameVideoModeLabel(gameUsesOpl(s),row);
@@ -126,8 +126,6 @@ static int optionsCubeBackground(void *context,int closing) {
   gsGlobal->PrimAlphaEnable=GS_SETTING_ON;
   gsKit_set_primalpha(gsGlobal,GS_SETREG_ALPHA(0,1,0,1,0),0);
   gsKit_set_test(gsGlobal,GS_ATEST_OFF);
-  gsKit_prim_sprite(gsGlobal,0,0,gsGlobal->Width,gsGlobal->Height,1,
-      GS_SETREG_RGBA(0,0,0,(int)(128*s->transition.shade)));
   return closing && done;
 }
 

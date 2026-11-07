@@ -66,23 +66,31 @@ int collectionArtReuseContains(const CollectionArtReuseCache *cache, const char 
 void collectionArtReusePlan(CollectionArtReuseCache *cache,
                             const char (*paths)[COLLECTION_ART_PATH], int count) {
   uint8_t attempted[COLLECTION_DEMAND_COUNT] = {0};
+  size_t requiredBytes[COLLECTION_DEMAND_COUNT] = {0};
   if (count < 0) count = 0;
   if (count > COLLECTION_DEMAND_COUNT) count = COLLECTION_DEMAND_COUNT;
   if (paths != NULL) {
     for (int i = 0; i < count; i++) {
       int previous = collectionArtReuseRank(cache, paths[i]);
-      if (previous >= 0) attempted[i] = cache->attempted[previous];
+      if (previous >= 0) {
+        attempted[i] = cache->attempted[previous];
+        requiredBytes[i] = cache->requiredBytes[previous];
+      }
+      for (int j = 0; j < COLLECTION_REUSE_COUNT; j++)
+        if (cache->entries[j].path[0] && !strcmp(cache->entries[j].path, paths[i]))
+          requiredBytes[i] = cache->entries[j].pixels.bytes;
     }
     memcpy(cache->demand, paths, (size_t)count * sizeof(cache->demand[0]));
     memcpy(cache->attempted, attempted, sizeof(attempted));
+    memcpy(cache->requiredBytes, requiredBytes, sizeof(requiredBytes));
     cache->demandCount = count;
     cache->forward = 1;
-    for (int i = 0; i < COLLECTION_REUSE_COUNT; i++)
-      if (cache->entries[i].path[0] && collectionArtReuseRank(cache, cache->entries[i].path) < 0)
-        discardEntry(cache, i);
+    // Replanning changes priority, not ownership. Reclaim unused entries only
+    // when a requested cover actually needs their space.
   } else {
     cache->demandCount = cache->forward = 0;
     memset(cache->attempted, 0, sizeof(cache->attempted));
+    memset(cache->requiredBytes, 0, sizeof(cache->requiredBytes));
     // Preserve the original twelve-entry history behavior for other views.
     for (;;) {
       int used = 0, oldest = -1;
@@ -107,8 +115,17 @@ int collectionArtReuseCanPut(const CollectionArtReuseCache *cache, const char *p
   if (rank < 0) return 0;
   for (int i = 0; i < COLLECTION_REUSE_COUNT; i++) {
     const CollectionArtReuseEntry *entry = &cache->entries[i];
+    if (!strcmp(entry->path, path)) continue;
     int other = collectionArtReuseRank(cache, entry->path);
-    if (other >= 0 && other < rank) {
+    int retain = other >= 0 && other < rank;
+    // Do not churn completed predictions for a one-position improvement.
+    // Active covers always take precedence; speculative replacements must
+    // advance beyond this small margin on the two-sided preparation window.
+    if (rank >= PSBBN_COVER_CACHE_COUNT && other >= PSBBN_COVER_CACHE_COUNT &&
+        (other - PSBBN_COVER_CACHE_COUNT) / 2 <=
+            (rank - PSBBN_COVER_CACHE_COUNT) / 2 + 1)
+      retain = 1;
+    if (retain) {
       retained += entry->pixels.bytes;
       nearer++;
     }
@@ -121,6 +138,11 @@ int collectionArtPrefetchAttempted(const CollectionArtReuseCache *cache, const c
   return rank >= 0 && cache->attempted[rank];
 }
 
+size_t collectionArtPrefetchBytes(const CollectionArtReuseCache *cache, const char *path) {
+  int rank = collectionArtReuseRank(cache, path);
+  return rank >= 0 ? cache->requiredBytes[rank] : 0;
+}
+
 void collectionArtPrefetchAttempt(CollectionArtReuseCache *cache, const char *path, int attempted) {
   int rank = collectionArtReuseRank(cache, path);
   if (rank >= 0) cache->attempted[rank] = attempted != 0;
@@ -131,9 +153,15 @@ int collectionArtPrefetchIndex(int total, int selected, int direction, int candi
       total <= PSBBN_COVER_CACHE_COUNT || candidate >= total - PSBBN_COVER_CACHE_COUNT)
     return -1;
   int step = direction < 0 ? -1 : 1;
+  if (candidate & 1) step = -step;
   int edge = step > 0 ? PSBBN_COVER_CACHE_COUNT - PSBBN_COVER_CACHE_FOCUS :
                        PSBBN_COVER_CACHE_FOCUS + 1;
-  return lunaNavWrap(total, selected + step * (edge + candidate));
+  return lunaNavWrap(total, selected + step * (edge + candidate / 2));
+}
+
+static int reuseEvictionRank(const CollectionArtReuseCache *cache, const char *path) {
+  int rank = collectionArtReuseRank(cache, path);
+  return rank < 0 ? COLLECTION_DEMAND_COUNT : rank;
 }
 
 int collectionArtReusePut(CollectionArtReuseCache *cache, const char *path,
@@ -141,8 +169,11 @@ int collectionArtReusePut(CollectionArtReuseCache *cache, const char *path,
   int slot = -1;
   if (path == NULL || path[0] == '\0' || strlen(path) >= sizeof(cache->entries[0].path) ||
       pixels->source == NULL || pixels->preview == NULL || pixels->thumbnail == NULL ||
-      !collectionArtReuseCanPut(cache, path, pixels->bytes))
+      pixels->bytes == 0 || pixels->bytes > COLLECTION_REUSE_BYTES)
     return 0;
+  int rank = collectionArtReuseRank(cache, path);
+  if (rank >= 0) cache->requiredBytes[rank] = pixels->bytes;
+  if (!collectionArtReuseCanPut(cache, path, pixels->bytes)) return 0;
   for (int i = 0; i < COLLECTION_REUSE_COUNT; i++) {
     CollectionArtReuseEntry *entry = &cache->entries[i];
     if (entry->path[0] && strcmp(entry->path, path) == 0)
@@ -158,7 +189,9 @@ int collectionArtReusePut(CollectionArtReuseCache *cache, const char *path,
       } else {
         used++;
         if (oldest < 0 || (cache->forward ?
-            collectionArtReuseRank(cache, entry->path) > collectionArtReuseRank(cache, cache->entries[oldest].path) :
+            (reuseEvictionRank(cache, entry->path) > reuseEvictionRank(cache, cache->entries[oldest].path) ||
+             (reuseEvictionRank(cache, entry->path) == reuseEvictionRank(cache, cache->entries[oldest].path) &&
+              entry->lastUsed < cache->entries[oldest].lastUsed)) :
             entry->lastUsed < cache->entries[oldest].lastUsed)) oldest = i;
       }
     }
@@ -196,6 +229,7 @@ void collectionArtReuseClear(CollectionArtReuseCache *cache) {
   cache->clock = 0;
   cache->demandCount = cache->forward = 0;
   memset(cache->attempted, 0, sizeof(cache->attempted));
+  memset(cache->requiredBytes, 0, sizeof(cache->requiredBytes));
 }
 
 int collectionArtEntryPriority(uint8_t *priority, int total, int selectedTitleIdx) {

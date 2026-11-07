@@ -88,6 +88,8 @@ set(SOURCES
   src/ui/ambient_orbs.c
   src/ui/neo.c
   src/ui/wallpapers.c
+  src/ui/underground.c
+  src/ui/underground_art.S
   src/ui/space_flight.c
     src/ui/pad.c
 
@@ -131,6 +133,10 @@ endif()
 
 # Create the main executable
 add_executable(${EE_BIN} ${SOURCES})
+set_source_files_properties(src/ui/underground_art.S PROPERTIES
+    COMPILE_OPTIONS "-Wa,-I${CMAKE_CURRENT_SOURCE_DIR}/assets/underground"
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/underground/background.t8z;${CMAKE_CURRENT_SOURCE_DIR}/assets/underground/frame.t8z;${CMAKE_CURRENT_SOURCE_DIR}/assets/underground/logo.t8z"
+)
 if(LUNA_CAMERA_ANIMATIONS)
   target_sources(${EE_BIN} PRIVATE src/ui/luna_motion.c src/ui/camera_transitions.c)
   target_compile_definitions(${EE_BIN} PRIVATE LUNA_CAMERA_ANIMATIONS=1

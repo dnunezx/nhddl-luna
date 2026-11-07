@@ -55,17 +55,24 @@ static RingOrbLight ringOrbProfile(float radius) {
    * center. The old broad white cone washed out the overlapping flash. */
   float halo=ringClamp((1-radius)/.68f);
   float core=ringClamp((.28f-radius)/.20f); core*=core;
-  RingVec tint={(89+166*core)/255,(99+156*core)/255,(179+76*core)/255};
-  if(ringEffectsColorPreset!=LUNA_RING_ORIGINAL) {
-    static const int palette[LUNA_RING_COLOR_COUNT][3]={
-      {0,0,0},{45,232,255},{55,123,255},{176,110,255},
-      {255,105,174},{90,242,135},{245,250,255}};
-    const int *color=palette[ringEffectsColorPreset];
-    tint=(RingVec){(color[0]+(255-color[0])*core)/255,
-                  (color[1]+(255-color[1])*core)/255,
-                  (color[2]+(255-color[2])*core)/255};
-  }
+  static const int palette[LUNA_RING_INTERIOR_COLOR_COUNT][3]={
+    {89,99,179},{45,232,255},{55,123,255},{176,110,255},
+    /* Crimson samples Underground's bright red circuitry (#F4030D). */
+    {255,105,174},{90,242,135},{245,250,255},{244,3,13},{64,64,64}};
+  static const int white[]={255,255,255};
+  const int *exterior=palette[ringEffectsColorPreset];
+  const int *interior=ringOrbInteriorColorPreset==LUNA_RING_ORIGINAL?
+    white:palette[ringOrbInteriorColorPreset];
+  RingVec tint={(exterior[0]+(interior[0]-exterior[0])*core)/255,
+                (exterior[1]+(interior[1]-exterior[1])*core)/255,
+                (exterior[2]+(interior[2]-exterior[2])*core)/255};
   return (RingOrbLight){0,halo*halo,tint};
+}
+static RingOrbLight ringBurstProfile(float radius) {
+  RingOrbLight light=ringOrbProfile(radius);
+  if(ringOrbInteriorColorPreset!=LUNA_RING_ORIGINAL)
+    light.tint=ringOrbProfile(0).tint;
+  return light;
 }
 static void ringWave(RingMenu *menu,RingVec center,int plane,float size,float factor,float life,float alpha,float age) {
   RingVec u={1,0,0},v={0,1,0};
@@ -85,7 +92,7 @@ static void ringBulletTarget(RingMenu *menu,int source) {
 static void ringParticle(RingMenu *menu,RingVec p,RingVec v,float size,float life,float alpha) {
   RingParticle *particle=&menu->particles[menu->particleCursor];
   menu->particleCursor=(menu->particleCursor+1)%RING_PARTICLE_COUNT;
-  *particle=(RingParticle){p,v,{1,1,1},0,life,size,alpha,1};
+  *particle=(RingParticle){p,v,{1,1,1},0,life,size,alpha,1,0};
 }
 static void ringBulletBegin(RingMenu *menu,int source) {
   ringBulletTarget(menu,source);
@@ -158,7 +165,9 @@ static void ringBurst(RingMenu *menu,int item) {
   for(int j=0;j<20;j++) {
     float z=2*ringRandom(menu)-1,a=RING_TAU*ringRandom(menu);
     float radius=sqrtf(fmaxf(0,1-z*z));
+    int index=menu->particleCursor;
     ringParticle(menu,p,(RingVec){3000*radius*cosf(a),3000*radius*sinf(a),3000*z},300,1000,1);
+    menu->particles[index].burst=1;
   }
 }
 static void ringChargeTick(RingMenu *menu,int orb,float age) {

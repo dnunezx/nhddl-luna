@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "ui/cube_menu.h"
+#include "ui/underground.h"
 #define CUBE_PI 3.14159265359f
 #define CUBE_ITEMS 6
 #define CUBE_COUNT CUBE_ITEMS
@@ -242,7 +243,8 @@ int uiCubeSettingsLoop(int *selected,const char *status,
   static const int actions[]={LUNA_CUBE_VMC,LUNA_CUBE_STORAGE,LUNA_CUBE_LANGUAGE,
                               LUNA_CUBE_DEFAULTS,LUNA_CUBE_EXIT,LUNA_CUBE_SHUTDOWN};
   const LunaCubeHub hub={.title="System Configuration",.labels=labels,.count=CUBE_ITEMS,
-    .submenus=submenus,.submenuCount=4,.confirmRow=5,.confirmText="Power off the console?"};
+    .submenus=submenus,.submenuCount=4,.confirmRow=5,.confirmText="Power off the console?",
+    .gameOptionsLogo=1};
   int row=uiCubeHubLoop(selected,status,&hub);
   return row<0?LUNA_CUBE_BACK:actions[row];
 }

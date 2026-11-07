@@ -3,7 +3,7 @@
 #include "ui/view_internal.h"
 #include <string.h>
 
-#define NEO_COLUMNS 40
+#define NEO_COLUMNS 60
 #define NEO_GLYPHS 48
 #define NEO_ATLAS_SIZE 64
 #define NEO_CELL 8
@@ -74,6 +74,24 @@ static u32 atlasPixels[NEO_ATLAS_SIZE * NEO_ATLAS_SIZE] __attribute__((aligned(1
 static GSTEXTURE atlas;
 static int ready;
 static uint32_t previousMs, animationMs;
+static unsigned neoSpeed = NEO_SPEED_NORMAL, neoDensity = NEO_DENSITY_NORMAL;
+static unsigned neoColor = NEO_COLOR_GREEN;
+typedef struct { uint8_t head[3], base[3], glow[3], background[3]; } NeoPalette;
+static const NeoPalette palettes[NEO_COLOR_COUNT] = {
+    {{160,224,176},{4,14,12},{0,128,0},{0,2,0}},
+    {{160,224,224},{4,14,14},{0,128,128},{0,2,2}},
+    {{176,200,240},{4,8,14},{24,72,128},{0,0,2}},
+    {{216,176,240},{10,4,14},{80,24,128},{1,0,2}},
+    {{240,176,176},{14,4,8},{128,0,16},{2,0,0}},
+    {{240,216,160},{14,10,4},{128,88,0},{2,1,0}},
+    {{224,224,224},{12,12,12},{128,128,128},{1,1,1}}
+};
+
+void setNeoAppearance(unsigned speed, unsigned density, unsigned color) {
+  neoSpeed = speed < NEO_SPEED_COUNT ? speed : NEO_SPEED_NORMAL;
+  neoDensity = density < NEO_DENSITY_COUNT ? density : NEO_DENSITY_NORMAL;
+  neoColor = color < NEO_COLOR_COUNT ? color : NEO_COLOR_GREEN;
+}
 
 static uint32_t neoHash(uint32_t value) {
   value ^= value >> 16;
@@ -122,9 +140,15 @@ static void initNeo(uint32_t nowMs) {
 }
 
 void drawNeoBackground(uint32_t nowMs) {
+  const NeoPalette *palette = &palettes[neoColor];
+  static const unsigned columnCounts[NEO_DENSITY_COUNT] = {20,40,60};
+  static const float speeds[NEO_SPEED_COUNT] = {.5f,1,1.5f};
+  const unsigned count = columnCounts[neoDensity];
+  const float spacing = 640.0f / count;
+  const float glyphWidth = spacing < 16.0f ? spacing - 2.0f : 14.0f;
   // Draw behind all artwork and menu panels, using their existing GS state.
   gsKit_prim_sprite(gsGlobal, 0, 0, gsGlobal->Width, gsGlobal->Height, 0,
-                    GS_SETREG_RGBA(0, 2, 0, 0x80));
+                    GS_SETREG_RGBA(palette->background[0],palette->background[1],palette->background[2],0x80));
   if (!ready)
     initNeo(nowMs);
   uint32_t delta = nowMs - previousMs;
@@ -138,7 +162,7 @@ void drawNeoBackground(uint32_t nowMs) {
   const int bound = bindTextureSafe(gsGlobal, &atlas);
   for (int i = 0; i < NEO_COLUMNS; i++) {
     NeoColumn *column = &columns[i];
-    column->head += column->speed * delta / 1000.0f;
+    column->head += column->speed * delta / 1000.0f * speeds[neoSpeed];
     const float end = NEO_HEIGHT + column->length * NEO_ROW_HEIGHT;
     if (column->head > end) {
       const float overshoot = column->head - end;
@@ -146,9 +170,9 @@ void drawNeoBackground(uint32_t nowMs) {
       restartColumn(column, 0);
       column->head += overshoot * column->speed / oldSpeed;
     }
-    if (!bound)
+    if (!bound || (unsigned)i >= count)
       continue;
-    const float x = (i * 16.0f + 1.0f) * scaleX;
+    const float x = (i * spacing + 1.0f) * scaleX;
     for (unsigned trail = 0; trail < column->length; trail++) {
       const float y = (column->head - trail * NEO_ROW_HEIGHT) * scaleY;
       if (y >= gsGlobal->Height || y + 16.0f * scaleY <= 0)
@@ -167,11 +191,14 @@ void drawNeoBackground(uint32_t nowMs) {
         u2 = swap;
       }
       const int fade = (column->length - trail) * 100 / column->length;
-      const int green = 14 + fade * fade / 85;
-      const uint64_t color = trail == 0 ? GS_SETREG_RGBA(0xA0, 0xE0, 0xB0, 0x70) :
-          GS_SETREG_RGBA(4, green, 12, 0x68);
+      const int glow = fade * fade / 85;
+      const uint64_t color = trail == 0 ?
+          GS_SETREG_RGBA(palette->head[0],palette->head[1],palette->head[2],0x70) :
+          GS_SETREG_RGBA(palette->base[0]+glow*palette->glow[0]/128,
+                        palette->base[1]+glow*palette->glow[1]/128,
+                        palette->base[2]+glow*palette->glow[2]/128,0x68);
       gsKit_prim_sprite_texture(gsGlobal, &atlas, x, y, u1, v,
-          x + 14.0f * scaleX, y + 16.0f * scaleY, u2, v + NEO_CELL, 0, color);
+          x + glyphWidth * scaleX, y + 16.0f * scaleY, u2, v + NEO_CELL, 0, color);
     }
   }
 }

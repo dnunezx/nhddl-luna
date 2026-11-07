@@ -5,6 +5,7 @@
 #include "ui/ambient_orbs.h"
 #include "ui/neo.h"
 #include "ui/wallpapers.h"
+#include "ui/underground.h"
 #include "ui/space_flight.h"
 #include "ui/ps2_menu_scene.h"
 #include "options.h"
@@ -365,6 +366,8 @@ static int loadBiosConfigGeometry(void) {
 }
 
 int setLibraryBackground(LibraryBackground background) {
+  if (uiUndergroundIsBackground(background) && uiUndergroundPrepareBackground(background))
+    return -1;
   if (background == LIBRARY_BACKGROUND_RED_CLOUDS &&
       loadBiosFogTexture())
     return -1;
@@ -377,13 +380,18 @@ int setLibraryBackground(LibraryBackground background) {
   libraryBackground = background >= LIBRARY_BACKGROUND_STARS &&
                       background < LIBRARY_BACKGROUND_COUNT ?
                       background : LIBRARY_BACKGROUND_STARS;
+  if (!uiUndergroundIsBackground(libraryBackground))
+    uiUndergroundReleaseBackground();
   setAmbientOrbsBackgroundStyle(libraryBackground == LIBRARY_BACKGROUND_ORBS);
   return 0;
 }
 
 void setGlassColorPreset(GlassColorPreset preset) {
+  const GlassColorPreset previous = glassColorPreset;
   glassColorPreset = (preset >= GLASS_COLOR_ORIGINAL && preset < GLASS_COLOR_COUNT)
                         ? preset : GLASS_COLOR_ORIGINAL;
+  if (previous != glassColorPreset || !uiUndergroundIsGlass(glassColorPreset))
+    uiUndergroundReleaseInterface();
 }
 
 GlassColorPreset getGlassColorPreset(void) {
@@ -392,7 +400,8 @@ GlassColorPreset getGlassColorPreset(void) {
 
 uint64_t glassPresetColor(int red, int green, int blue, int alpha) {
   static const int palette[GLASS_COLOR_COUNT][3] = {
-      {0, 0, 0}, {0xE0, 0xE0, 0xE0}, {0x78, 0x78, 0x78}, {0x38, 0xFF, 0x68}};
+      {0, 0, 0}, {0xE0, 0xE0, 0xE0}, {0x78, 0x78, 0x78}, {0x38, 0xFF, 0x68},
+      {0xFF, 0x18, 0x32}, {0x30, 0x98, 0xFF}, {0xF0, 0xF0, 0xF0}};
   if (glassColorPreset == GLASS_COLOR_ORIGINAL)
     return GS_SETREG_RGBA(red, green, blue, alpha);
   int brightness = red;
@@ -410,10 +419,16 @@ uint64_t glassCoverAccentColor(int alpha) {
 }
 
 uint64_t glassMissingCoverColor(int alpha) {
+  if (uiUndergroundIsGlass(glassColorPreset))
+    return uiUndergroundTintColor(0x10, 0x04, 0x08, alpha);
   return GS_SETREG_RGBA(0x04, 0x14, 0x34, alpha);
 }
 
 uint64_t glassMissingCoverTextColor(void) {
+  if (glassColorPreset == GLASS_COLOR_UNDERGROUND)
+    return GS_SETREG_RGBA(0xE8, 0xE4, 0xE6, 0x80);
+  if (uiUndergroundIsGlass(glassColorPreset))
+    return uiUndergroundTextColor(GS_SETREG_RGBA(0xE8, 0xE4, 0xE6, 0x80));
   if (glassColorPreset == GLASS_COLOR_ORIGINAL)
     return HeaderTextColor;
   if (glassColorPreset == GLASS_COLOR_BLACK)
@@ -1553,7 +1568,9 @@ static void drawLibraryBackground(uint32_t frameNowMs, int orbit) {
                             gsGlobal->Width,gsGlobal->Height,0,black,black,black,black);
     drawAmbientOrbsOrbit(gsGlobal->Width/2,gsGlobal->Height/2,
         gsGlobal->Width*25/100,gsGlobal->Height*35/100,frameNowMs,0);
-  } else if (libraryBackground == LIBRARY_BACKGROUND_SPACE_FLIGHT)
+  } else if (uiUndergroundIsBackground(libraryBackground))
+    drawUndergroundWallpaper(frameNowMs);
+  else if (libraryBackground == LIBRARY_BACKGROUND_SPACE_FLIGHT)
     drawSpaceFlight(frameNowMs);
   else if (libraryBackground >= LIBRARY_BACKGROUND_AURORA &&
       libraryBackground <= LIBRARY_BACKGROUND_TEMPEST)

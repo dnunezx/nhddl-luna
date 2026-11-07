@@ -94,8 +94,9 @@ static void jacket(GSTEXTURE *texture, const CollectionV2Pose *pose) {
   }
 }
 
-void drawPSBBNCollectionV2(TargetList *titles, int selectedTitleIdx, int flowOffset,
-                           int favoritesOnly, int entryProgress, uint32_t frameNowMs) {
+static void drawCollectionV2(TargetList *titles, int selectedTitleIdx, int flowOffset,
+                              int favoritesOnly, int entryProgress, uint32_t frameNowMs,
+                              float optionsProgress) {
   drawSharedLibraryBackground(frameNowMs);
   int left = gsGlobal->Width * 6 / 100;
   int labelY = psbbnFieldStableY(gsGlobal->Height / 2 - getFontLineHeight() / 2);
@@ -113,6 +114,17 @@ void drawPSBBNCollectionV2(TargetList *titles, int selectedTitleIdx, int flowOff
     return;
   }
   if (entryProgress < 0) return;
+
+  // The nearest cover stays sharp; the oversized translucent layer in front
+  // drifts and fades only while Game Options moves the retained library aside.
+  int focusCacheIdx=PSBBN_COVER_CACHE_FOCUS;
+  if(optionsProgress>0) {
+    int nearest=0x7FFFFFFF;
+    for(int i=0;i<PSBBN_COVER_CACHE_COUNT;i++) {
+      int distance=abs((i-PSBBN_COVER_CACHE_FOCUS)*1000+flowOffset);
+      if(distance<nearest) {nearest=distance;focusCacheIdx=i;}
+    }
+  }
 
   GSTEST savedTest = *gsGlobal->Test;
   u64 savedBlend = gsGlobal->PrimAlpha;
@@ -137,6 +149,10 @@ void drawPSBBNCollectionV2(TargetList *titles, int selectedTitleIdx, int flowOff
     CollectionV2Pose pose;
     if (duplicate || !collectionV2Pose(position / 1000.0f,gsGlobal->Width,gsGlobal->Height,&pose))
       continue;
+    if(optionsProgress>0 && cacheIdx<focusCacheIdx) {
+      pose.x-=gsGlobal->Width*(24.0f/640)*optionsProgress;
+      pose.opacity*=1-optionsProgress;
+    }
     GSTEXTURE *cover = psbbnCoverTextures[cacheIdx];
     if (psbbnCoverLoaded[cacheIdx] && prepareCollectionCoverTexture(cacheIdx) &&
         bindTextureSafe(gsGlobal,cover)) {
@@ -161,4 +177,16 @@ void drawPSBBNCollectionV2(TargetList *titles, int selectedTitleIdx, int flowOff
   drawTextWindow(gsGlobal->Width / 2,gsGlobal->Height-footerHeight-getFontLineHeight()-12,
       gsGlobal->Width-keepoutArea-gsGlobal->Width*COLLECTION_V2_LEFT_SHIFT/640,
       0,6,FontMainColor,ALIGN_RIGHT,counter);
+}
+
+void drawPSBBNCollectionV2(TargetList *titles, int selectedTitleIdx, int flowOffset,
+                           int favoritesOnly, int entryProgress, uint32_t frameNowMs) {
+  drawCollectionV2(titles,selectedTitleIdx,flowOffset,favoritesOnly,entryProgress,frameNowMs,0);
+}
+
+void drawPSBBNCollectionV2Options(TargetList *titles, int selectedTitleIdx, int flowOffset,
+                                  int favoritesOnly, int entryProgress, uint32_t frameNowMs,
+                                  float optionsProgress) {
+  drawCollectionV2(titles,selectedTitleIdx,flowOffset,favoritesOnly,entryProgress,frameNowMs,
+                     fminf(1,fmaxf(0,optionsProgress)));
 }

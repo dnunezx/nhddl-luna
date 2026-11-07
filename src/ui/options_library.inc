@@ -28,8 +28,8 @@ static void drawOptionsLibraryScene(void *context, float progress) {
 #endif
   switch (s->view) {
     case UI_VIEW_COLLECTION_V2:
-      drawPSBBNCollectionV2(s->titles,s->selected,s->flow,s->favorites,
-                            s->entry,s->now); break;
+      drawPSBBNCollectionV2Options(s->titles,s->selected,s->flow,s->favorites,
+                                   s->entry,s->now,pose); break;
     case UI_VIEW_3D:
       drawCaseGrid(s->titles,s->selected,s->now); break;
     case UI_VIEW_PSBBN:

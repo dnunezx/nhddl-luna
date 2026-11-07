@@ -1,4 +1,5 @@
 #include "ui/view_state.h"
+#include "ui/neo.h"
 #include "devices/devices.h"
 #include "options.h"
 #include <errno.h>
@@ -44,7 +45,7 @@ static const char *const viewNames[UI_VIEW_ID_LIMIT] = {
     [UI_VIEW_ORBS] = "orbs", [UI_VIEW_3D] = "3d",
     [UI_VIEW_COLLECTION_V2] = "collection-v2"};
 static const char *const glassColorNames[GLASS_COLOR_COUNT] = {
-    "original", "white-gray", "black", "cyber"};
+    "original", "white-gray", "black", "cyber", "underground", "static-x", "phantom"};
 static const char *const uiFontNames[UI_FONT_COUNT] = {
     "dejavu", "psbbn"};
 static const char *const orbsColorNames[ORBS_COLOR_COUNT] = {
@@ -520,10 +521,14 @@ static int legacyAmbientSoundEnabled(Target *target) {
 
 
 void loadLegacyAppearance(Target *target, LunaAppearance *settings) {
+  settings->neoSpeed = NEO_SPEED_NORMAL;
+  settings->neoDensity = NEO_DENSITY_NORMAL;
+  settings->neoColor = NEO_COLOR_GREEN;
   settings->spaceSpeed = 4;
   settings->spaceDepth = 2;
   settings->ringColor = 0;
   settings->ringEffectsColor = 0;
+  settings->ringOrbInteriorColor = 0;
   settings->background = legacyLibraryBackground(target);
   settings->glassColor = legacyGlassColorPreset(target);
   settings->font = legacyUIFont(target);

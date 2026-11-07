@@ -76,7 +76,7 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
   const int previousTextLayout=setAuthoredTextLayout(1);
   static const char *labels[]={"Game Library","File Browser","Appearance","Settings"};
   static const char *labelKeys[]={"Return to Library","File Explorer","Appearance","System Configuration"};
-  static const char *details[]={"Your games, ready to play.","Explore connected devices.","Customize your library.","Make LUNA your own."};
+  static const char *details[]={"Other worlds await.","Discover what lies within.","Shape your atmosphere.","Fine-tune your system."};
   static const float widths[]={280,261,220,220};
   static const float slotAlpha[]={1,.4f,.3f,.3f};
   gsKit_clear(gsGlobal,BGColor); gsKit_TexManager_nextFrame(gsGlobal);
@@ -91,7 +91,7 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
   ringOpacity=1;
   gsKit_prim_sprite(gsGlobal,0,0,gsGlobal->Width,gsGlobal->Height,1,ringColor(0,2,18,75));
   /* Modest branding rather than the previous dashboard heading/cards. */
-  drawLunaLogo(ringSX(320),ringSY(15),ringSX(78),4,ringColor(179,198,216,128));
+  drawGameOptionsLogo(ringSX(320),ringSY(15),ringSX(78),4,ringColor(179,198,216,128));
   if(status) ringText(320,43,400,18,ringColor(215,229,244,128),status);
   float ringAlpha=ringClamp(menu->entry/1000)*(1-ringClamp((menu->exit-1000)/1000));
   RingVec center=ringTransform(0,0,0,menu,1);
@@ -121,9 +121,9 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
     const char *label=lunaText(labelKeys[i]);
     int titleItem=lunaLanguage()==LUNA_LANGUAGE_ENGLISH?i:-1;
     if(titleItem>=0) label=labels[i];
-    /* Front-facing floating text, yellow at the focal slot; no cards/icons. */
+    /* Front-facing floating text, white at the focal slot; no cards/icons. */
     ringTitle(titleItem,p.x+1,p.y+1,width,height,ringColor(0,0,16,100),label);
-    ringTitle(titleItem,p.x,p.y,width,height,active?ringColor(255,255,0,128):ringColor(235,239,248,128),label);
+    ringTitle(titleItem,p.x,p.y,width,height,active?ringColor(255,255,255,128):ringColor(235,239,248,128),label);
   }
   /* Use the same projected/bobbing point as the selected title, so its
    * description follows it throughout navigation instead of the screen. */
@@ -160,9 +160,9 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
   }
   ringOpacity=1;
   static MenuPromptTransition footerTransition;
-  ButtonPrompt prompts[]={{ICON_DPAD,lunaText("Navigate")},{ICON_CROSS,lunaText("Open")},{ICON_CIRCLE,lunaText("Back")}};
+  ButtonPrompt prompts[]={{ICON_CROSS,lunaText("Open")},{ICON_CIRCLE,lunaText("Back")}};
   drawMenuPromptBar(&footerTransition,(int)ringSX(100),(int)ringSY(413),(int)ringSX(540),(int)ringSY(442),4,
-      HeaderTextColor,(PromptBar){NULL,prompts,3},menu->closing?1-ringClamp(menu->exit/2000):ringClamp(menu->entry/600));
+      HeaderTextColor,(PromptBar){NULL,prompts,2},menu->closing?1-ringClamp(menu->exit/2000):ringClamp(menu->entry/600));
   gsKit_set_primalpha(gsGlobal,savedBlend,savedPabe); gsGlobal->PrimAlphaEnable=savedAlpha;
   *gsGlobal->Test=savedTest; gsKit_set_test(gsGlobal,GS_ZTEST_ON);
   setAuthoredTextLayout(previousTextLayout);

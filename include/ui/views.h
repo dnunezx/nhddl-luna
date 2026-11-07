@@ -28,6 +28,9 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
                          const char *nextViewLabel);
 void drawPSBBNCollectionV2(TargetList *titles, int selectedTitleIdx, int flowOffset,
                            int favoritesOnly, int entryProgress, uint32_t frameNowMs);
+void drawPSBBNCollectionV2Options(TargetList *titles, int selectedTitleIdx, int flowOffset,
+                                  int favoritesOnly, int entryProgress, uint32_t frameNowMs,
+                                  float optionsProgress);
 void drawOrbit(TargetList *titles, int selectedTitleIdx, GSTEXTURE **covers,
                int flowOffset, int randomActive, int entryProgress,
                uint32_t frameNowMs, const char *nextViewLabel);

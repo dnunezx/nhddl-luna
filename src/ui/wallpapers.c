@@ -1,6 +1,7 @@
 // Procedural library wallpapers. Fixed draw counts, no textures or heap work.
 #include "ui/wallpapers.h"
 #include "ui/graphics.h"
+#include "ui/underground.h"
 #include <math.h>
 #include <string.h>
 
@@ -254,6 +255,11 @@ static void drawTempest(uint32_t time) {
 void resetAnimatedWallpapers(void) {
   memset(clocks, 0, sizeof(clocks));
   activeWallpaper = LIBRARY_BACKGROUND_COUNT;
+}
+
+// The approved Underground artwork is shared across all library views.
+void drawUndergroundWallpaper(uint32_t nowMs) {
+  uiUndergroundBackgroundDraw(nowMs);
 }
 
 void drawAnimatedWallpaper(LibraryBackground background, uint32_t nowMs) {

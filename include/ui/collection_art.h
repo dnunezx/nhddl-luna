@@ -35,6 +35,7 @@ typedef struct {
   // UI-owned, nearest-first demand. Disabled outside visible Collections.
   char demand[COLLECTION_DEMAND_COUNT][COLLECTION_ART_PATH];
   uint8_t attempted[COLLECTION_DEMAND_COUNT];
+  size_t requiredBytes[COLLECTION_DEMAND_COUNT];
   int demandCount;
   int forward;
 } CollectionArtReuseCache;
@@ -53,8 +54,9 @@ int collectionArtReuseContains(const CollectionArtReuseCache *cache, const char 
 int collectionArtReuseCanPut(const CollectionArtReuseCache *cache, const char *path,
                              size_t bytes);
 int collectionArtPrefetchAttempted(const CollectionArtReuseCache *cache, const char *path);
+size_t collectionArtPrefetchBytes(const CollectionArtReuseCache *cache, const char *path);
 void collectionArtPrefetchAttempt(CollectionArtReuseCache *cache, const char *path, int attempted);
-// A distinct title beyond the active window, or -1 for exhausted/small libraries.
+// Alternating sides beyond the active window, direction first; -1 when exhausted.
 int collectionArtPrefetchIndex(int total, int selected, int direction, int candidate);
 // Preserve focal detail with UI headroom; other cover textures are evictable.
 size_t collectionArtSourceBudget(size_t capacity);

@@ -15,6 +15,10 @@ static LunaRingColor ringEffectsColorPreset=LUNA_RING_ORIGINAL;
 void uiRingSetEffectsColor(LunaRingColor color) {
   ringEffectsColorPreset=color>=LUNA_RING_ORIGINAL&&color<LUNA_RING_COLOR_COUNT?color:LUNA_RING_ORIGINAL;
 }
+static LunaRingColor ringOrbInteriorColorPreset=LUNA_RING_ORIGINAL;
+void uiRingSetOrbInteriorColor(LunaRingColor color) {
+  ringOrbInteriorColorPreset=color>=LUNA_RING_ORIGINAL&&color<LUNA_RING_INTERIOR_COLOR_COUNT?color:LUNA_RING_ORIGINAL;
+}
 #define RING_ITEM_COUNT 4
 /* Preserve the three recovered positions; the fourth is a LUNA extension. */
 static const float ringSlots[RING_ITEM_COUNT] = {-2.28f, 0, 1.3f, 2.4f};
@@ -27,7 +31,7 @@ static int ringCanOpen(int selected,int hasLibrary) {
 #define RING_PARTICLE_COUNT 256
 #define RING_WAVE_COUNT 64
 typedef struct { float x,y,z; } RingVec;
-typedef struct { RingVec position,velocity,tint; float age,life,size,alpha; int active; } RingParticle;
+typedef struct { RingVec position,velocity,tint; float age,life,size,alpha; int active,burst; } RingParticle;
 typedef struct { float size,alpha; RingVec tint; } RingOrbLight;
 typedef struct { RingVec center,u,v; float age,life,size,factor,alpha; int active; } RingWave;
 typedef struct {
@@ -132,7 +136,7 @@ static void ringMove(RingMenu *menu, int direction) {
 int uiRingMenuLoop(int hasLibrary, const char *status) {
   /* Bounded effect pool stays off the nested library/menu thread's stack. */
   static RingMenu menu;
-  ringInit(&menu,uiNowMs(),hasLibrary?0:1);
+  ringInit(&menu,uiNowMs(),hasLibrary?3:1);
   ringLayoutInit(&menu);
   ringLetteringInit();
   ringEffectsInit();

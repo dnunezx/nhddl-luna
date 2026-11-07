@@ -11,8 +11,8 @@ void uiCubeSubmenuFooterDraw(const PromptBar *bar,float opacity) {
       snprintf(cubeFooterDesired.labels[i],sizeof(cubeFooterDesired.labels[i]),"%s",bar->items[i].label);
       cubeFooterDesired.items[i]=(ButtonPrompt){bar->items[i].icon,cubeFooterDesired.labels[i]};
     }
-  } else drawMenuPromptBar(&cubeFooterTransition,(int)cubeSX(32),(int)cubeSY(426),
-      (int)cubeSX(608),(int)cubeSY(464),7,HeaderTextColor,*bar,opacity);
+  } else drawMenuPromptBar(&cubeFooterTransition,(int)cubeSX(32),gsGlobal->Height-footerHeight+8,
+      (int)cubeSX(608),gsGlobal->Height,7,HeaderTextColor,*bar,opacity);
 }
 static void cubeMenuTextScaled(int left,int top,int right,int z,float scale,uint64_t color,
                                const char *text,int rightAligned) {
@@ -69,7 +69,8 @@ static void cubeMenuHelpDrawAt(int left,int right,int y,uint64_t color,const cha
 }
 
 void uiCubeMenuHelpDraw(int left,int right,uint64_t color,const char *text) {
-  cubeMenuHelpDrawAt(left,right,(int)cubeSY(382),color,text);
+  // Match Game Options: clear the pane's bottom rim and reserve two help lines.
+  cubeMenuHelpDrawAt(left,right,(int)cubeSY(398),color,text);
 }
 
 static void cubeText(float cx,float y,uint64_t color,const char *text) {
@@ -136,13 +137,14 @@ void uiCubeSubmenuPageDraw(const LunaCubePage *page,int selected,
   /* Subtitle pages need both header lines clear of the pane's top rim. */
   int titleY=(int)cubeSY(50);
   drawTextWindow(left,titleY,right,titleY+line,6,
-                 cubeColor(232,232,70,opacity),ALIGN_LEFT,lunaText(page->title));
+                 cubeColor(255,255,255,opacity),ALIGN_LEFT,lunaText(page->title));
   if(page->subtitle) {
     uiCubeMenuTextDraw(left,(int)cubeSY(74),right,7,ink,page->subtitle,0);
   }
   /* The expanded crystal supplies the pane's glass and rim. */
   gsKit_prim_sprite(gsGlobal,cubeSX(22),cubeSY(99),cubeSX(518),cubeSY(383),5,
       glassPresetColor(5,13,34,(int)(48*opacity)));
+  uiUndergroundPanelDraw(cubeSX(22),cubeSY(99),cubeSX(518),cubeSY(383),5,opacity);
   if(page->tabs && page->tabCount>0) {
     const int gap=32,padding=8;
     int width=(page->tabCount-1)*gap;
@@ -197,13 +199,11 @@ void uiCubeSubmenuPageDraw(const LunaCubePage *page,int selected,
                                      page->count,first,visible,7);
   const char *description=page->description&&page->count>0?
       page->description(page->context,selected):page->status;
-  // Game Options help sits below the crystal's bottom rim, above its footer.
-  cubeMenuHelpDrawAt(left,(int)cubeSX(608),(int)cubeSY(page->libraryFooter?398:382),
-      ink,lunaText(description));
+  uiCubeMenuHelpDraw(left,(int)cubeSX(608),ink,lunaText(description));
   if(!page->libraryFooter) {
-    ButtonPrompt prompts[]={{ICON_DPAD,lunaText("Navigate")},
-        {ICON_CROSS,lunaText(page->adjust?"Change":page->value?"Select":"Open")},{ICON_CIRCLE,lunaText("Back")}};
-    uiCubeSubmenuFooterDraw(&(PromptBar){NULL,prompts,3},opacity);
+    ButtonPrompt prompts[]={{ICON_CROSS,lunaText(page->adjust?"Change":page->value?"Select":"Open")},
+        {ICON_CIRCLE,lunaText("Back")}};
+    uiCubeSubmenuFooterDraw(&(PromptBar){NULL,prompts,2},opacity);
   }
 }
 static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCubeHub *hub,const LunaCubeSubmenu *submenu) {
@@ -256,7 +256,7 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
   else
     drawLunaLogo(cubeSX(60),cubeSY(20),cubeSX(78),6,cubeColor(185,210,235,text));
   uiCubeMenuTextDraw((int)cubeSX(60),(int)cubeSY(128),(int)cubeSX(310),6,
-      cubeColor(232,232,70,text),lunaText(hub->title),0);
+      cubeColor(255,255,255,text),lunaText(hub->title),0);
   if(status)cubeText(320,53,cubeColor(215,229,244,text),status);
   if(hub->subtitle)drawTextWindow((int)cubeSX(25),(int)cubeSY(65),(int)cubeSX(615),
       (int)cubeSY(112),6,cubeColor(215,229,244,text),ALIGN_HCENTER,hub->subtitle);
@@ -279,7 +279,7 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
     uiCubeMenuTextDraw(listLeft,listTop+rowStep*(i-first),rowRight-12,6,
         cubeTextFade(color,alpha),label,0);
   }
-  ButtonPrompt prompts[]={{ICON_DPAD,lunaText("Navigate")},{ICON_CROSS,lunaText("Open")},
+  ButtonPrompt prompts[]={{ICON_CROSS,lunaText("Open")},
       {ICON_CIRCLE,lunaText("Back")}};
   ButtonPrompt confirm[]={{ICON_CROSS,lunaText("Confirm")},{ICON_CIRCLE,lunaText("Cancel")}};
   if(confirming&&hub->confirmText)
@@ -290,13 +290,13 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
   }
   cubeFooterCollect=!hub->libraryFooter&&!cubeBackdropOnly;
   if(cubeFooterCollect)uiCubeSubmenuFooterDraw(
-      &(PromptBar){NULL,confirming?confirm:prompts,confirming?2:3},overall);
+      &(PromptBar){NULL,confirming?confirm:prompts,2},overall);
   if(m->submenuOpen&&submenu) {
     float opacity=cubeSmooth((m->submenuAge/CUBE_SUBMENU_MS-.28f)/.72f);
     if(opacity>0)submenu->draw(submenu->context,opacity);
   }
-  if(cubeFooterCollect)drawMenuPromptBar(&cubeFooterTransition,(int)cubeSX(32),(int)cubeSY(426),
-      (int)cubeSX(608),(int)cubeSY(464),7,HeaderTextColor,
+  if(cubeFooterCollect)drawMenuPromptBar(&cubeFooterTransition,(int)cubeSX(32),gsGlobal->Height-footerHeight+8,
+      (int)cubeSX(608),gsGlobal->Height,7,HeaderTextColor,
       (PromptBar){NULL,cubeFooterDesired.items,cubeFooterDesired.count},overall);
   cubeFooterCollect=0;
   // One footer owns the whole handoff, independent of the scene's text fades.

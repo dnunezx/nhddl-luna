@@ -9,6 +9,7 @@
 #include "ui/ambient_orbs.h"
 #include "ui/neo.h"
 #include "ui/wallpapers.h"
+#include "ui/underground.h"
 #include "ui/art_cache.h"
 #include "ui/file_manager.h"
 #include "ui/ring_menu.h"
@@ -127,6 +128,8 @@ static void drawQuickMenuText(int x1, int y1, int x2, int y2,
   if (getGlassColorPreset() == GLASS_COLOR_CYBER)
     color = glassPresetColor(color & 255, (color >> 8) & 255,
                              (color >> 16) & 255, (color >> 24) & 255);
+  if (uiUndergroundIsGlass(getGlassColorPreset()))
+    color = uiUndergroundTextColor(color);
   // Keep labels distinct from any artwork visible through the glass.
   drawQuickMenuTextWindow(x1 + 1, y1 + 2, x2 + 1, y2 + 2, 0, ColorBlack,
                  alignment, text);
@@ -325,6 +328,7 @@ void closeUI() {
   gsKit_queue_exec(gsGlobal);
   gsKit_finish();
   dmaKit_wait_fast();
+  uiUndergroundClose();
   artCacheShutdown();
   closeFont();
   gsKit_vram_clear(gsGlobal);
@@ -471,6 +475,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   loadAppearance(curTarget,&libraryAppearance);
   lunaSpaceSetSpeed(libraryAppearance.spaceSpeed);
   lunaSpaceSetDepth(libraryAppearance.spaceDepth);
+  setNeoAppearance(libraryAppearance.neoSpeed,libraryAppearance.neoDensity,libraryAppearance.neoColor);
   if (setLibraryBackground((LibraryBackground)libraryBackground))
     libraryBackground = LIBRARY_BACKGROUND_STARS;
   orbsThemeSetting = loadAmbientOrbsTheme(curTarget);

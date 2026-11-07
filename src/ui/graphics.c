@@ -9,6 +9,7 @@
 #include "ui/game_options_logo.h"
 #include "ui/grid_selector.h"
 #include "ui/view_internal.h"
+#include "ui/underground.h"
 #include <dmaKit.h>
 #include <gsKit.h>
 #include <gsToolkit.h>
@@ -332,6 +333,9 @@ void drawIconScaled(float x, float y, int z, uint64_t color, IconType iconType, 
 }
 
 void drawLunaLogo(float centerX,float top,float width,int z,uint64_t color) {
+  if (!authoredTextLayout &&
+      uiUndergroundLogoDraw(centerX, top, width, z, ((color >> 24) & 255) / 128.0f))
+    return;
   if(icons==NULL||width<=0||((color>>24)&255)==0)return;
   int filter=icons->Filter;
   icons->Filter=GS_FILTER_LINEAR;
@@ -414,16 +418,20 @@ void drawMenuRowSelector(int left, int top, int right) {
   const int plateBottom = psbbnFieldStableY(top + getFontLineHeight() + 3);
   const int insetLeft = left + 6;
   const int insetRight = right - 6;
+  const int underground = uiUndergroundIsGlass(getGlassColorPreset());
 
   // Cover both interlaced fields without thin horizontal rules that shimmer.
   gsKit_prim_sprite(gsGlobal, insetLeft, plateTop, insetRight, plateBottom, 2,
                     glassPresetColor(0x16, 0x54, 0x82, 0x38));
   gsKit_prim_sprite(gsGlobal, insetLeft - 4, plateTop, insetLeft + 6, plateBottom, 3,
-                    GS_SETREG_RGBA(0x48, 0xB8, 0xF0, 0x10));
+                    underground ? glassPresetColor(0x48, 0xB8, 0xF0, 0x10) :
+                                  GS_SETREG_RGBA(0x48, 0xB8, 0xF0, 0x10));
   gsKit_prim_sprite(gsGlobal, insetLeft - 2, plateTop, insetLeft + 4, plateBottom, 4,
-                    GS_SETREG_RGBA(0x70, 0xD0, 0xFF, 0x24));
+                    underground ? glassPresetColor(0x70, 0xD0, 0xFF, 0x24) :
+                                  GS_SETREG_RGBA(0x70, 0xD0, 0xFF, 0x24));
   gsKit_prim_sprite(gsGlobal, insetLeft, plateTop, insetLeft + 2, plateBottom, 5,
-                    GS_SETREG_RGBA(0xB0, 0xE8, 0xFF, 0x78));
+                    underground ? glassPresetColor(0xB0, 0xE8, 0xFF, 0x78) :
+                                  GS_SETREG_RGBA(0xB0, 0xE8, 0xFF, 0x78));
 }
 
 void drawListScrollbar(int x, int top, int bottom, int total, int first,
@@ -628,6 +636,14 @@ const BMFontChar *getGlyph(uint32_t character) {
 }
 
 static uint64_t glassTextColor(uint64_t color) {
+  if (uiUndergroundIsGlass(getGlassColorPreset()) && !authoredTextLayout) {
+    const int red = color & 0xFF;
+    const int green = (color >> 8) & 0xFF;
+    const int blue = (color >> 16) & 0xFF;
+    // Keep semantic warning/error colors and authored Start-ring lettering.
+    if (red > green && red > blue) return color;
+    return uiUndergroundTextColor(color);
+  }
   if (getGlassColorPreset() != GLASS_COLOR_CYBER)
     return color;
   const int red = color & 0xFF;

@@ -1,10 +1,11 @@
 /* Appearance categories share the Settings crystals and reversible portals. */
-static const int appearanceCubeCategories[]={AP_BACKGROUND,AP_VIEWS,AP_COLORS,AP_TEXT,AP_SOUND};
-#define AP_CUBE_CATEGORIES 5
+static const int appearanceCubeCategories[]={AP_THEMES,AP_BACKGROUND,AP_VIEWS,AP_COLORS,AP_TEXT,AP_SOUND};
+#define AP_CUBE_CATEGORIES (sizeof(appearanceCubeCategories)/sizeof(*appearanceCubeCategories))
 typedef struct { AppearanceEditor *editor; int category; } AppearanceCubeCategory;
 static int appearanceWorkspaceEffects(const AppearanceEditor *s) {
   return s->pending.background==LIBRARY_BACKGROUND_ORBS?4+ORB_SHAPE_PLAYTIME:
-    s->pending.background==LIBRARY_BACKGROUND_SPACE_FLIGHT?2:0;
+    s->pending.background==LIBRARY_BACKGROUND_SPACE_FLIGHT?2:
+    s->pending.background==LIBRARY_BACKGROUND_NEO?3:0;
 }
 static int appearanceWorkspaceRows(AppearanceEditor *s) {
   return s->category==AP_BACKGROUND?1+appearanceWorkspaceEffects(s):appearanceRowCount(s);
@@ -73,7 +74,9 @@ static int appearanceCubeInput(void *context,int input) {
   if(*row>=count)*row=0;
   if(input&(PAD_UP|PAD_L1))*row=(*row+count-1)%count;
   else if(input&(PAD_DOWN|PAD_R1))*row=(*row+1)%count;
-  else if(input&(PAD_LEFT|PAD_RIGHT|PAD_CROSS))
+  else if(s->category==AP_THEMES&&*row==1) {
+    if(input&PAD_CROSS)appearanceWorkspaceAdjust(s,*row,0);
+  } else if(input&(PAD_LEFT|PAD_RIGHT|PAD_CROSS))
     appearanceWorkspaceAdjust(s,*row,input&PAD_LEFT?-1:1);
   return LUNA_CUBE_SUBMENU_STAY;
 }

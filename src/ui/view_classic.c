@@ -1,6 +1,7 @@
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/view_internal.h"
 #include "ui/language.h"
+#include "ui/underground.h"
 #include <stdio.h>
 
 #define DIV_ROUND(n, d) (n + (d - 1)) / d
@@ -351,15 +352,25 @@ void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPag
   int titleY = headerHeight;
   int baseX = keepoutArea + 10;
   drawSharedLibraryBackground(frameNowMs);
+  const int underground = uiUndergroundIsGlass(getGlassColorPreset());
   // Borderless translucent fields preserve legibility over the orbital scene
   // without restoring the panel shine or any horizontal/vertical edge rules.
   gsKit_prim_sprite(gsGlobal, keepoutArea, headerHeight, coverArtX1 - 8,
                     gsGlobal->Height - footerHeight + 2, 1,
-                    glassPresetColor(0x05, 0x0D, 0x22, 0x4C));
+                    underground ? uiUndergroundTintColor(5, 2, 5, 0x20) :
+                                  glassPresetColor(0x05, 0x0D, 0x22, 0x4C));
   gsKit_prim_sprite(gsGlobal, coverArtX1 - 4, headerHeight, coverArtX2 + 4,
                     gsGlobal->Height - footerHeight + 2, 1,
-                    glassPresetColor(0x05, 0x0D, 0x22, 0x4C));
-  drawTextWindow(baseX, headerHeight - getFontLineHeight(), gsGlobal->Width - baseX, 0, 3, FontMainColor, ALIGN_HCENTER, "L  U  N  A");
+                    underground ? uiUndergroundTintColor(5, 2, 5, 0x20) :
+                                  glassPresetColor(0x05, 0x0D, 0x22, 0x4C));
+  // One frame per panel, aligned to its fill with the original gutter between.
+  uiUndergroundFrameDraw(keepoutArea, headerHeight, coverArtX1 - 8,
+                          gsGlobal->Height - footerHeight + 2, 2, 1);
+  uiUndergroundFrameDraw(coverArtX1 - 4, headerHeight, coverArtX2 + 4,
+                          gsGlobal->Height - footerHeight + 2, 2, 1);
+  // Match Appearance's logo width and top inset, centered in the List header.
+  drawLunaLogo(gsGlobal->Width * .5f, gsGlobal->Height * 20.0f / 480,
+                gsGlobal->Width * 78.0f / 640, 3, FontMainColor);
   const int headerY = headerHeight - getFontLineHeight();
   const int classicRight = baseX + getLineWidth(lunaText("List"));
   const int favoriteTextX = classicRight + 22;

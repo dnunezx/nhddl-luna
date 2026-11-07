@@ -12,6 +12,7 @@
 #include "vmc_storage.h"
 #include "ui/game_options.h"
 #include "ui/space_flight.h"
+#include "ui/neo.h"
 #include <strings.h>
 #include "devices/devices.h"
 #include "devices/init.h"
@@ -2598,7 +2599,7 @@ static void storageSubmenuDraw(void *context, float opacity) {
   drawTextWindow(left, storageY(22), right, storageY(22) + line, 6, ink,
                  ALIGN_LEFT, lunaText("System Configuration"));
   drawTextWindow(left, storageY(50), right, storageY(50) + line, 6,
-                 storageInk(GS_SETREG_RGBA(232, 232, 70, 128), opacity),
+                 storageInk(GS_SETREG_RGBA(255, 255, 255, 128), opacity),
                  ALIGN_LEFT, lunaText("Storage Devices"));
   /* The expanded crystal supplies the pane's glass and rim. */
   gsKit_prim_sprite(gsGlobal,storageX(22),storageY(99),storageX(518),storageY(383),5,
@@ -2632,9 +2633,9 @@ static void storageSubmenuDraw(void *context, float opacity) {
     drawListScrollbar(right - 6, top, top + visible * step, STORAGE_MENU_ROWS, first, visible, 7);
   uiCubeMenuHelpDraw(left,storageX(608),ink,editor->selected == STORAGE_MMCE_GAMEID_ROW ?
       lunaText("Switch cards per game and restore the boot card on IGR.") : editor->status);
-  const ButtonPrompt prompts[] = {{ICON_DPAD, lunaText("Navigate")},{ICON_CROSS, lunaText("Select")},
+  const ButtonPrompt prompts[] = {{ICON_CROSS, lunaText("Select")},
       {ICON_SQUARE, lunaText("Rescan")}, {ICON_CIRCLE, lunaText("Back")}};
-  uiCubeSubmenuFooterDraw(&(PromptBar){NULL,prompts,4},opacity);
+  uiCubeSubmenuFooterDraw(&(PromptBar){NULL,prompts,3},opacity);
 }
 
 static int storageSubmenuInput(void *context, int input) {
@@ -2805,8 +2806,10 @@ int uiMainMenuLoop(int hasLibrary, Target *target) {
   loadAppearance(target,&appearance);
   lunaSpaceSetSpeed(appearance.spaceSpeed);
   lunaSpaceSetDepth(appearance.spaceDepth);
+  setNeoAppearance(appearance.neoSpeed,appearance.neoDensity,appearance.neoColor);
   uiRingSetColor((LunaRingColor)appearance.ringColor);
   uiRingSetEffectsColor((LunaRingColor)appearance.ringEffectsColor);
+  uiRingSetOrbInteriorColor((LunaRingColor)appearance.ringOrbInteriorColor);
   for (;;) {
     uiCubePanelGlassClose();
     int action = uiRingMenuLoop(hasLibrary, startMenuStatus(hasLibrary));

@@ -43,8 +43,6 @@ static int collectionNavigationDirection;
 static TargetList *collectionPrefetchTitles;
 static int collectionPrefetchSelected = -1, collectionPrefetchTotal, collectionPrefetchDirection;
 static uint32_t collectionPrefetchGeneration;
-static int collectionPrefetchBlocked;
-static size_t collectionPrefetchBlockedBytes;
 static char collectionDemandPaths[COLLECTION_DEMAND_COUNT][COLLECTION_ART_PATH];
 GSTEXTURE *gridCoverTextures[GRID_PAGE_BUFFERS][GRID_CACHE_PAGE_SIZE];
 uint8_t gridCoverLoaded[GRID_PAGE_BUFFERS][GRID_CACHE_PAGE_SIZE];
@@ -970,7 +968,7 @@ static void planCollectionPrefetch(TargetList *titles, int selectedTitleIdx, int
   uint8_t priority[PSBBN_COVER_CACHE_COUNT];
   collectionArtPriority(priority, direction, 0, 0);
   int count = 0;
-  // Active covers have first claim; the remaining budget serves nearest upcoming titles.
+  // Active covers have first claim; remaining space prepares both directions.
   for (int p = 0; p < PSBBN_COVER_CACHE_COUNT; p++)
     appendCollectionDemand(titles, lunaNavWrap(titles->total,
         selectedTitleIdx + priority[p] - PSBBN_COVER_CACHE_FOCUS), &count);
@@ -985,7 +983,6 @@ static void planCollectionPrefetch(TargetList *titles, int selectedTitleIdx, int
   collectionPrefetchTotal = titles->total;
   collectionPrefetchDirection = direction;
   collectionPrefetchGeneration = collectionArtGeneration;
-  collectionPrefetchBlocked = 0;
 }
 
 static void cancelObsoleteCollectionArtJob(PSBBNArtJob *job, TargetList *titles,
@@ -2265,11 +2262,42 @@ static void refreshBackgroundCovers(TargetList *titles, int selectedTitleIdx,
   }
 }
 
+static void restoreCollectionCoverPixels(int cacheIdx, const char *path,
+                                         CollectionArtPixels *pixels) {
+  GSTEXTURE *texture = psbbnCoverTextures[cacheIdx];
+  memset(texture, 0, sizeof(*texture));
+  texture->Mem = pixels->thumbnail;
+  texture->Width = texture->Height = PSBBN_THUMBNAIL_SIZE;
+  texture->PSM = GS_PSM_CT32;
+  texture->Filter = GS_FILTER_LINEAR;
+  texture->Delayed = 1;
+  psbbnCoverSourcePixels[cacheIdx] = pixels->source;
+  collectionCoverPreviewPixels[cacheIdx] = pixels->preview;
+  collectionCoverThumbnailPixels[cacheIdx] = pixels->thumbnail;
+  psbbnCoverSourceWidth[cacheIdx] = pixels->width;
+  psbbnCoverSourceHeight[cacheIdx] = pixels->height;
+  strcpy(collectionCoverKeys[cacheIdx], path);
+  psbbnCoverLoaded[cacheIdx] = collectionCoverAttempted[cacheIdx] = collectionCoverResolved[cacheIdx] = 1;
+  memset(pixels, 0, sizeof(*pixels));
+}
+
 void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx) {
   collectionNavigationDirection = previousTitleIdx >= 0 ?
       lunaNavDirection(titles->total, previousTitleIdx, selectedTitleIdx) : 0;
   planCollectionPrefetch(titles, selectedTitleIdx, collectionNavigationDirection);
+  CollectionArtPixels incoming = {0};
+  char incomingPath[COLLECTION_ART_PATH];
+  int incomingSlot = collectionNavigationDirection > 0 ? PSBBN_COVER_CACHE_COUNT - 1 : 0;
+  // Transfer a prepared incoming cover before retaining the outgoing one.
+  // Otherwise a full pool evicts useful pixels for a temporary extra entry.
+  int adjacent = previousTitleIdx >= 0 && collectionNavigationDirection != 0 &&
+      lunaNavWrap(titles->total, previousTitleIdx + collectionNavigationDirection) == selectedTitleIdx;
+  int restored = adjacent && collectionCoverPath(titles, selectedTitleIdx, incomingSlot,
+                                                  incomingPath, sizeof(incomingPath)) == 0 &&
+      collectionArtReuseTake(&collectionReuseCache, incomingPath, &incoming);
   refreshBackgroundCovers(titles, selectedTitleIdx, previousTitleIdx);
+  if (restored)
+    restoreCollectionCoverPixels(incomingSlot, incomingPath, &incoming);
   cancelObsoleteCollectionArtJob(&collectionArtJob, titles, selectedTitleIdx);
   cancelObsoleteCollectionArtJob(&collectionFarArtJob, titles, selectedTitleIdx);
 }
@@ -2348,10 +2376,8 @@ static void serviceBackgroundCovers(TargetList *titles, int selectedTitleIdx,
         job->sourcePixels = job->previewPixels = job->texture.Mem = NULL;
       } else if (job->prefetch && collectionReuseCache.forward &&
                  collectionArtReuseRank(&collectionReuseCache, job->path) >= 0) {
-        // A larger-than-expected cover must not displace nearer prepared covers,
-        // or be decoded again every frame while the budget stays full.
-        collectionPrefetchBlocked = 1;
-        collectionPrefetchBlockedBytes = collectionReuseCache.bytes;
+        // The cache remembers this path's actual size, including a rejected
+        // bundle, so reordering demand cannot repeatedly decode it to test fit.
         collectionArtPrefetchAttempt(&collectionReuseCache, job->path, 0);
       }
     }
@@ -2387,9 +2413,6 @@ static void serviceCollectionForwardPrefetch(TargetList *titles, int selectedTit
     return;
   for (int i = 0; i < PSBBN_COVER_CACHE_COUNT; i++)
     if (!collectionCoverResolved[i]) return;
-  if (collectionPrefetchBlocked && collectionReuseCache.bytes >= collectionPrefetchBlockedBytes)
-    return;
-  collectionPrefetchBlocked = 0;
   PSBBNArtJob *job = collectionFarArtThreadId >= 0 ? &collectionFarArtJob : &collectionArtJob;
   int wakeSema = collectionFarArtThreadId >= 0 ? collectionFarArtWakeSema : collectionArtWakeSema;
   if (wakeSema < 0) return;
@@ -2401,9 +2424,10 @@ static void serviceCollectionForwardPrefetch(TargetList *titles, int selectedTit
     if (collectionTitleArtworkPath(titles, target, path, sizeof(path)) < 0 ||
         collectionArtReuseContains(&collectionReuseCache, path) ||
         collectionArtPrefetchAttempted(&collectionReuseCache, path)) continue;
-    // Even the smallest complete bundle cannot fit: leave the worker idle.
-    size_t minimum = (PSBBN_PREVIEW_SIZE * PSBBN_PREVIEW_SIZE +
-                      PSBBN_THUMBNAIL_SIZE * PSBBN_THUMBNAIL_SIZE + 1U) * sizeof(PSBBNPixel);
+    size_t minimum = collectionArtPrefetchBytes(&collectionReuseCache, path);
+    if (minimum == 0)
+      minimum = (PSBBN_PREVIEW_SIZE * PSBBN_PREVIEW_SIZE +
+                 PSBBN_THUMBNAIL_SIZE * PSBBN_THUMBNAIL_SIZE + 1U) * sizeof(PSBBNPixel);
     if (!collectionArtReuseCanPut(&collectionReuseCache, path, minimum)) return;
     collectionArtPrefetchAttempt(&collectionReuseCache, path, 1);
     snprintf(job->path, sizeof(job->path), "%s", path);
@@ -2465,20 +2489,7 @@ static int serviceCollectionCoversInternal(TargetList *titles, int selectedTitle
           !collectionArtReuseTake(&collectionReuseCache, path, &pixels))
         continue;
       releasePSBBNCoverCacheEntry(i);
-      GSTEXTURE *texture = psbbnCoverTextures[i];
-      memset(texture, 0, sizeof(*texture));
-      texture->Mem = pixels.thumbnail;
-      texture->Width = texture->Height = PSBBN_THUMBNAIL_SIZE;
-      texture->PSM = GS_PSM_CT32;
-      texture->Filter = GS_FILTER_LINEAR;
-      texture->Delayed = 1;
-      psbbnCoverSourcePixels[i] = pixels.source;
-      collectionCoverPreviewPixels[i] = pixels.preview;
-      collectionCoverThumbnailPixels[i] = pixels.thumbnail;
-      psbbnCoverSourceWidth[i] = pixels.width;
-      psbbnCoverSourceHeight[i] = pixels.height;
-      strcpy(collectionCoverKeys[i], path);
-      psbbnCoverLoaded[i] = collectionCoverAttempted[i] = collectionCoverResolved[i] = 1;
+      restoreCollectionCoverPixels(i, path, &pixels);
     }
     if (entering)
       entryCached = collectionCoversReady(titles, selectedTitleIdx);

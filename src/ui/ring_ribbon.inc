@@ -3,8 +3,6 @@
 #define RING_RIBBON_SEGMENTS 192
 static u32 ringRibbonPixels[64*2] __attribute__((aligned(128)));
 static GSTEXTURE ringRibbonTexture;
-static u32 ringEffectsRibbonPixels[64*2] __attribute__((aligned(128)));
-static GSTEXTURE ringEffectsRibbonTexture;
 static float ringRibbonCos[RING_RIBBON_SEGMENTS+1],ringRibbonSin[RING_RIBBON_SEGMENTS+1];
 static void ringRibbonTextureInit(GSTEXTURE *texture,u32 *pixels,LunaRingColor preset) {
   memset(texture,0,sizeof(*texture));
@@ -20,12 +18,14 @@ static void ringRibbonTextureInit(GSTEXTURE *texture,u32 *pixels,LunaRingColor p
     if(preset!=LUNA_RING_ORIGINAL) {
       static const int palette[LUNA_RING_COLOR_COUNT][3]={
         {0,0,0},{45,232,255},{55,123,255},{176,110,255},
-        {255,105,174},{90,242,135},{245,250,255}};
+        {255,105,174},{90,242,135},{245,250,255},{244,3,13}};
       const int *color=palette[preset];
       float light=.5f+.5f*core;
-      r=(int)(color[0]*light+(255-color[0])*core*.15f);
-      g=(int)(color[1]*light+(255-color[1])*core*.15f);
-      b=(int)(color[2]*light+(255-color[2])*core*.15f);
+      /* Crimson keeps the wallpaper hue instead of adding a pink-white core. */
+      float highlight=preset==LUNA_RING_CRIMSON?0:.15f;
+      r=(int)(color[0]*light+(255-color[0])*core*highlight);
+      g=(int)(color[1]*light+(255-color[1])*core*highlight);
+      b=(int)(color[2]*light+(255-color[2])*core*highlight);
     }
     u32 pixel=(u32)r|((u32)g<<8)|((u32)b<<16)|((u32)alpha<<24);
     pixels[x]=pixels[x+64]=pixel;
@@ -39,14 +39,10 @@ static void ringRibbonInit(void) {
   /* Exact seam closure avoids a bright/dark join from sin(2*pi) rounding. */
   ringRibbonCos[RING_RIBBON_SEGMENTS]=1; ringRibbonSin[RING_RIBBON_SEGMENTS]=0;
   ringRibbonTextureInit(&ringRibbonTexture,ringRibbonPixels,uiRingGetColor());
-  if(ringEffectsColorPreset!=LUNA_RING_ORIGINAL)
-    ringRibbonTextureInit(&ringEffectsRibbonTexture,ringEffectsRibbonPixels,ringEffectsColorPreset);
 }
 static void ringRibbonClose(void) {
   gsKit_TexManager_free(gsGlobal,&ringRibbonTexture);
   memset(&ringRibbonTexture,0,sizeof(ringRibbonTexture));
-  if(ringEffectsRibbonTexture.Mem)gsKit_TexManager_free(gsGlobal,&ringEffectsRibbonTexture);
-  memset(&ringEffectsRibbonTexture,0,sizeof(ringEffectsRibbonTexture));
 }
 typedef struct { RingPoint inner,outer; float coverage; int visible; } RingRibbonVertex;
 static RingRibbonVertex ringRibbonVertex(RingVec center,RingVec u,RingVec v,float radius,float halfWidth,int j) {

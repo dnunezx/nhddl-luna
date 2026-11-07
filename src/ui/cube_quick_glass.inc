@@ -20,6 +20,10 @@ static int cubePanelGlassDraw(int left, int top, int right, int bottom,
       top >= gsGlobal->Height || right <= 0 || bottom <= 0)
     return 0;
   const GlassColorPreset theme = getGlassColorPreset();
+  if (uiUndergroundIsGlass(theme)) {
+    uiUndergroundPanelDraw(left, top, right, bottom, z, 1);
+    return 1;
+  }
   if (!activeCubeMenu && (!cubePanelGlassActive || theme != cubeQuickGlassTheme)) {
     uiCubePanelGlassClose();
     cubeMaterialInit();

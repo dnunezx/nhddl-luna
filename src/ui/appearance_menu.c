@@ -10,6 +10,7 @@
 #include "ui/navigation.h"
 #include "ui/ambient.h"
 #include "ui/space_flight.h"
+#include "ui/neo.h"
 #include "options.h"
 #include <libpad.h>
 #include <math.h>
@@ -17,21 +18,59 @@
 #include <string.h>
 #include <unistd.h>
 
-enum { AP_BACKGROUND,AP_VIEWS,AP_COLORS,AP_EFFECTS,AP_TEXT,AP_SOUND };
+enum { AP_BACKGROUND,AP_VIEWS,AP_COLORS,AP_EFFECTS,AP_TEXT,AP_SOUND,AP_THEMES,AP_CATEGORY_COUNT };
 static const char *const categories[]={"Backgrounds","Library Views","Interface Colors",
-  "Background Effects","Text","Ambient Sound"};
+  "Background Effects","Text","Ambient Sound","Themes"};
 static const char *const backgrounds[]={"Stars & Cubes","Ambient Orbs","Red Clouds","Midnight Cubes",
-  "System Configuration","Neo","Aurora","Ronin","Torch","Tempest","Space Flight"};
+  "System Configuration","Neo","Aurora","Ronin","Torch","Tempest","Space Flight","Underground","Static-X","Phantom"};
+static const struct {
+  const char *name;
+  LibraryBackground background;
+  GlassColorPreset glass;
+  LunaRingColor ring,exterior,interior;
+} appearanceThemes[] = {
+  {"LUNA", LIBRARY_BACKGROUND_STARS, GLASS_COLOR_ORIGINAL,
+    LUNA_RING_ORIGINAL,LUNA_RING_ORIGINAL,LUNA_RING_ORIGINAL},
+  {"Underground", LIBRARY_BACKGROUND_UNDERGROUND, GLASS_COLOR_UNDERGROUND,
+    LUNA_RING_CRIMSON,LUNA_RING_CRIMSON,LUNA_RING_INTERIOR_DARK},
+  {"Static-X", LIBRARY_BACKGROUND_STATIC_X, GLASS_COLOR_STATIC_X,
+    LUNA_RING_BLUE,LUNA_RING_BLUE,LUNA_RING_INTERIOR_DARK},
+  {"Phantom", LIBRARY_BACKGROUND_PHANTOM, GLASS_COLOR_PHANTOM,
+    LUNA_RING_WHITE,LUNA_RING_WHITE,LUNA_RING_INTERIOR_DARK}
+};
+#define AP_THEME_COUNT ((int)(sizeof(appearanceThemes)/sizeof(*appearanceThemes)))
+static int appearanceThemeIndex(const LunaAppearance *a) {
+  for(int i=0;i<AP_THEME_COUNT;i++)
+    if(a->background==appearanceThemes[i].background&&a->glassColor==appearanceThemes[i].glass)return i;
+  return -1;
+}
+static int appearanceResetThemeIndex(const LunaAppearance *a) {
+  int theme=appearanceThemeIndex(a);
+  if(theme>=0)return theme;
+  // A custom background can still retain its theme's interface palette.
+  for(int i=1;i<AP_THEME_COUNT;i++)
+    if(a->glassColor==appearanceThemes[i].glass)return i;
+  for(int i=1;i<AP_THEME_COUNT;i++)
+    if(a->background==appearanceThemes[i].background)return i;
+  return 0;
+}
+static void appearanceApplyTheme(LunaAppearance *a,int theme) {
+  a->background=appearanceThemes[theme].background;
+  a->glassColor=appearanceThemes[theme].glass;
+  a->ringColor=appearanceThemes[theme].ring;
+  a->ringEffectsColor=appearanceThemes[theme].exterior;
+  a->ringOrbInteriorColor=appearanceThemes[theme].interior;
+}
 static const char *const colors[]={"Original","Cyan","Violet","Rose","Green","Gold","White"};
 static const char *const shapes[]={"Diamond","Cube","Octahedron","Sphere","LUNA","Skull","Atom","Iron Cross"};
 typedef struct {
   Target *target;
   LunaAppearance saved,pending,runtime;
-  int category,loadError;
+  int category,loadError,theme;
   uint32_t savedAt;
   const char *message;
   char value[96];
-  int rows[6];
+  int rows[AP_CATEGORY_COUNT];
   LunaCubePageFocus pageFocus;
 } AppearanceEditor;
 
@@ -52,6 +91,7 @@ static int appearancePreview(AppearanceEditor *s,const LunaAppearance *a) {
   setGlassColorPreset((GlassColorPreset)a->glassColor);
   uiRingSetColor((LunaRingColor)a->ringColor);
   uiRingSetEffectsColor((LunaRingColor)a->ringEffectsColor);
+  uiRingSetOrbInteriorColor((LunaRingColor)a->ringOrbInteriorColor);
   setClassicArtOverlap(a->classicOverlap);setPs1CaseStyle((Ps1CaseStyle)a->ps1CaseStyle);
   setCollectionGameList(a->collectionGameList);ambientSetEnabled(a->ambientSound);
   if(a->orbsTheme!=old->orbsTheme)setAmbientOrbsTheme((AmbientOrbsTheme)a->orbsTheme,uiNowMs());
@@ -59,6 +99,7 @@ static int appearancePreview(AppearanceEditor *s,const LunaAppearance *a) {
   setAmbientOrbsColor(ORBS_COLOR_PART_ORBS,(AmbientOrbsColor)a->orbsColor);
   setAmbientOrbsColor(ORBS_COLOR_PART_TAILS,(AmbientOrbsColor)a->tailsColor);
   lunaSpaceSetSpeed(a->spaceSpeed);lunaSpaceSetDepth(a->spaceDepth);
+  setNeoAppearance(a->neoSpeed,a->neoDensity,a->neoColor);
   s->runtime=*a;return 0;
 }
 static const char *appearanceHubDescription(void *context,int row) {
@@ -66,27 +107,32 @@ static const char *appearanceHubDescription(void *context,int row) {
   if(s->message)return s->message;
   static const char *const descriptions[]={
     "Preview the background used throughout LUNA.","Choose library views and cover layouts.",
-    "Choose the glass tint and Start-menu ring color.","Tune Ambient Orbs or Space Flight.",
-    "Choose the interface font. Wide menu headings stay unchanged.","Play ambient music while browsing."};
+    "Choose the glass tint and Start-menu ring color.","Tune Ambient Orbs, Neo, or Space Flight.",
+    "Choose the interface font. Wide menu headings stay unchanged.","Play ambient music while browsing.",
+    "Apply or reset a coordinated background, interface, ring and orb palette."};
   return descriptions[row];
 }
 static int appearanceRowCount(AppearanceEditor *s) {
+  if(s->category==AP_THEMES)return 2;
   if(s->category==AP_VIEWS)return UI_VIEW_COUNT+3;
-  if(s->category==AP_COLORS)return 3;
+  if(s->category==AP_COLORS)return 4;
+  if(s->category==AP_EFFECTS&&s->pending.background==LIBRARY_BACKGROUND_NEO)return 3;
   if(s->category==AP_EFFECTS)return s->pending.background==LIBRARY_BACKGROUND_SPACE_FLIGHT?2:4+ORB_SHAPE_PLAYTIME;
   return 1;
 }
 static const char *appearanceRowLabel(void *context,int row) {
   AppearanceEditor *s=context;
   switch(s->category) {
+    case AP_THEMES:return row?"Reset theme":"Theme";
     case AP_BACKGROUND:return "Background";
-    case AP_COLORS:return (const char *const[]){"Glass color","Ring color","Menu effects color"}[row];
+    case AP_COLORS:return (const char *const[]){"Glass color","Ring color","Menu exterior glow","Menu interior glow"}[row];
     case AP_TEXT:return "Font";
     case AP_SOUND:return "Ambient sound";
     case AP_VIEWS:
       if(row<UI_VIEW_COUNT)return lunaNavViewLabel(lunaViewCycleOrder[row]);
       return (const char *const[]){"Cover and disc layout","PS1 case style","Collections game list"}[row-UI_VIEW_COUNT];
     default:
+      if(s->pending.background==LIBRARY_BACKGROUND_NEO)return (const char *const[]){"Speed","Density","Color"}[row];
       if(s->pending.background==LIBRARY_BACKGROUND_SPACE_FLIGHT)return row?"Depth":"Speed";
       if(row<4)return (const char *const[]){"Behavior","Appearance","Orb color","Tail color"}[row];
       return shapes[row-4];
@@ -95,10 +141,15 @@ static const char *appearanceRowLabel(void *context,int row) {
 static const char *appearanceRowValue(void *context,int row) {
   AppearanceEditor *s=context;LunaAppearance *a=&s->pending;int value=0;
   switch(s->category) {
+    case AP_THEMES: {
+      if(row)return appearanceThemes[s->theme].name;
+      const int theme=appearanceThemeIndex(a);
+      return theme<0?"Custom":appearanceThemes[theme].name;
+    }
     case AP_BACKGROUND:return backgrounds[a->background];
     case AP_COLORS:return row?
-      (const char *const[]){"Original","Cyan","Blue","Violet","Rose","Green","White"}[row==1?a->ringColor:a->ringEffectsColor]:
-      (const char *const[]){"Original","Luminous","Cosmic","Cyber"}[a->glassColor];
+      (const char *const[]){"Original","Cyan","Blue","Violet","Rose","Green","White","Crimson","Dark"}[row==1?a->ringColor:row==2?a->ringEffectsColor:a->ringOrbInteriorColor]:
+      (const char *const[]){"Original","Luminous","Cosmic","Cyber","Underground","Static-X","Phantom"}[a->glassColor];
     case AP_TEXT:return a->font==UI_FONT_PSBBN?"PSBBN":"DejaVu";
     case AP_SOUND:value=a->ambientSound;break;
     case AP_VIEWS:
@@ -108,6 +159,11 @@ static const char *appearanceRowValue(void *context,int row) {
       else value=a->collectionGameList;
       break;
     default:
+      if(a->background==LIBRARY_BACKGROUND_NEO) {
+        if(row==0)return (const char *const[]){"Slow","Normal","Fast"}[a->neoSpeed];
+        if(row==1)return (const char *const[]){"Sparse","Normal","Dense"}[a->neoDensity];
+        return (const char *const[]){"Green","Cyan","Blue","Violet","Red","Amber","White"}[a->neoColor];
+      }
       if(a->background==LIBRARY_BACKGROUND_SPACE_FLIGHT) {
         snprintf(s->value,sizeof(s->value),"%u",(unsigned)(row?a->spaceDepth:a->spaceSpeed));return s->value;
       }
@@ -123,11 +179,19 @@ static const char *appearanceRowValue(void *context,int row) {
 static const char *appearanceRowDescription(void *context,int row) {
   AppearanceEditor *s=context;
   if(s->message)return s->message;
-  if(s->category==AP_COLORS&&row==1)return "Changes the Start-menu ring.";
-  if(s->category==AP_COLORS&&row==2)return "Changes the Start-menu orbs, trails and bursts.";
+  if(s->category==AP_THEMES)return row?
+    "Press X to restore this theme's background, glass, ring and orb colors.":
+    "Choose a matching background, glass, ring and orb palette. Changes save automatically.";
+  if(s->category==AP_COLORS&&row==1)return "Colors the Start-menu ring and ripples.";
+  if(s->category==AP_COLORS&&row==2)return "Colors the Start-menu orbs' outer glow.";
+  if(s->category==AP_COLORS&&row==3)return "Colors the Start-menu orbs' inner glow and explosions.";
   if(s->category==AP_EFFECTS) {
+    if(s->pending.background==LIBRARY_BACKGROUND_NEO)return (const char *const[]){
+      "Change how quickly Neo's characters fall. Normal keeps the original speed.",
+      "Choose sparse, normal, or dense rain. Normal keeps the original column count.",
+      "Choose Neo's rain color. Green keeps its original appearance."}[row];
     if(s->pending.background==LIBRARY_BACKGROUND_SPACE_FLIGHT)return "Changes save automatically.";
-    if(s->pending.background!=LIBRARY_BACKGROUND_ORBS)return "Choose Ambient Orbs or Space Flight under Backgrounds.";
+    if(s->pending.background!=LIBRARY_BACKGROUND_ORBS)return "Choose Ambient Orbs, Neo, or Space Flight under Backgrounds.";
     if(row>=4)return "Choose LUNA formations. All off keeps playtime.";
     if(row>=2&&s->pending.orbsAppearance==ORBS_APPEARANCE_PS2_ORIGINAL)return "PS2 original appearance uses its original colors.";
   }
@@ -135,18 +199,30 @@ static const char *appearanceRowDescription(void *context,int row) {
 }
 static void appearanceAdjust(void *context,int row,int direction) {
   AppearanceEditor *s=context;s->message=NULL;
+  if(s->category==AP_THEMES&&row==1&&direction!=0)return;
   if(s->loadError) {
     LunaAppearance recovered;
     s->savedAt=0;
     s->loadError=loadAppearance(s->target,&recovered);
     if(s->loadError) {s->message="Could not read appearance settings";return;}
     s->saved=s->pending=recovered;
+    s->theme=appearanceResetThemeIndex(&recovered);
   }
   LunaAppearance candidate=s->pending;
+  int selectedTheme=s->theme;
   switch(s->category) {
+    case AP_THEMES: {
+      if(!row) {
+        int theme=appearanceThemeIndex(&candidate);
+        selectedTheme=theme<0?(direction<0?AP_THEME_COUNT-1:1):(theme+AP_THEME_COUNT+direction)%AP_THEME_COUNT;
+      }
+      appearanceApplyTheme(&candidate,selectedTheme);
+      break;
+    }
     case AP_BACKGROUND:candidate.background=(candidate.background+LIBRARY_BACKGROUND_COUNT+direction)%LIBRARY_BACKGROUND_COUNT;break;
     case AP_COLORS:
-      if(row==2)candidate.ringEffectsColor=(candidate.ringEffectsColor+LUNA_RING_COLOR_COUNT+direction)%LUNA_RING_COLOR_COUNT;
+      if(row==3)candidate.ringOrbInteriorColor=(candidate.ringOrbInteriorColor+LUNA_RING_INTERIOR_COLOR_COUNT+direction)%LUNA_RING_INTERIOR_COLOR_COUNT;
+      else if(row==2)candidate.ringEffectsColor=(candidate.ringEffectsColor+LUNA_RING_COLOR_COUNT+direction)%LUNA_RING_COLOR_COUNT;
       else if(row==1)candidate.ringColor=(candidate.ringColor+LUNA_RING_COLOR_COUNT+direction)%LUNA_RING_COLOR_COUNT;
       else candidate.glassColor=(candidate.glassColor+GLASS_COLOR_COUNT+direction)%GLASS_COLOR_COUNT;
       break;
@@ -162,6 +238,12 @@ static void appearanceAdjust(void *context,int row,int direction) {
       else candidate.collectionGameList^=1;
       break;
     default:
+      if(candidate.background==LIBRARY_BACKGROUND_NEO) {
+        uint32_t *value=row==0?&candidate.neoSpeed:row==1?&candidate.neoDensity:&candidate.neoColor;
+        unsigned count=row==0?NEO_SPEED_COUNT:row==1?NEO_DENSITY_COUNT:NEO_COLOR_COUNT;
+        *value=(*value+count+direction)%count;
+        break;
+      }
       if(candidate.background==LIBRARY_BACKGROUND_SPACE_FLIGHT) {
         int value=(int)(row?candidate.spaceDepth:candidate.spaceSpeed)+direction;
         int maximum=row?4:8;
@@ -191,6 +273,7 @@ static void appearanceAdjust(void *context,int row,int direction) {
     return;
   }
   s->pending=s->saved=candidate;
+  s->theme=selectedTheme;
   s->savedAt=uiNowMs();
 }
 #include "appearance_workspace.inc"
@@ -200,6 +283,7 @@ int uiAppearanceLoop(Target *target) {
   resetAppearanceCache();
   state.loadError=loadAppearance(target,&state.saved);
   state.pending=state.runtime=state.saved;
+  state.theme=appearanceResetThemeIndex(&state.saved);
   // Empty-library entry has not run the library's appearance initialization.
   int previewError=setLibraryBackground((LibraryBackground)state.saved.background);
   if(setUIFont((UIFont)state.saved.font))previewError=1;

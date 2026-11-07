@@ -5,6 +5,7 @@
 // Native-size menu text, fitted at UTF-8 boundaries with an ellipsis when needed.
 void uiCubeMenuTextDraw(int left, int top, int right, int z, uint64_t color,
                         const char *text, int rightAligned);
+// Shared description area below the pane, with room for two native-size lines.
 void uiCubeMenuHelpDraw(int left,int right,uint64_t color,const char *text);
 struct PromptBar;
 void uiCubeSubmenuFooterDraw(const struct PromptBar *bar,float opacity);
