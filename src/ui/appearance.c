@@ -161,7 +161,13 @@ static int validSettings(const LunaAppearance *settings) {
   return 1;
 }
 
-static int recordMissing(const char *path) {
+static int recordMissing(const char *path, int openError) {
+  // UDPFS OPEN reports ENOENT correctly, but some udpfsd servers return EIO
+  // from GETSTAT for the same absent file. Use the failed open's error for
+  // both reads and first-time writes; never treat a genuine I/O failure as
+  // permission to create or overwrite a record.
+  if (!strncmp(path, "udpfs", 5) && path[5] >= '0' && path[5] <= '9' && path[6] == ':')
+    return openError == ENOENT;
   // BDM FatFs exposes negated FRESULTs through the PS2 file API. NO_FILE
   // and NO_PATH are 4/5; its 2 is an internal error, not POSIX ENOENT.
   if (!strncmp(path, "mass", 4) && path[4] >= '0' && path[4] <= '9' && path[5] == ':') {
@@ -175,7 +181,7 @@ static int recordMissing(const char *path) {
 
 static int readRecord(const char *path, AppearanceRecord *record) {
   FILE *file = fopen(path, "rb");
-  if (!file) return recordMissing(path) ? -ENOENT : -EIO;
+  if (!file) return recordMissing(path, errno) ? -ENOENT : -EIO;
   char bytes[RECORD_LIMIT + 1];
   size_t length = fread(bytes, 1, RECORD_LIMIT, file);
   int bad = ferror(file), extra = fgetc(file);
@@ -325,7 +331,7 @@ static int writeRecord(const char *path, const AppearanceRecord *record,
   struct stat info;
   if (!stat(path, &info) && info.st_size > length && remove(path)) return -EIO;
   FILE *file = fopen(path, "r+b");
-  if (!file && recordMissing(path)) file = fopen(path, "wb");
+  if (!file && recordMissing(path, errno)) file = fopen(path, "wb");
   if (!file) return -EIO;
   int result = fwrite(bytes, 1, (size_t)length, file) == (size_t)length ? 0 : -EIO;
   if (fclose(file)) result = -EIO;
