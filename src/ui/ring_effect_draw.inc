@@ -49,7 +49,7 @@ static void ringOrbTintTexture(RingVec world,float diameter,float alpha,RingVec 
   if(!p.visible) return;
   float radius=fminf(360,diameter*p.scale*.5f);
   if(p.x+radius<0||p.x-radius>640||p.y+radius<0||p.y-radius>448) return;
-  ringOpacity=alpha;
+  ringOpacity=alpha*lunaUIConfig.start_orb_brightness_percent*.01f;
   int dark=ringOrbInteriorColorPreset==LUNA_RING_INTERIOR_DARK;
   /* Stacked Crimson bursts must retain red instead of clipping to pink/white. */
   int crimsonBurst=ringOrbInteriorColorPreset==LUNA_RING_CRIMSON&&texture==&ringBurstTexture;
@@ -77,7 +77,7 @@ static void ringRipple(const RingWave *wave) {
   /* Mode2's native slower path includes sqrt; exact R5900 rounding unresolved. */
   float progress=sqrtf(ringClamp(age/duration));
   float diameter=wave->size*(1+(wave->factor-1)*progress);
-  ringRibbonDraw(wave->center,wave->u,wave->v,diameter,(1-age/duration)*wave->alpha,wave->size>=500,&ringRibbonTexture);
+  ringRibbonDraw(wave->center,wave->u,wave->v,diameter,(1-age/duration)*wave->alpha*lunaUIConfig.start_orb_brightness_percent*.01f,wave->size>=500,&ringRibbonTexture);
 }
 static void ringDrawEffects(RingMenu *menu) {
   int bound=bindTextureSafe(gsGlobal,&ringOrbTexture);
@@ -105,7 +105,7 @@ static void ringDrawEffects(RingMenu *menu) {
       if(coloredBurst&&!burstBound)continue;
       float age=p->age*.001f;
       RingVec world={p->position.x+p->velocity.x*age,p->position.y+p->velocity.y*age,p->position.z+p->velocity.z*age};
-      ringOrbTintTexture(world,p->size,p->alpha*(1-p->age/p->life),p->tint,
+      ringOrbTintTexture(world,p->size,p->alpha*(1-p->age/p->life)*(p->burst?lunaUIConfig.start_burst_brightness_percent*.01f:1),p->tint,
           coloredBurst?&ringBurstTexture:&ringOrbTexture);
     }
     if(menu->bulletStarted) {

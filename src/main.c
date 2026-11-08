@@ -10,6 +10,7 @@
 #include "storage.h"
 #include "ui/ui.h"
 #include "ui/language.h"
+#include "ui/ui_config.h"
 #include "ui/ambient.h"
 #include "ui/art_cache.h"
 #include "ui/view_state.h"
@@ -213,6 +214,7 @@ int argInit() {
     return -EIO;
 
   lunaLanguageConfigure(cwdPath);
+  lunaUIConfigure(cwdPath);
 
   // Search for neutrino.elf
   getcwd(cwdPath, PATH_MAX + 1);
@@ -259,6 +261,7 @@ int init(char *elfPath) {
   }
 
   lunaLanguageConfigure(elfPath);
+  lunaUIConfigure(elfPath);
 
   // Search for neutrino.elf
   res = findNeutrinoELF(elfPath);

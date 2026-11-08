@@ -1,0 +1,14 @@
+# Copy to ui.cfg beside luna.elf, then restart LUNA.
+# Times are milliseconds; 0 skips that delay/fade. Defaults preserve the original UI.
+# Brightness is 0..100 percent; 0 disables that layer.
+start_ring_fade_ms=1000
+start_label_delay_ms=1500
+start_label_fade_ms=1000
+start_close_ms=2000
+start_orb_brightness_percent=100
+start_burst_brightness_percent=100
+menu_open_ms=500
+menu_close_ms=500
+submenu_open_ms=1440
+submenu_close_ms=1440
+menu_move_ms=150
