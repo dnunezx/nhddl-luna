@@ -193,8 +193,15 @@ int uiCubeHubLoop(int *selected,const char *status,const LunaCubeHub *hub) {
     int sceneReady=cubeDraw(&menu,status,confirm,hub,submenu);
     gsKit_queue_exec(gsGlobal);gsKit_finish();gsKit_sync_flip(gsGlobal);usleep(1000);
     int held=pollInput(),input=held&~previous;previous=held;
+    /* Back transfers focus to the hub immediately. A fresh parent action
+     * finishes the visual return before changing its crystal/selection. */
+    if(menu.submenuOpen && menu.submenuDirection<0 && input) {
+      menu.submenuOpen=0;menu.submenuDirection=0;menu.submenuAge=0;
+      if(submenu->end)submenu->end(submenu->context);
+      submenu=NULL;activeCubeSubmenu=NULL;
+    }
     if(menu.submenuOpen) {
-      if(menu.submenuDirection)continue;
+      if(menu.submenuDirection<0)continue;
       int result=submenu->input(submenu->context,input);
       /* Resample after actions that may open a blocking dialog. Idle frames
        * keep their original sample so a new press cannot be swallowed. */
