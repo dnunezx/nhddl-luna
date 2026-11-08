@@ -1,5 +1,6 @@
 /* Shared category menus with authored crystal rendering and portal effects. */
 #include <math.h>
+#include "ui/ui_config.h"
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
@@ -109,21 +110,25 @@ static void cubeClose(CubeMenu *m,int entering) {
 static void cubeStep(CubeMenu *m,uint32_t now) {
   uint32_t dt=now-m->lastMs;m->lastMs=now;
   if(dt>250)return;
-  m->entry=fminf(500,m->entry+dt);
-  if(m->closing)m->exit+=dt;
+  m->entry=fminf(500,m->entry+lunaUITimeStep(dt,lunaUIConfig.menu_open_ms,500));
+  if(m->closing)m->exit+=lunaUITimeStep(dt,
+      m->entering?lunaUIConfig.submenu_open_ms:lunaUIConfig.menu_close_ms,
+      m->entering?1440:500);
   else if(!m->submenuOpen) {
     m->time+=dt*.001f;
     cubeMotionStep(m,dt);
   }
   if(m->submenuDirection) {
     m->submenuAge=fmaxf(0,fminf(CUBE_SUBMENU_MS,
-        m->submenuAge+(float)dt*m->submenuDirection));
+        m->submenuAge+lunaUITimeStep(dt,m->submenuDirection>0?
+            lunaUIConfig.submenu_open_ms:lunaUIConfig.submenu_close_ms,
+            CUBE_SUBMENU_MS)*m->submenuDirection));
     if(m->submenuAge==0||m->submenuAge==CUBE_SUBMENU_MS) {
       m->submenuDirection=0;
       if(m->submenuAge==0)m->submenuOpen=0;
     }
   }
-  m->moveAge=fminf(150,m->moveAge+dt);
+  m->moveAge=fminf(150,m->moveAge+lunaUITimeStep(dt,lunaUIConfig.menu_move_ms,150));
   float u=cubeClamp(m->moveAge/150);
   m->row=m->rowFrom+(m->selected-m->rowFrom)*u;
   for(int i=0;i<CUBE_COUNT;i++) {

@@ -179,7 +179,7 @@ static void ringChargeTick(RingMenu *menu,int orb,float age) {
     menu->chargeProgress[orb]+=(1-menu->chargeProgress[orb])*(1/(25*.33333298564f+2.20000004768f))*phase;
   }
 }
-static void ringEffectsStep(RingMenu *menu,float elapsed) {
+static void ringEffectsStep(RingMenu *menu,float elapsed,float exitElapsed) {
   menu->effectAge=fminf(10000,menu->effectAge+elapsed);
   menu->moveAge=fminf(10000,menu->moveAge+elapsed);
   menu->pulseAge=fminf(10000,menu->pulseAge+elapsed);
@@ -234,7 +234,7 @@ static void ringEffectsStep(RingMenu *menu,float elapsed) {
   } else {
     /* 0x24870 emits 50 snapshot copies in each exit stage. Reference 60 Hz
      * ticks are used here; native script-yield cadence is still unresolved. */
-    int first=(int)((menu->exit-elapsed)*.06f),last=(int)(menu->exit*.06f);
+    int first=(int)((menu->exit-exitElapsed)*.06f),last=(int)(menu->exit*.06f);
     for(int tick=first+1;tick<=last;tick++) {
       if((tick>=1&&tick<=50)||(tick>=61&&tick<=110))
         ringWave(menu,ringTransform(0,0,0,menu,1),2,500,1,100,1,menu->exit-tick*(1000.0f/60));

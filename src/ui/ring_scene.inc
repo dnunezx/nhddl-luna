@@ -93,7 +93,7 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
   /* Modest branding rather than the previous dashboard heading/cards. */
   drawGameOptionsLogo(ringSX(320),ringSY(15),ringSX(78),4,ringColor(179,198,216,128));
   if(status) ringText(320,43,400,18,ringColor(215,229,244,128),status);
-  float ringAlpha=ringClamp(menu->entry/1000)*(1-ringClamp((menu->exit-1000)/1000));
+  float ringAlpha=lunaUIProgress(menu->entry,lunaUIConfig.start_ring_fade_ms)*(1-ringClamp((menu->exit-1000)/1000));
   RingVec center=ringTransform(0,0,0,menu,1);
   RingVec u=ringSubtract(ringTransform(1,0,0,menu,1),center);
   RingVec v=ringSubtract(ringTransform(0,1,0,menu,1),center);
@@ -111,7 +111,7 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
   for(int pass=0;pass<RING_ITEM_COUNT;pass++) {
     int i=order[pass],slot=(i-menu->selected+RING_ITEM_COUNT)%RING_ITEM_COUNT,active=slot==0;
     RingPoint p=positions[i]; if(!p.visible) continue;
-    float appearance=ringClamp((menu->entry-1500)/1000)*(1-ringClamp(menu->exit/600));
+    float appearance=lunaUIProgress(menu->entry-lunaUIConfig.start_label_delay_ms,lunaUIConfig.start_label_fade_ms)*(1-ringClamp(menu->exit/600));
     /* Show the new title during the effects instead of waiting for their
      * 1800 ms decorative hold: fade back in from 500 to 700 ms. */
     if(menu->moveAge<700) appearance*=menu->moveAge<200?1-menu->moveAge/200:ringClamp((menu->moveAge-500)/200);
@@ -139,7 +139,7 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
   float bracketHalfWidth=(captionWidth*.5f+14)/ringSX(1);
   float bracketY=(captionTop+captionHeight*.5f)/ringSY(1);
   float bracketHeight=(captionHeight+8)/ringSY(1);
-  float infoAge=fminf(menu->effectAge-2550,menu->moveAge-1800);
+  float infoAge=fminf(menu->entry-lunaUIConfig.start_label_delay_ms-lunaUIConfig.start_label_fade_ms-50,menu->moveAge-1800);
   float infoFade=(1-ringClamp(menu->exit/500))*(info.visible?1:0);
   float blink=fmodf(fmaxf(0,infoAge-600),80)/40;
   float textAlpha=infoAge<600?0:infoAge<1000?(blink<1?1-blink:blink-1):1;

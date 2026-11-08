@@ -1,5 +1,6 @@
 /* Circular Start menu with authored lettering and effects. */
 #include <math.h>
+#include "ui/ui_config.h"
 #include <stdint.h>
 #include <string.h>
 #include "ui/ring_menu.h"
@@ -71,11 +72,13 @@ static void ringStep(RingMenu *menu, uint32_t now) {
   uint32_t elapsed = now-menu->lastMs;
   menu->lastMs = now;
   if (elapsed>250) return;
-  menu->entry = fminf(5000, menu->entry+elapsed);
+  menu->entry = fminf(11000, menu->entry+elapsed);
   menu->phase += elapsed * 0.0012f;
   if (menu->phase>RING_TAU) menu->phase-=RING_TAU;
-  if (menu->closing) menu->exit = fminf(2000, menu->exit+elapsed);
-  ringEffectsStep(menu,elapsed);
+  float previousExit = menu->exit;
+  if (menu->closing) menu->exit = fminf(2000, menu->exit+
+      lunaUITimeStep(elapsed,lunaUIConfig.start_close_ms,2000));
+  ringEffectsStep(menu,elapsed,menu->exit-previousExit);
   menu->ticks += elapsed * 0.06f;
   while(menu->ticks>=1) {
     menu->ticks-=1;
