@@ -22,6 +22,7 @@ enum {
 static const Target *collectionVisibleTitle;
 static uint32_t collectionTitleStartMs;
 static int collectionGameList;
+static int collectionCoverEcho;
 static const Target *collectionListTitle;
 static uint32_t collectionListTitleStartMs;
 static uint32_t collectionListLastFrameMs;
@@ -192,6 +193,12 @@ void releaseCollectionCornerArt(void) {
   memset(&collectionCornerTexture, 0, sizeof(collectionCornerTexture));
   collectionCornerTarget = NULL;
   collectionCornerSource = NULL;
+}
+
+void setCollectionCoverEcho(int enabled) {
+  collectionCoverEcho = enabled != 0;
+  if (!collectionCoverEcho)
+    releaseCollectionCornerArt();
 }
 
 static void prepareCollectionCornerArt(const GSTEXTURE *cover, const Target *target) {
@@ -588,7 +595,7 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
     }
   }
   drawSharedLibraryBackground(frameNowMs);
-  if (visualFocus >= 0)
+  if (collectionCoverEcho && visualFocus >= 0)
     drawCollectionCornerArt(covers[visualFocus], visualFocus, entryProgress,
                             getTargetByIdx(titles, targetIndex[visualFocus]));
 

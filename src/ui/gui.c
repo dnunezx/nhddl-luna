@@ -502,6 +502,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   classicArtOverlap = loadClassicArtOverlap(curTarget);
   setClassicArtOverlap(classicArtOverlap);
   setCollectionGameList(loadCollectionGameList(curTarget));
+  setCollectionCoverEcho(libraryAppearance.collectionCoverEcho);
 
   favoriteFlags = calloc((size_t)titles->total, sizeof(*favoriteFlags));
   if (favoriteFlags == NULL) {

@@ -132,7 +132,10 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
   int captionTop=(int)roundf(ringSY(info.y+titleHeight+10));
   float captionCenter=roundf(ringSX(info.x));
   const char *description=lunaText(!ringCanOpen(menu->selected,hasLibrary)?"No games found":details[menu->selected]);
-  float captionWidth=getLineWidth(description);
+  /* Descriptions use menu-font bounds and spacing; titles stay authored. */
+  const int captionTextLayout=setAuthoredTextLayout(0);
+  float captionWidth=getLineDrawWidth(description);
+  setAuthoredTextLayout(captionTextLayout);
   float captionHeight=getFontLineHeight();
   /* Keep this supporting line at its native atlas size: the old 165x14
    * box shrank whole sentences, losing strokes and unevenly sampling them. */
@@ -145,8 +148,8 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
   float textAlpha=infoAge<600?0:infoAge<1000?(blink<1?1-blink:blink-1):1;
   ringOpacity=textAlpha*infoFade;
   if(textAlpha*infoFade>0)
-    drawTextLineScaledCrisp((int)roundf(captionCenter-captionWidth*.5f),captionTop,
-        (int)ringSX(638),4,1,ringColor(235,242,255,128),description);
+    drawTextLineNative((int)roundf(captionCenter-captionWidth*.5f),captionTop,
+        (int)ringSX(638),4,ringColor(235,242,255,128),description);
   if(infoAge>=0 && infoFade>0) {
     static const float target[]={1,-.9f,-.2f,-.9f,-.2f,-.9f,1};
     float right=1;

@@ -94,6 +94,7 @@ static int appearancePreview(AppearanceEditor *s,const LunaAppearance *a) {
   uiRingSetOrbInteriorColor((LunaRingColor)a->ringOrbInteriorColor);
   setClassicArtOverlap(a->classicOverlap);setPs1CaseStyle((Ps1CaseStyle)a->ps1CaseStyle);
   setCollectionGameList(a->collectionGameList);ambientSetEnabled(a->ambientSound);
+  setCollectionCoverEcho(a->collectionCoverEcho);
   if(a->orbsTheme!=old->orbsTheme)setAmbientOrbsTheme((AmbientOrbsTheme)a->orbsTheme,uiNowMs());
   if(a->orbShapes!=old->orbShapes)setAmbientOrbsShapes(a->orbShapes,uiNowMs());
   setAmbientOrbsColor(ORBS_COLOR_PART_ORBS,(AmbientOrbsColor)a->orbsColor);
@@ -114,7 +115,7 @@ static const char *appearanceHubDescription(void *context,int row) {
 }
 static int appearanceRowCount(AppearanceEditor *s) {
   if(s->category==AP_THEMES)return 2;
-  if(s->category==AP_VIEWS)return UI_VIEW_COUNT+3;
+  if(s->category==AP_VIEWS)return UI_VIEW_COUNT+4;
   if(s->category==AP_COLORS)return 4;
   if(s->category==AP_EFFECTS&&s->pending.background==LIBRARY_BACKGROUND_NEO)return 3;
   if(s->category==AP_EFFECTS)return s->pending.background==LIBRARY_BACKGROUND_SPACE_FLIGHT?2:4+ORB_SHAPE_PLAYTIME;
@@ -130,7 +131,7 @@ static const char *appearanceRowLabel(void *context,int row) {
     case AP_SOUND:return "Ambient sound";
     case AP_VIEWS:
       if(row<UI_VIEW_COUNT)return lunaNavViewLabel(lunaViewCycleOrder[row]);
-      return (const char *const[]){"Cover and disc layout","PS1 case style","Collections game list"}[row-UI_VIEW_COUNT];
+      return (const char *const[]){"Cover and disc layout","PS1 case style","Collections game list","Collections cover echo"}[row-UI_VIEW_COUNT];
     default:
       if(s->pending.background==LIBRARY_BACKGROUND_NEO)return (const char *const[]){"Speed","Density","Color"}[row];
       if(s->pending.background==LIBRARY_BACKGROUND_SPACE_FLIGHT)return row?"Depth":"Speed";
@@ -156,7 +157,8 @@ static const char *appearanceRowValue(void *context,int row) {
       if(row<UI_VIEW_COUNT)value=(a->enabledViews>>lunaViewCycleOrder[row])&1;
       else if(row==UI_VIEW_COUNT)return a->classicOverlap?"Overlap":"Separate";
       else if(row==UI_VIEW_COUNT+1)return a->ps1CaseStyle==PS1_CASE_SQUARE?"Square":"Tall";
-      else value=a->collectionGameList;
+      else if(row==UI_VIEW_COUNT+2)value=a->collectionGameList;
+      else value=a->collectionCoverEcho;
       break;
     default:
       if(a->background==LIBRARY_BACKGROUND_NEO) {
@@ -179,6 +181,8 @@ static const char *appearanceRowValue(void *context,int row) {
 static const char *appearanceRowDescription(void *context,int row) {
   AppearanceEditor *s=context;
   if(s->message)return s->message;
+  if(s->category==AP_VIEWS&&row==UI_VIEW_COUNT+3)
+    return "Show a blurred copy of the selected cover behind Collections. Off by default.";
   if(s->category==AP_THEMES)return row?
     "Press X to restore this theme's background, glass, ring and orb colors.":
     "Choose a matching background, glass, ring and orb palette. Changes save automatically.";
@@ -235,7 +239,8 @@ static void appearanceAdjust(void *context,int row,int direction) {
         candidate.enabledViews^=bit;
       } else if(row==UI_VIEW_COUNT)candidate.classicOverlap^=1;
       else if(row==UI_VIEW_COUNT+1)candidate.ps1CaseStyle^=1;
-      else candidate.collectionGameList^=1;
+      else if(row==UI_VIEW_COUNT+2)candidate.collectionGameList^=1;
+      else candidate.collectionCoverEcho^=1;
       break;
     default:
       if(candidate.background==LIBRARY_BACKGROUND_NEO) {

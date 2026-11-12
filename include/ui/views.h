@@ -13,6 +13,7 @@ Ps1CaseStyle getPs1CaseStyle(void);
 void calculateCoverArtGeometry(void);
 void setClassicArtOverlap(int overlap);
 void setCollectionGameList(int enabled);
+void setCollectionCoverEcho(int enabled);
 void releaseCollectionCornerArt(void);
 // titles is the active indexed list; flags use canonical Target.idx even in Favorites.
 void drawTitleList(TargetList *titles, int selectedTitleIdx, int maxTitlesPerPage,

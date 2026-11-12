@@ -14,7 +14,7 @@
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h>
 
-#define APPEARANCE_VERSION 7U
+#define APPEARANCE_VERSION 8U
 #define RECORD_LIMIT 2048
 #define RECORD_WRITE_SIZE 1024
 static const char *const recordNames[] = {
@@ -76,7 +76,8 @@ static const AppearanceField fields[] = {
   FIELD(orbShapes, shapes, 1), FIELD(ringColor, ringColors, 0),
   FIELD(spaceSpeed, spaceSpeeds, 0), FIELD(spaceDepth, spaceDepths, 0),
   FIELD(ringEffectsColor, ringColors, 0), FIELD(ringOrbInteriorColor, ringInteriorColors, 0),
-  FIELD(neoSpeed, neoSpeeds, 0), FIELD(neoDensity, neoDensities, 0), FIELD(neoColor, neoColors, 0)
+  FIELD(neoSpeed, neoSpeeds, 0), FIELD(neoDensity, neoDensities, 0), FIELD(neoColor, neoColors, 0),
+  FIELD(collectionCoverEcho, switches, 0)
 };
 #define FIELD_COUNT (sizeof(fields)/sizeof(*fields))
 typedef struct {
@@ -230,12 +231,9 @@ static int readRecord(const char *path, AppearanceRecord *record) {
     if (!lineEnd) break;
     line = lineEnd + 1;
   }
-  // Appended fields default to Original; retain older records' required keys.
-  unsigned count=FIELD_COUNT-(version<7U?3:0)-(version<6U?1:0)-(version<5U?1:0)-(version==1U?3:version==2U?2:0);
+  // Appended fields retain their defaults, including the cover echo being Off.
+  unsigned count=FIELD_COUNT-(version<8U?1:0)-(version<7U?3:0)-(version<6U?1:0)-(version<5U?1:0)-(version==1U?3:version==2U?2:0);
   uint32_t required=(1U << count)-1U;
-  // Introduce the new view once; subsequent records preserve its On/Off choice.
-  if (version < 4U && (record->settings.enabledViews & (1U << UI_VIEW_PSBBN)))
-    record->settings.enabledViews |= 1U << UI_VIEW_COLLECTION_V2;
   return seen == required && validSettings(&record->settings) ? 0 : -EINVAL;
 }
 

@@ -90,7 +90,6 @@ typedef enum {
                           ~((1U << UI_VIEW_GRID) | (1U << 5) | (1U << 6)))
 #define UI_VIEW_DEFAULT_MASK ((1U << UI_VIEW_CLASSIC) | \
                               (1U << UI_VIEW_PSBBN) | \
-                              (1U << UI_VIEW_COLLECTION_V2) | \
                               (1U << UI_VIEW_ORBIT) | \
                               (1U << UI_VIEW_3D))
 

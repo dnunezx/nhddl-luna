@@ -14,6 +14,7 @@ typedef struct {
   uint32_t ringEffectsColor;
   uint32_t ringOrbInteriorColor;
   uint32_t neoSpeed, neoDensity, neoColor;
+  uint32_t collectionCoverEcho;
 } LunaAppearance;
 
 // Always fills settings, including legacy/default fallback on read errors.

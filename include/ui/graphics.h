@@ -119,6 +119,10 @@ int drawQuickMenuTextWindow(int x1, int y1, int x2, int y2, int z,
 void drawTextLineScaled(int x, int y, int right, int z, float scale,
                         uint64_t color, const char *text);
 
+// Native menu-font sampling and spacing, preserving the caller's text palette.
+void drawTextLineNative(int x, int y, int right, int z,
+                        uint64_t color, const char *text);
+
 // Authored Start-ring text: preserve its pixel alignment and atlas padding.
 void drawTextLineScaledCrisp(int x, int y, int right, int z, float scale,
                            uint64_t color, const char *text);

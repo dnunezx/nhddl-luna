@@ -949,6 +949,13 @@ int drawQuickMenuTextWindow(int x1, int y1, int x2, int y2, int z,
   return bottom;
 }
 
+void drawTextLineNative(int x, int y, int right, int z,
+                        uint64_t color, const char *text) {
+  color = glassTextColor(color);
+  drawQuickMenuTextWindow(x, y, right, y + getFontLineHeight(), z,
+                          color, ALIGN_LEFT, text);
+}
+
 void drawTextLineScaled(int x, int y, int right, int z, float scale,
                         uint64_t color, const char *text) {
   color = glassTextColor(color);
