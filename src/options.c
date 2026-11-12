@@ -407,8 +407,17 @@ int saveGameCoreOpl(Target *target, int opl) {
   return commitConfigFile(tempPath, path);
 }
 
-// BDM exposes raw FatFs missing-file/path results rather than POSIX errno.
 static int gameOptionsFileMissing(const char *path) {
+  // Some UDPFS servers report EIO from GETSTAT for absent files. Probe with
+  // a read-only OPEN, which preserves ENOENT, before creating a save/recovery
+  // file or falling back from an incomplete backup to legacy settings.
+  if (!strncmp(path, "udpfs", 5) && path[5] >= '0' && path[5] <= '9' && path[6] == ':') {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return errno == ENOENT;
+    close(fd);
+    return 0;
+  }
+  // BDM exposes raw FatFs missing-file/path results rather than POSIX errno.
   if (!strncmp(path, "mass", 4) && path[4] >= '0' && path[4] <= '9' && path[5] == ':') {
     iox_stat_t info;
     int result = fileXioGetStat(path, &info);
