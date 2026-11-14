@@ -122,7 +122,7 @@ void uiCubePanelGlassDraw(int left, int top, int right, int bottom, int z, int f
 }
 
 int uiCubeQuickMenuGlassDraw(int left, int top, int right, int bottom) {
-  int drawn = cubePanelGlassDraw(left, top, right, bottom, 0, 0);
+  int drawn = cubePanelGlassDraw(left, top, right, bottom, 0, 0x60);
   if (drawn && !activeCubeMenu) cubeQuickGlassActive = 1;
   return drawn;
 }

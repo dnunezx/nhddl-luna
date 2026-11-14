@@ -10,7 +10,8 @@ void uiCubeMenuHelpDraw(int left,int right,uint64_t color,const char *text);
 struct PromptBar;
 void uiCubeSubmenuFooterDraw(const struct PromptBar *bar,float opacity);
 enum { LUNA_CUBE_BACK, LUNA_CUBE_VMC, LUNA_CUBE_STORAGE,
-       LUNA_CUBE_LANGUAGE, LUNA_CUBE_EXIT, LUNA_CUBE_SHUTDOWN, LUNA_CUBE_DEFAULTS };
+       LUNA_CUBE_LANGUAGE, LUNA_CUBE_EXIT, LUNA_CUBE_SHUTDOWN, LUNA_CUBE_DEFAULTS,
+       LUNA_CUBE_DISPLAY };
 typedef struct {
   const char *title;
   int count; // -1 leaves the list area free for custom controls.
@@ -54,7 +55,7 @@ typedef struct {
   void (*footer)(void *context, float pageProgress);
   int gameOptionsLogo;
 } LunaCubeHub;
-// One crystal per row, up to six. Returns the chosen row, or -1 for Back.
+// One crystal per row, up to seven. Returns the chosen row, or -1 for Back.
 int uiCubeHubLoop(int *selected, const char *status, const LunaCubeHub *hub);
 // Redraw the active hub or page beneath a blocking picker, without presenting.
 void uiCubeHubDrawBackdrop(void);
@@ -79,7 +80,7 @@ void uiCubeHubPageDraw(const LunaCubePage *page, int selected,
 void uiCubeSubmenuPageDraw(const LunaCubePage *page, int selected,
                          LunaCubePageFocus *focus, float opacity);
 void uiCubeSubmenuFocusDraw(int left, int top, int right, int bottom, float opacity);
-// The first four settings rows supply VMC, Storage, Language, and Defaults.
+// The first five rows supply VMC, Storage, Language, Display, and Defaults.
 int uiCubeSettingsLoop(int *selected, const char *status,
-                      const LunaCubeSubmenu submenus[4]);
+                      const LunaCubeSubmenu submenus[5]);
 #endif

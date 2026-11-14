@@ -72,6 +72,9 @@ static const BMFont *font = &BMFONT_DEJAVU_SANS;
 static int authoredTextLayout;
 // Quick-menu labels have already received their palette color.
 static int quickMenuTextColor;
+// Button-label rows need one destination pixel per atlas texel. Keep this
+// separate from authored layout so spacing and theme colors stay unchanged.
+static int promptTextSampling;
 
 int setAuthoredTextLayout(int enabled) {
   const int previous = authoredTextLayout;
@@ -455,13 +458,22 @@ void drawListScrollbar(int x, int top, int bottom, int total, int first,
                     glassPresetColor(0xB0, 0xE8, 0xFF, 0x70));
 }
 
+int drawPromptTextWindow(int x1, int y1, int x2, int y2, int z,
+                         uint64_t color, uint8_t alignment, const char *text) {
+  const int previous = promptTextSampling;
+  promptTextSampling = 1;
+  const int bottom = drawTextWindow(x1, y1, x2, y2, z, color, alignment, text);
+  promptTextSampling = previous;
+  return bottom;
+}
+
 void drawPromptBar(int left, int top, int right, int bottom, int z,
                    uint64_t labelColor, PromptBar bar) {
   if (right <= left || bottom <= top)
     return;
   if (bar.note != NULL) {
     int noteRight = bar.count > 0 ? left + (right - left) / 2 : right;
-    drawTextWindow(left, top, noteRight - 6, bottom, z, labelColor,
+    drawPromptTextWindow(left, top, noteRight - 6, bottom, z, labelColor,
                    bar.count > 0 ? ALIGN_VCENTER : ALIGN_CENTER, bar.note);
     if (bar.count == 0)
       return;
@@ -483,7 +495,7 @@ void drawPromptBar(int left, int top, int right, int bottom, int z,
       x = slotLeft + 2;
     drawIconWindow(x, top, 0, bottom, z, FontMainColor,
                    ALIGN_VCENTER, prompt->icon);
-    drawTextWindow(x + getIconWidth(prompt->icon) + 6, top, slotRight - 2,
+    drawPromptTextWindow(x + getIconWidth(prompt->icon) + 6, top, slotRight - 2,
                    bottom, z, labelColor, ALIGN_VCENTER, prompt->label);
   }
 }
@@ -516,11 +528,11 @@ static void drawPromptTransitionItem(int x,int top,int right,int bottom,int z,
                         button->icon,1,opacity);
   int textX=x+icon.width+6;
   if(from && to && strcmp(from->label,to->label)) {
-    drawTextWindow(textX,top,right,bottom,z,promptFade(color,opacity*(1-progress)),
+    drawPromptTextWindow(textX,top,right,bottom,z,promptFade(color,opacity*(1-progress)),
                     ALIGN_VCENTER,from->label);
-    drawTextWindow(textX,top,right,bottom,z,promptFade(color,opacity*progress),
+    drawPromptTextWindow(textX,top,right,bottom,z,promptFade(color,opacity*progress),
                     ALIGN_VCENTER,to->label);
-  } else drawTextWindow(textX,top,right,bottom,z,promptFade(color,opacity),
+  } else drawPromptTextWindow(textX,top,right,bottom,z,promptFade(color,opacity),
                           ALIGN_VCENTER,button->label);
 }
 
@@ -600,12 +612,12 @@ void drawMenuPromptBar(MenuPromptTransition *state,int left,int top,int right,
   int fromLeft=from.note&&from.count?left+(right-left)/2:left;
   int toLeft=to.note&&to.count?left+(right-left)/2:left;
   if(from.note&&to.note&&!strcmp(from.note,to.note))
-    drawTextWindow(left,top,to.count?toLeft-6:right,bottom,z,promptFade(color,opacity),
+    drawPromptTextWindow(left,top,to.count?toLeft-6:right,bottom,z,promptFade(color,opacity),
                    to.count?ALIGN_VCENTER:ALIGN_CENTER,to.note);
   else {
-    if(from.note)drawTextWindow(left,top,from.count?fromLeft-6:right,bottom,z,
+    if(from.note)drawPromptTextWindow(left,top,from.count?fromLeft-6:right,bottom,z,
         promptFade(color,opacity*(1-progress)),from.count?ALIGN_VCENTER:ALIGN_CENTER,from.note);
-    if(to.note)drawTextWindow(left,top,to.count?toLeft-6:right,bottom,z,
+    if(to.note)drawPromptTextWindow(left,top,to.count?toLeft-6:right,bottom,z,
         promptFade(color,opacity*progress),to.count?ALIGN_VCENTER:ALIGN_CENTER,to.note);
   }
   for(int i=0;i<from.count;i++) {
@@ -657,9 +669,8 @@ static uint64_t glassTextColor(uint64_t color) {
 
 // Draws glyph at specified coordinates
 static void drawGlyph(const BMFontChar *glyph, float x, float y, int z, uint64_t color) {
-  // Preserve the proven native GS bounds; authored ring text keeps its
-  // existing destination padding without changing ordinary UI glyphs.
-  const int padding = authoredTextLayout ? 1 : 0;
+  // Match the extra atlas texel in prompt rows without changing other text.
+  const int padding = (authoredTextLayout || promptTextSampling) ? 1 : 0;
   gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],   // font page
                             x + glyph->xoffset,                 // x1 (destination)
                             y + glyph->yoffset,                 // y1

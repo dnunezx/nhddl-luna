@@ -7,7 +7,7 @@
 #include "ui/underground.h"
 #define CUBE_PI 3.14159265359f
 #define CUBE_ITEMS 6
-#define CUBE_COUNT CUBE_ITEMS
+#define CUBE_COUNT 7
 #define CUBE_SIDE 56.0f
 #define CUBE_SIZE_RATIO (CUBE_SIDE/40.0f)
 typedef struct { float x,y,z; } CubeVec;
@@ -39,6 +39,7 @@ static CubeVec cubePosition(int i,float seconds) {
     case 3:x=11+2*cubeSin(.1f*t-130);y=.3f;z=18+2*cubeSin(30-.08f*t);break;
     case 4:x=4+cubeSin(.1f*t);y=-5.5f;z=13+3*cubeSin(.1f*t+90);break;
     case 5:x=9+1.2f*cubeSin(.1f*t+180);y=-5.7f-.6f*cubeSin(-.1f*t-30);z=6+3*cubeSin(.1f*t+270);break;
+    case 6:x=3.5f+cubeSin(.08f*t);y=-2.2f+.5f*cubeSin(.1f*t);z=-3+cubeSin(.07f*t);break;
   }
   return (CubeVec){-25*x,25*y,25*z};
 }
@@ -51,6 +52,7 @@ static CubeVec cubeRotation(int i,float seconds) {
     case 3:x=.1f*t;y=45+.15f*t;z=-.05f*t;break;
     case 4:x=30+.1f*t;y=-.05f*t;z=.1f*t;break;
     case 5:x=.1f*t;y=.142f*t;z=.05f*t;break;
+    case 6:x=25+.08f*t;y=-.12f*t;z=.06f*t;break;
   }
   return (CubeVec){x*CUBE_PI/180,y*CUBE_PI/180,z*CUBE_PI/180};
 }
@@ -237,13 +239,13 @@ int uiCubeHubLoop(int *selected,const char *status,const LunaCubeHub *hub) {
 }
 
 int uiCubeSettingsLoop(int *selected,const char *status,
-                       const LunaCubeSubmenu submenus[4]) {
+                       const LunaCubeSubmenu submenus[5]) {
   static const char *const labels[]={"Memory Cards","Storage",
-    "Language","Defaults","Exit LUNA","Power Off"};
+    "Language","Display","Defaults","Exit LUNA","Power Off"};
   static const int actions[]={LUNA_CUBE_VMC,LUNA_CUBE_STORAGE,LUNA_CUBE_LANGUAGE,
-                              LUNA_CUBE_DEFAULTS,LUNA_CUBE_EXIT,LUNA_CUBE_SHUTDOWN};
-  const LunaCubeHub hub={.title="System Configuration",.labels=labels,.count=CUBE_ITEMS,
-    .submenus=submenus,.submenuCount=4,.confirmRow=5,.confirmText="Power off the console?",
+      LUNA_CUBE_DISPLAY,LUNA_CUBE_DEFAULTS,LUNA_CUBE_EXIT,LUNA_CUBE_SHUTDOWN};
+  const LunaCubeHub hub={.title="System Configuration",.labels=labels,.count=7,
+    .submenus=submenus,.submenuCount=5,.confirmRow=6,.confirmText="Power off the console?",
     .gameOptionsLogo=1};
   int row=uiCubeHubLoop(selected,status,&hub);
   return row<0?LUNA_CUBE_BACK:actions[row];

@@ -1,5 +1,6 @@
 // LUNA 2026
 #include "common.h"
+#include "ui/display_menu.h"
 #include "ui/language.h"
 #include "favorites.h"
 #include "neutrino.h"
@@ -227,7 +228,11 @@ int psbbnFieldStableHeight(void) {
 }
 
 void initVMode(GSGLOBAL *gsGlobal) {
-  switch (LAUNCHER_OPTIONS.vmode) {
+  // Retain the console's original region for Auto after a runtime mode change.
+  static int consoleMode;
+  if (!consoleMode) consoleMode = gsGlobal->Mode;
+  int mode = LAUNCHER_OPTIONS.vmode == VMODE_NONE ? consoleMode : LAUNCHER_OPTIONS.vmode;
+  switch (mode) {
   case GS_MODE_NTSC:
     gsGlobal->Mode = GS_MODE_NTSC;
     gsGlobal->Interlace = GS_INTERLACED;
@@ -360,7 +365,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
 
   if (titles->total == 0) {
     res = uiMainMenuLoop(0,NULL);
-    if (res != STORAGE_UI_REFRESH) res = 0;
+    if (res != STORAGE_UI_REFRESH && res != LUNA_DISPLAY_UI_REFRESH) res = 0;
     goto exit;
   }
 
@@ -1494,9 +1499,9 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       uiVmcSetLibrary(allTitles);
       int menuResult = uiMainMenuLoop(1,curTarget);
       uiVmcSetLibrary(NULL);
-      if (menuResult == STORAGE_UI_REFRESH) {
+      if (menuResult == STORAGE_UI_REFRESH || menuResult == LUNA_DISPLAY_UI_REFRESH) {
         storageRememberSelection(curTarget, view);
-        res = STORAGE_UI_REFRESH;
+        res = menuResult;
         break;
       }
       if (menuResult)
@@ -1578,7 +1583,7 @@ static void drawPsxLaunchMessage(const char *message,const char *footer) {
   drawTextWindow(keepoutArea+24,gsGlobal->Height/3,
                  gsGlobal->Width-keepoutArea-24,0,0,HeaderTextColor,ALIGN_HCENTER,message);
   if(footer && footer[0])
-    drawTextWindow(keepoutArea+24,gsGlobal->Height-footerHeight-30,
+    drawPromptTextWindow(keepoutArea+24,gsGlobal->Height-footerHeight-30,
                    gsGlobal->Width-keepoutArea-24,0,0,HeaderTextColor,ALIGN_HCENTER,footer);
   gsKit_set_test(gsGlobal,GS_ZTEST_ON);
   gsKit_queue_exec(gsGlobal);gsKit_finish();gsKit_sync_flip(gsGlobal);
@@ -1735,7 +1740,7 @@ int uiLaunchTitleWithCheats(Target *target, ArgumentList *arguments,
       drawTextWindow(keepoutArea + 24, gsGlobal->Height / 3,
                      gsGlobal->Width - keepoutArea - 24, 0, 0,
                      ErrorTextColor, ALIGN_HCENTER, error);
-      drawTextWindow(keepoutArea + 24, gsGlobal->Height - footerHeight - 30,
+      drawPromptTextWindow(keepoutArea + 24, gsGlobal->Height - footerHeight - 30,
                      gsGlobal->Width - keepoutArea - 24, 0, 0,
                      HeaderTextColor, ALIGN_HCENTER, lunaText("Press Triangle to return"));
       gsKit_set_test(gsGlobal, GS_ZTEST_ON);

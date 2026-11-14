@@ -2,6 +2,7 @@
 #include "ui/file_manager.h"
 #include "ui/ring_menu.h"
 #include "ui/cube_menu.h"
+#include "ui/display_menu.h"
 #include "ui/appearance_menu.h"
 #include "ui/appearance.h"
 #include "ui/file_browser.h"
@@ -2766,13 +2767,14 @@ static int uiSystemSettingsLoop(int hasLibrary, Target *target) {
   StorageEditor storage = {0};
   VmcEditor vmc = {0};
   LanguageEditor language = {0};
-  const LunaCubeSubmenu submenus[4] = {
+  const LunaCubeSubmenu submenus[5] = {
     {.context=&vmc,.begin=vmcSubmenuBegin,.draw=vmcSubmenuDraw,
      .input=vmcSubmenuInput,.end=vmcSubmenuEnd},
     {.context=&storage,.begin=storageSubmenuBegin,.draw=storageSubmenuDraw,
      .input=storageSubmenuInput},
     {.context=&language,.begin=languageSubmenuBegin,.draw=languageSubmenuDraw,
      .input=languageSubmenuInput},
+    uiDisplaySubmenu(),
     uiDefaultsSubmenu(target)
   };
   for (;;) {
@@ -2782,6 +2784,8 @@ static int uiSystemSettingsLoop(int hasLibrary, Target *target) {
       case LUNA_CUBE_BACK: return -1;
       case LUNA_CUBE_STORAGE:
         return STORAGE_UI_REFRESH;
+      case LUNA_CUBE_DISPLAY:
+        return LUNA_DISPLAY_UI_REFRESH;
       case LUNA_CUBE_EXIT: return 1;
       case LUNA_CUBE_SHUTDOWN:
         // The cube menu requires a separate confirmation press before returning.

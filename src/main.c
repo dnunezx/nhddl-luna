@@ -1,5 +1,7 @@
 // LUNA 2026
 #include "common.h"
+#include "display.h"
+#include "ui/display_menu.h"
 #include "devices/devices.h"
 #include "devices/init.h"
 #include "devices/title_id.h"
@@ -148,7 +150,14 @@ int main(int argc, char *argv[]) {
   }
 
   stopUISplashThread();
-  while ((res = uiLoop(titles, preparedCollectionIdx)) == STORAGE_UI_REFRESH) {
+  for (;;) {
+    res = uiLoop(titles, preparedCollectionIdx);
+    if (res == LUNA_DISPLAY_UI_REFRESH) {
+      if (uiDisplayApplyRequest()) { res = -1; break; }
+      preparedCollectionIdx = -1;
+      continue;
+    }
+    if (res != STORAGE_UI_REFRESH) break;
     // uiLoop retained the display, stopped audio/art workers and closed input.
     if ((res = startSplashScreen()) < 0) {
       init_scr();
@@ -213,6 +222,7 @@ int argInit() {
     return -EIO;
 
   lunaLanguageConfigure(cwdPath);
+  lunaDisplayConfigure(cwdPath);
 
   // Search for neutrino.elf
   getcwd(cwdPath, PATH_MAX + 1);
@@ -259,6 +269,7 @@ int init(char *elfPath) {
   }
 
   lunaLanguageConfigure(elfPath);
+  lunaDisplayConfigure(elfPath);
 
   // Search for neutrino.elf
   res = findNeutrinoELF(elfPath);

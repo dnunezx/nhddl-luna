@@ -159,6 +159,11 @@ void drawIconScaled(float x, float y, int z, uint64_t color, IconType iconType, 
 // Draws the icon in [x1,y1],[x2,y2] window.
 void drawIconWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_t alignment, IconType iconType);
 
+// Native atlas sampling for button labels and plain-text footer instructions.
+// Retains the caller's spacing, palette, alignment and opacity.
+int drawPromptTextWindow(int x1, int y1, int x2, int y2, int z,
+                         uint64_t color, uint8_t alignment, const char *text);
+
 // Centers prompts within equal-width slots; an optional note occupies the left half.
 void drawPromptBar(int left, int top, int right, int bottom, int z,
                    uint64_t labelColor, PromptBar bar);

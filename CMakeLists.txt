@@ -38,6 +38,7 @@ set(SOURCES
     src/common.c
     src/runtime_locks.c
     src/options.c
+    src/display.c
     src/cheats.c
     src/cheat_storage.c
     src/favorites.c
@@ -68,6 +69,7 @@ set(SOURCES
     src/ui/game_options.c
     src/ui/graphics.c
     src/ui/language.c
+    src/ui/display_menu.c
     src/ui/texture_budget.c
     src/ui/handoff.c
     src/ui/ambient.c
