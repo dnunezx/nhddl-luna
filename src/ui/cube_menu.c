@@ -150,6 +150,70 @@ static const char *activeCubeStatus;
 static int activeCubeConfirm;
 #include "cube_quick_glass.inc"
 
+void uiCubeGenreBegin(void) {
+  uiCubePanelGlassClose();
+  cubeMaterialInit();
+}
+void uiCubeGenreEnd(void) { cubeMaterialClose(); }
+void uiCubeGenreDraw(const LunaGenreCrystal *crystals,int count,float sceneScale) {
+  /* Reuse the existing native-derived crystal material/geometry passes.
+   * Existing hub construction, material choices and animation remain untouched. */
+  GSTEST savedTest=*gsGlobal->Test;
+  uint64_t savedBlend=gsGlobal->PrimAlpha;
+  int savedAlpha=gsGlobal->PrimAlphaEnable,savedPabe=gsGlobal->PABE;
+  gsKit_set_test(gsGlobal,GS_ZTEST_OFF);gsKit_set_test(gsGlobal,GS_ATEST_OFF);
+  gsGlobal->PrimAlphaEnable=GS_SETTING_ON;
+  cubeWorkReady=uiBorrowBackgroundWorkPages(cubeWork);
+  cubeSceneScale=sceneScale;cubeSceneOffsetX=320*(1-sceneScale);cubeSceneOffsetY=240*(1-sceneScale);
+  for(int i=0;i<count;i++) {
+    const LunaGenreCrystal *c=&crystals[i];
+    CubeGlass s={0};CubeVec camera={0,0,0};
+    /* Original camera at Z=600; the shared adapter's camera is at Z=-500. */
+    s.position=(CubeVec){-c->x,c->y,100-c->z};
+    /* Native SetRot composes Ry*Rx*Rz. Express that same matrix in the
+     * existing crystal renderer's Rz*Ry*Rx representation. */
+    float cx=cosf(c->rx),sx=sinf(c->rx),cy=cosf(c->ry),sy=sinf(c->ry);
+    float cz=cosf(c->rz),sz=sinf(c->rz);
+    s.rotation=cubePrepareRotation((CubeVec){atan2f(sy*sz+cy*sx*cz,cy*cx),
+        asinf(fmaxf(-1,fminf(1,sy*cz-cy*sx*sz))),atan2f(cx*sz,cy*cz+sy*sx*sz)});
+    s.depth=600-c->z;s.highlight=c->highlight?.65f:.20f;
+    /* Use Game Options' shared silver-blue reflections and white gloss
+     * without the channel's extra blue tint or inactive-cube darkening.
+     * Keep the genre-specific refraction animation enabled separately. */
+    s.nativeTint=1;s.tint=(CubeVec){1,1,1};
+    s.rff0=c->rff0;s.rff1=c->rff1;
+    const float side=140,radius=side*.8660254038f;
+    s.fade=c->alpha*cubeClamp((s.depth-16)/radius-1);
+    if(s.fade<=0)continue;
+    CubePoint center=cubeProject(s.position,camera);
+    s.width=s.height=2*radius*500*sceneScale/fmaxf(16,s.depth-radius);
+    s.left=fmaxf(0,center.x-s.width*.5f);s.top=fmaxf(0,center.y-s.height*.5f);
+    float right=fminf(640,center.x+s.width*.5f),bottom=fminf(480,center.y+s.height*.5f);
+    s.width=right-s.left;s.height=bottom-s.top;
+    if(s.width<=0||s.height<=0)continue;
+    for(int f=0;f<6;f++) {
+      CubeGlassFace *face=&s.face[f];const float *n=cubeUnitMesh[f][0]+3;
+      face->normal=cubeRotate((CubeVec){n[0],n[1],n[2]},&s.rotation);
+      CubeVec fc={0};
+      for(int j=0;j<4;j++) {
+        const float *v=cubeUnitMesh[f][j];
+        CubeVec q=cubeRotate((CubeVec){side*v[0],side*v[1],side*v[2]},&s.rotation);
+        face->v[j]=(CubeVec){q.x+s.position.x,q.y+s.position.y,q.z+s.position.z};
+        fc.x+=face->v[j].x*.25f;fc.y+=face->v[j].y*.25f;fc.z+=face->v[j].z*.25f;
+      }
+      face->front=face->normal.x*(-fc.x)+face->normal.y*(-fc.y)+face->normal.z*(-500-fc.z);
+      if(face->front>0)s.visible|=1U<<f;
+    }
+    cubeGlassDraw(&s,camera);
+  }
+  cubeRestoreGlassState();
+  cubeSceneScale=1;cubeSceneOffsetX=cubeSceneOffsetY=0;
+  gsKit_set_primalpha(gsGlobal,savedBlend,savedPabe);gsGlobal->PrimAlphaEnable=savedAlpha;
+  *gsGlobal->Test=savedTest;
+  gsKit_set_test(gsGlobal,savedTest.ZTE?GS_ZTEST_ON:GS_ZTEST_OFF);
+  gsKit_set_test(gsGlobal,savedTest.ATE?GS_ATEST_ON:GS_ATEST_OFF);
+}
+
 void uiCubeHubDrawBackdrop(void) {
   int saved=cubeBackdropOnly;
   cubeBackdropOnly=1;

@@ -55,6 +55,11 @@ set(SOURCES
     src/homebrew_transfer.S
 
     # UI
+    src/genres.c
+    src/ui/genres_menu.c
+    src/ui/psnow_genre_model.c
+    src/ui/psnow_genre_render.c
+    src/ui/psnow_ring_art.S
     src/ui/gui.c
     src/ui/file_manager.c
     src/ui/ring_menu.c
@@ -135,6 +140,10 @@ endif()
 
 # Create the main executable
 add_executable(${EE_BIN} ${SOURCES})
+set_source_files_properties(src/ui/psnow_ring_art.S PROPERTIES
+    COMPILE_OPTIONS "-Wa,-I${CMAKE_CURRENT_SOURCE_DIR}"
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/psnow-ring.t8z;${CMAKE_CURRENT_SOURCE_DIR}/assets/psnow-small-ring.t8z"
+)
 set_source_files_properties(src/ui/underground_art.S PROPERTIES
     COMPILE_OPTIONS "-Wa,-I${CMAKE_CURRENT_SOURCE_DIR}/assets/underground"
     OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/underground/background.t8z;${CMAKE_CURRENT_SOURCE_DIR}/assets/underground/frame.t8z;${CMAKE_CURRENT_SOURCE_DIR}/assets/underground/logo.t8z"

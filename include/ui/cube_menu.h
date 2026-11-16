@@ -68,6 +68,12 @@ void uiCubeQuickMenuGlassClose(void);
 // Game Options uses the library footer's margins, height, and prompt spacing.
 void uiCubeOptionsFooterDraw(const char *action, float opacity);
 void uiCubeOptionsFooterTransitionDraw(float libraryProgress, float pageProgress);
+
+/* PS Now scene adapter. Only the optional genre browser uses these entry points. */
+typedef struct { float x,y,z,rx,ry,rz,alpha,highlight,r,g,b,rff0,rff1; } LunaGenreCrystal;
+void uiCubeGenreBegin(void);
+void uiCubeGenreDraw(const LunaGenreCrystal *crystals,int count,float sceneScale);
+void uiCubeGenreEnd(void);
 typedef struct {
   int selected,first,fromY,toY;
   unsigned int startMs;

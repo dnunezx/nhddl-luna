@@ -63,6 +63,8 @@ int collectionCoversReady(TargetList *titles, int selectedTitleIdx);
 int collectionCoverMissing(int cacheIdx);
 // Returns zero when no cover size can safely be bound to the texture pool.
 int prepareCollectionCoverTexture(int cacheIdx);
+int getCollectionCoverSourceSize(int cacheIdx,int *width,int *height);
+void setGenreCoverArt(int enabled);
 void suspendCollectionCovers(void);
 void adoptOrbitCoversForCollection(void);
 void adoptCollectionCoversForOrbit(void);

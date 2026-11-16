@@ -3,6 +3,8 @@
 #include "ui/display_menu.h"
 #include "ui/language.h"
 #include "favorites.h"
+#include "genres.h"
+#include "ui/genres_menu.h"
 #include "neutrino.h"
 #include "cheat_storage.h"
 #include "options.h"
@@ -88,6 +90,7 @@ enum {
 #ifdef LUNA_ENABLE_PSXCORE
   QUICK_SWITCH_GAMES,
 #endif
+  QUICK_GENRES,
   QUICK_RANDOM,
   QUICK_ACTION_COUNT
 };
@@ -172,12 +175,12 @@ static void drawLibraryQuickMenu(int progress, UILibraryView view,
 #ifdef LUNA_ENABLE_PSXCORE
       switchGamesLabel,
 #endif
-      lunaText("Random")};
+      lunaText("Genres"), lunaText("Random")};
   const IconType icons[] = {ICON_CROSS, ICON_CIRCLE, ICON_TRIANGLE,
 #ifdef LUNA_ENABLE_PSXCORE
                             ICON_L3,
 #endif
-                            ICON_R3};
+                            ICON_SQUARE, ICON_R3};
   int count = libraryQuickActionCount(view);
   int rowHeight = getFontLineHeight() + 10;
   int height = (count + 1) * rowHeight + 16;
@@ -195,7 +198,7 @@ static void drawLibraryQuickMenu(int progress, UILibraryView view,
                  total > 0 ? title : lunaText("No favorites yet"));
   for (int i = 0; i < count; i++) {
     int y = top + (i + 1) * rowHeight + 8;
-    int enabled = i == QUICK_SHOW_FAVORITES ||
+    int enabled = i == QUICK_SHOW_FAVORITES || i == QUICK_GENRES ||
 #ifdef LUNA_ENABLE_PSXCORE
                   i == QUICK_SWITCH_GAMES ||
 #endif
@@ -352,6 +355,8 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   TargetList *allTitles = titles;
   TargetList *favoriteTitles = NULL;
   TargetList *platformTitles = NULL;
+  int genresLoaded = 0;
+  LunaGenreBrowser genreBrowser = {.genre=-1};
   // Reinitialize UI if video mode doesn't match. A failed rebuild owns no GS.
   if (gsGlobal != NULL && LAUNCHER_OPTIONS.vmode != VMODE_NONE &&
       gsGlobal->Mode != LAUNCHER_OPTIONS.vmode && (res = uiInit()))
@@ -997,6 +1002,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
 #ifdef LUNA_ENABLE_PSXCORE
                         (quickPressed & PAD_L3) ? QUICK_SWITCH_GAMES :
 #endif
+                        (quickPressed & PAD_SQUARE) ? QUICK_GENRES :
                         (view == UI_VIEW_ORBIT && (quickPressed & PAD_R3)) ? QUICK_RANDOM : -1;
     quickAction = lunaQuickMenuUpdate(&quickMenu, (input & PAD_R1) != 0,
                                      input != 0, libraryQuickActionCount(view),
@@ -1028,7 +1034,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       circleButtonHeld = 0;
       // Wait for all chord buttons to be released before handing control
       // to Options, so the same press cannot edit that screen.
-      if (quickAction == QUICK_OPTIONS) {
+      if (quickAction == QUICK_OPTIONS || quickAction == QUICK_GENRES) {
         quickDeferredAction = quickAction;
         continue;
       }
@@ -1038,7 +1044,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       }
       if (quickAction < 0)
         continue;
-      if (quickAction != QUICK_SHOW_FAVORITES &&
+      if (quickAction != QUICK_SHOW_FAVORITES && quickAction != QUICK_GENRES &&
 #ifdef LUNA_ENABLE_PSXCORE
           quickAction != QUICK_SWITCH_GAMES &&
 #endif
@@ -1225,6 +1231,42 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
 
 #endif
     int libraryListChanged = 0;
+    if (quickAction == QUICK_GENRES) {
+      Target *previousTarget=curTarget;
+      if(!genresLoaded) {
+        int error=lunaGenresLoad(allTitles);
+        if(error) {
+          quickMenuMessage=lunaText("Some genre settings could not be read. Check the game drive.");
+          quickMenuMessageUntil=uiNowMs()+4000;
+        }
+        genresLoaded=1;
+      }
+      uiCubePanelGlassClose();
+      cancelClassicArt();
+      releaseClassicArtVRAM();
+      releasePSBBNCovers();
+      releaseOrbsArt();
+      releaseGridCovers();
+      for(;;) {
+        Target *launchTarget=NULL;
+        int action=uiGenresLoop(allTitles,curTarget,libraryPlatformFilter,
+            favoritesOnly?allFavoriteFlags:NULL,&genreBrowser,&launchTarget);
+        if(action!=LUNA_GENRE_BROWSER_LAUNCH || !launchTarget)break;
+        if(uiLaunchTitleWithCheats(launchTarget,NULL,NULL)!=0)return -1;
+        // A failed preflight reopens the same genre and selected game.
+      }
+      filterTargetView(platformTitles,allTitles,libraryPlatformFilter,
+          favoritesOnly?allFavoriteFlags:NULL);
+      titles=platformTitles;
+      selectedTitleIdx=targetViewIndex(titles,previousTarget);
+      if(selectedTitleIdx<0)selectedTitleIdx=0;
+      curTarget=titles->total?getTargetByIdx(titles,selectedTitleIdx):previousTarget;
+      while(pollInput()&(PAD_CROSS|PAD_CIRCLE|PAD_TRIANGLE|PAD_START|PAD_R1|PAD_SQUARE))usleep(1000);
+      input=0;prevInput=0;quickPreviousInput=0;
+      quickMenuProgress=0;quickMenu=(LunaQuickMenu){0};
+      libraryListChanged=1;
+      goto restart_library_view;
+    }
 #ifdef LUNA_ENABLE_PSXCORE
     if (input & PAD_L3) {
       Target *previousTarget = curTarget;
@@ -1572,6 +1614,7 @@ exit:
     freeTargetList(favoriteTitles);
   freeTargetList(platformTitles);
   free(allFavoriteFlags);
+  lunaGenresClose();
   return res;
 }
 // Displays Game ID and launches the title

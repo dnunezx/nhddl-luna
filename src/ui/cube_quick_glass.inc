@@ -123,6 +123,18 @@ void uiCubePanelGlassDraw(int left, int top, int right, int bottom, int z, int f
 
 int uiCubeQuickMenuGlassDraw(int left, int top, int right, int bottom) {
   int drawn = cubePanelGlassDraw(left, top, right, bottom, 0, 0x60);
+  if (drawn) {
+    // Nearly solid dark glass in every theme, including Underground panels.
+    // Keep this pass local to the quick menu so shared panels stay unchanged.
+    const uint64_t savedBlend = gsGlobal->PrimAlpha;
+    const int savedAlpha = gsGlobal->PrimAlphaEnable, savedPabe = gsGlobal->PABE;
+    gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
+    gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+    gsKit_prim_sprite(gsGlobal, left, top, right, bottom, 0,
+                      GS_SETREG_RGBA(0, 0, 0, 0x70));
+    gsGlobal->PrimAlphaEnable = savedAlpha;
+    gsKit_set_primalpha(gsGlobal, savedBlend, savedPabe);
+  }
   if (drawn && !activeCubeMenu) cubeQuickGlassActive = 1;
   return drawn;
 }

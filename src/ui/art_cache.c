@@ -95,6 +95,7 @@ static struct {
 } classicArtJob;
 static int collectionArtThreadId = -1;
 static int collectionArtForeground;
+static int genreCoverArt;
 static int collectionArtWakeSema = -1;
 static int collectionArtDoneSema = -1;
 static volatile int collectionArtStopping;
@@ -114,6 +115,7 @@ typedef struct {
   int sourceHeight;
   int result;
   int prefetch;
+  int genreCover;
 } PSBBNArtJob;
 static PSBBNArtJob collectionArtJob;
 static int collectionFarArtThreadId = -1;
@@ -749,6 +751,18 @@ static void featherPSBBNCoverEdges(GSTEXTURE *texture) {
   }
 }
 
+static void prepareCollectionCoverAlpha(GSTEXTURE *texture,int genreCover) {
+  if(!genreCover) {
+    featherPSBBNCoverEdges(texture);
+    return;
+  }
+  // The PNG/cache path stores inverse GS alpha (opaque=0, clear=128).
+  // Genres uses conventional source-alpha blending for its animated planes.
+  // Convert before thumbnails are made; retain List artwork's original edges.
+  PSBBNPixel *pixels=(PSBBNPixel *)texture->Mem;
+  for(int i=0;i<texture->Width*texture->Height;i++)pixels[i].a=128-pixels[i].a;
+}
+
 static PSBBNPixel *createArtThumbnail(const PSBBNPixel *source, int width, int height,
                                       int thumbWidth, int thumbHeight) {
   size_t bytes = gsKit_texture_size(thumbWidth, thumbHeight, GS_PSM_CT32);
@@ -879,14 +893,21 @@ static int fitPSBBNCoverToBudget(GSTEXTURE *texture) {
 
 // Orbit keeps the decoded source and both smaller sizes in EE RAM, so a cover
 // can change resolution without resampling it on the drawing thread.
+static int collectionArtworkPath(struct DeviceMapEntry *device,const char *titleID,
+                                 char *path,size_t capacity) {
+  if(!device || !titleID)return -1;
+  if(device->metadev)device=device->metadev;
+  if(!device->mountpoint)return -1;
+  int length=snprintf(path,capacity,"%s%s/%s%s",device->mountpoint,
+      genreCoverArt?artPath:psbbnArtPath,titleID,genreCoverArt?"_COV.png":".png");
+  return length>=0 && (size_t)length<capacity?0:-1;
+}
+
 static int loadPSBBNCoverArt(struct DeviceMapEntry *device, char *titleID, int cacheIdx, int selected) {
   GSTEXTURE *texture = psbbnCoverTextures[cacheIdx];
 
-  if (device->metadev) { // Fallback to metadata device
-    device = device->metadev;
-  }
   releasePSBBNCoverCacheEntry(cacheIdx);
-  snprintf(artPathBuffer, 255, "%s%s/%s.png", device->mountpoint, psbbnArtPath, titleID);
+  if(collectionArtworkPath(device,titleID,artPathBuffer,sizeof(artPathBuffer)))return -1;
   if (decodePNGTextureRGBA(gsGlobal, texture, artPathBuffer) ||
       texture->Mem == NULL || texture->Width <= 0 || texture->Height <= 0 ||
       fitPSBBNCoverToBudget(texture) < 0) {
@@ -894,7 +915,7 @@ static int loadPSBBNCoverArt(struct DeviceMapEntry *device, char *titleID, int c
     return -1;
   }
 
-  featherPSBBNCoverEdges(texture);
+  prepareCollectionCoverAlpha(texture,genreCoverArt);
   PSBBNPixel *preview = createPSBBNThumbnail((const PSBBNPixel *)texture->Mem,
                                                texture->Width, texture->Height,
                                                PSBBN_PREVIEW_SIZE);
@@ -929,15 +950,7 @@ static int loadPSBBNCoverArt(struct DeviceMapEntry *device, char *titleID, int c
 static int collectionTitleArtworkPath(TargetList *titles, int targetIdx,
                                       char *path, size_t capacity) {
   Target *target = getTargetByIdx(titles, targetIdx);
-  struct DeviceMapEntry *device;
-  if (target == NULL || target->id == NULL || target->device == NULL)
-    return -1;
-  device = target->device->metadev ? target->device->metadev : target->device;
-  if (device->mountpoint == NULL)
-    return -1;
-  int length = snprintf(path, capacity, "%s%s/%s.png", device->mountpoint,
-                        psbbnArtPath, target->id);
-  return length >= 0 && length < (int)capacity ? 0 : -1;
+  return target?collectionArtworkPath(target->device,target->id,path,capacity):-1;
 }
 
 static int collectionCoverPath(TargetList *titles, int selectedTitleIdx, int cacheIdx,
@@ -1018,7 +1031,7 @@ static void decodePSBBNArtJob(PSBBNArtJob *job) {
     goto finished;
   if (fitPSBBNCoverToBudget(&decoded) < 0 || job->cancelled)
     goto finished;
-  featherPSBBNCoverEdges(&decoded);
+  prepareCollectionCoverAlpha(&decoded,job->genreCover);
   if (job->cancelled)
     goto finished;
   preview = createPSBBNThumbnail((const PSBBNPixel *)decoded.Mem,
@@ -2281,6 +2294,20 @@ static void restoreCollectionCoverPixels(int cacheIdx, const char *path,
   memset(pixels, 0, sizeof(*pixels));
 }
 
+int getCollectionCoverSourceSize(int cacheIdx,int *width,int *height) {
+  if(cacheIdx<0 || cacheIdx>=PSBBN_COVER_CACHE_COUNT || !width || !height ||
+     psbbnCoverSourceWidth[cacheIdx]<=0 || psbbnCoverSourceHeight[cacheIdx]<=0)return 0;
+  *width=psbbnCoverSourceWidth[cacheIdx];*height=psbbnCoverSourceHeight[cacheIdx];return 1;
+}
+
+void setGenreCoverArt(int enabled) {
+  enabled=enabled!=0;
+  if(genreCoverArt==enabled)return;
+  // Jobs capture their path; invalidating the generation prevents stale art.
+  releasePSBBNCovers();
+  genreCoverArt=enabled;
+}
+
 void refreshCollectionCovers(TargetList *titles, int selectedTitleIdx, int previousTitleIdx) {
   collectionNavigationDirection = previousTitleIdx >= 0 ?
       lunaNavDirection(titles->total, previousTitleIdx, selectedTitleIdx) : 0;
@@ -2399,6 +2426,7 @@ static void serviceBackgroundCovers(TargetList *titles, int selectedTitleIdx,
     job->result = -1;
     job->cancelled = 0;
     job->prefetch = 0;
+    job->genreCover = genreCoverArt;
     job->sourceWidth = job->sourceHeight = 0;
     job->state = 1;
     SignalSema(wakeSema);
@@ -2435,6 +2463,7 @@ static void serviceCollectionForwardPrefetch(TargetList *titles, int selectedTit
     job->result = -1;
     job->cancelled = 0;
     job->prefetch = 1;
+    job->genreCover = genreCoverArt;
     job->sourceWidth = job->sourceHeight = 0;
     job->state = 1;
     SignalSema(wakeSema);
@@ -2734,6 +2763,7 @@ void artCacheShutdown(void) {
   stopCollectionFarArtWorker(NULL, 0);
   stopCollectionArtWorker();
   collectionArtForeground = 0;
+  genreCoverArt = 0;
   stopOrbitArtWorker();
   stopGridArtWorker();
   stopScrollArtWorker();

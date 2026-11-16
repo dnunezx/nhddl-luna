@@ -11,6 +11,10 @@ typedef struct {
   CubeRotation rotation;
   float left,top,width,height,depth,fade,highlight;
   unsigned visible;
+  /* Only the optional PS Now adapter sets this; existing hubs remain neutral. */
+  int nativeTint;
+  CubeVec tint;
+  float rff0,rff1;
 } CubeGlass;
 static GSTEXTURE cubeMaterial[4],cubeWork[2],cubeScreen;
 /* Clear-ice styling shared with the accepted local preview. */
@@ -251,11 +255,27 @@ static void cubeGlassFaces(const CubeGlass *s,CubeVec camera,int pass,CubeVec of
       p[j]=cubeProject(v,camera);
       if(p[j].depth<16)clipped=1;
       if(pass==CUBE_REFRACTION_BACK) {
-        uv[j][0]=p[j].x/640-CUBE_ICE_REFRACTION_BACK*face->normal.x;
-        uv[j][1]=p[j].y/480-CUBE_ICE_REFRACTION_BACK*face->normal.y;
+        if(s->nativeTint) {
+          /* Native DrawRefraction: RFF0 scales the rotation/scale matrix
+           * with translation removed (0x71f674..0x71f6d0). Map the
+           * generated local position into the captured framebuffer. */
+          CubePoint center=cubeProject(s->position,camera);
+          uv[j][0]=(center.x+(p[j].x-center.x)*s->rff0)/640;
+          uv[j][1]=(center.y+(p[j].y-center.y)*s->rff0)/480;
+        }else {
+          uv[j][0]=p[j].x/640-CUBE_ICE_REFRACTION_BACK*face->normal.x;
+          uv[j][1]=p[j].y/480-CUBE_ICE_REFRACTION_BACK*face->normal.y;
+        }
       } else if(pass==CUBE_REFRACTION_FRONT) {
-        uv[j][0]=(p[j].x-s->left)/s->width+CUBE_ICE_REFRACTION_FRONT*face->normal.x;
-        uv[j][1]=(p[j].y-s->top)/s->height-CUBE_ICE_REFRACTION_FRONT*face->normal.y;
+        if(s->nativeTint) {
+          /* Native side 1 uses negative RFF1 with the object's TexCrop. */
+          CubePoint center=cubeProject(s->position,camera);
+          uv[j][0]=(center.x-(p[j].x-center.x)*s->rff1-s->left)/s->width;
+          uv[j][1]=(center.y-(p[j].y-center.y)*s->rff1-s->top)/s->height;
+        }else {
+          uv[j][0]=(p[j].x-s->left)/s->width+CUBE_ICE_REFRACTION_FRONT*face->normal.x;
+          uv[j][1]=(p[j].y-s->top)/s->height-CUBE_ICE_REFRACTION_FRONT*face->normal.y;
+        }
       } else if(reflection) {
         /* 0x71fb4c: rotation-only matrix followed by (-z/2+1/2,
          * -y/2+1/2). Camera faces -Z; X/Z are reversed in this projection. */
@@ -265,8 +285,14 @@ static void cubeGlassFaces(const CubeGlass *s,CubeVec camera,int pass,CubeVec of
         uv[j][0]=cubeUnitMesh[f][j][6];uv[j][1]=cubeUnitMesh[f][j][7];
       }
     }
-    if(!clipped)cubeEmit(p,uv,4,cubeColor(128*brightness,128*brightness,128*brightness,
-        pass==CUBE_GLOSS?s->fade*CUBE_ICE_GLOSS:1),1);
+    if(!clipped) {
+      float r=128*brightness,g=r,b=r;
+      // Tint reflected light, not the captured scene behind the clear glass.
+      if(s->nativeTint && (reflection || pass==CUBE_GLOSS)) {
+        r*=s->tint.x;g*=s->tint.y;b*=s->tint.z;
+      }
+      cubeEmit(p,uv,4,cubeColor(r,g,b,pass==CUBE_GLOSS?s->fade*CUBE_ICE_GLOSS:1),1);
+    }
   }
 }
 static float cubeGlassGlowWidth(const CubeGlass *s) {
