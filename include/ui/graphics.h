@@ -150,9 +150,9 @@ int getIconWidth(IconType iconType);
 
 // Draws the icon at specified coordinates
 void drawIcon(float x, float y, int z, uint64_t color, IconType iconType);
-// Official wordmark; pixel coordinates, original aspect, standard color/opacity.
+// Themed wordmark when selected; otherwise the standard Start-menu artwork.
 void drawLunaLogo(float centerX, float top, float width, int z, uint64_t color);
-// Game Options uses artwork sampled directly at its displayed size.
+// Standard Start-menu wordmark and tint, sampled directly at its 78 x 12 size.
 void drawGameOptionsLogo(float centerX, float top, float width, int z, uint64_t color);
 void drawIconScaled(float x, float y, int z, uint64_t color, IconType iconType, float scale);
 

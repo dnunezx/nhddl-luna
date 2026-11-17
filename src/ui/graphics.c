@@ -332,10 +332,7 @@ void drawIconScaled(float x, float y, int z, uint64_t color, IconType iconType, 
   drawIconScaledOpacity(x,y,z,color,iconType,scale,1);
 }
 
-void drawLunaLogo(float centerX,float top,float width,int z,uint64_t color) {
-  if (!authoredTextLayout &&
-      uiUndergroundLogoDraw(centerX, top, width, z, ((color >> 24) & 255) / 128.0f))
-    return;
+static void drawLunaLogoFallback(float centerX,float top,float width,int z,uint64_t color) {
   if(icons==NULL||width<=0||((color>>24)&255)==0)return;
   int filter=icons->Filter;
   icons->Filter=GS_FILTER_LINEAR;
@@ -360,13 +357,22 @@ void drawLunaLogo(float centerX,float top,float width,int z,uint64_t color) {
   gsKit_set_test(gsGlobal,savedTest.ATE?GS_ATEST_ON:GS_ATEST_OFF);
 }
 
+void drawLunaLogo(float centerX,float top,float width,int z,uint64_t color) {
+  if (!authoredTextLayout &&
+      uiUndergroundLogoDraw(centerX, top, width, z, ((color >> 24) & 255) / 128.0f))
+    return;
+  drawGameOptionsLogo(centerX,top,width,z,color);
+}
+
 void drawGameOptionsLogo(float centerX,float top,float width,int z,uint64_t color) {
   if(width<=0||((color>>24)&255)==0)return;
+  // All standard wordmarks share the Start menu's ink; retain each screen's fade.
+  color=GS_SETREG_RGBA(179,198,216,(color>>24)&255);
   GSTEXTURE *texture=&gameOptionsLogo;
   texture->Filter=fabsf(width-GAME_OPTIONS_LOGO_WIDTH)<.01f?GS_FILTER_NEAREST:GS_FILTER_LINEAR;
   // Keep a usable logo if this optional texture cannot be allocated or bound.
   if(texture->Mem==NULL||!bindTextureSafe(gsGlobal,texture)) {
-    drawLunaLogo(centerX,top,width,z,color);
+    drawLunaLogoFallback(centerX,top,width,z,color);
     return;
   }
   GSTEST savedTest=*gsGlobal->Test;
