@@ -123,7 +123,7 @@ void drawTextLineScaled(int x, int y, int right, int z, float scale,
 void drawTextLineNative(int x, int y, int right, int z,
                         uint64_t color, const char *text);
 
-// Authored Start-ring text: preserve its pixel alignment and atlas padding.
+// Scaled text snapped to the pixel grid, with native glyph bounds.
 void drawTextLineScaledCrisp(int x, int y, int right, int z, float scale,
                            uint64_t color, const char *text);
 
@@ -159,7 +159,7 @@ void drawIconScaled(float x, float y, int z, uint64_t color, IconType iconType, 
 // Draws the icon in [x1,y1],[x2,y2] window.
 void drawIconWindow(int x1, int y1, int x2, int y2, int z, uint64_t color, uint8_t alignment, IconType iconType);
 
-// Native atlas sampling for button labels and plain-text footer instructions.
+// Ordinary glyph bounds for button labels and plain-text footer instructions.
 // Retains the caller's spacing, palette, alignment and opacity.
 int drawPromptTextWindow(int x1, int y1, int x2, int y2, int z,
                          uint64_t color, uint8_t alignment, const char *text);

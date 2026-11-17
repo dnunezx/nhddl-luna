@@ -67,14 +67,11 @@ static void prepareGridSelector(GSTEXTURE *texture) {
 
 // Keep only the selected font's texture decoded and resident.
 static const BMFont *font = &BMFONT_DEJAVU_SANS;
-// Ordinary UI text retains 3.1.3 sampling and advances. The Start ring
-// scopes its authored text layout around the whole frame, including prompts.
+// All UI text uses 3.1.3 glyph bounds. The Start ring retains its authored
+// kerning and palette treatment around the frame, including prompts.
 static int authoredTextLayout;
 // Quick-menu labels have already received their palette color.
 static int quickMenuTextColor;
-// Button-label rows need one destination pixel per atlas texel. Keep this
-// separate from authored layout so spacing and theme colors stay unchanged.
-static int promptTextSampling;
 
 int setAuthoredTextLayout(int enabled) {
   const int previous = authoredTextLayout;
@@ -460,11 +457,7 @@ void drawListScrollbar(int x, int top, int bottom, int total, int first,
 
 int drawPromptTextWindow(int x1, int y1, int x2, int y2, int z,
                          uint64_t color, uint8_t alignment, const char *text) {
-  const int previous = promptTextSampling;
-  promptTextSampling = 1;
-  const int bottom = drawTextWindow(x1, y1, x2, y2, z, color, alignment, text);
-  promptTextSampling = previous;
-  return bottom;
+  return drawTextWindow(x1, y1, x2, y2, z, color, alignment, text);
 }
 
 void drawPromptBar(int left, int top, int right, int bottom, int z,
@@ -669,15 +662,14 @@ static uint64_t glassTextColor(uint64_t color) {
 
 // Draws glyph at specified coordinates
 static void drawGlyph(const BMFontChar *glyph, float x, float y, int z, uint64_t color) {
-  // Match the extra atlas texel in prompt rows without changing other text.
-  const int padding = (authoredTextLayout || promptTextSampling) ? 1 : 0;
+  // Keep native glyph bounds everywhere; source UVs retain the GS sampling fix.
   gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],   // font page
                             x + glyph->xoffset,                 // x1 (destination)
                             y + glyph->yoffset,                 // y1
                             glyph->x,                           // u1 (source texture)
                             glyph->y,                           // v1
-                            x + glyph->xoffset + glyph->width + padding,  // x2 (destination)
-                            y + glyph->yoffset + glyph->height + padding, // y2
+                            x + glyph->xoffset + glyph->width,   // x2 (destination)
+                            y + glyph->yoffset + glyph->height,  // y2
                             glyph->x + glyph->width + 1,        // u2 (source texture, without +1 all characters are cut off on real hardware)
                             glyph->y + glyph->height + 1,       // v2
                             z, color);
@@ -795,7 +787,7 @@ float getLineDrawWidth(const char *text) {
     if (character == '\n') break;
     const BMFontChar *glyph = getGlyph(character);
     if (!glyph) continue;
-    float right = pen + glyph->xoffset + glyph->width + (authoredTextLayout ? 1 : 0);
+    float right = pen + glyph->xoffset + glyph->width;
     if (right > extent) extent = right;
     pen += glyph->xadvance;
     if (authoredTextLayout && glyph->kernings && *cursor) {
@@ -973,7 +965,6 @@ void drawTextLineScaled(int x, int y, int right, int z, float scale,
   const int previousAlphaTest = gsGlobal->Test->ATST;
   const int previousAlphaReference = gsGlobal->Test->AREF;
   const int previousAlphaFail = gsGlobal->Test->AFAIL;
-  const int padding = authoredTextLayout ? 1 : 0;
   float curX = x;
   beginFontDraw();
   const char *cursor = text;
@@ -984,10 +975,10 @@ void drawTextLineScaled(int x, int y, int right, int z, float scale,
     if (!glyph) continue;
     float left = curX + glyph->xoffset * scale;
     float top = y + glyph->yoffset * scale;
-    if (left + (glyph->width + padding) * scale > right) break;
+    if (left + glyph->width * scale > right) break;
     gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],
         left, top, glyph->x, glyph->y,
-        left + (glyph->width + padding) * scale, top + (glyph->height + padding) * scale,
+        left + glyph->width * scale, top + glyph->height * scale,
         glyph->x + glyph->width + 1, glyph->y + glyph->height + 1, z, color);
     curX += glyph->xadvance * scale;
     if (authoredTextLayout && glyph->kernings && *cursor) {
@@ -1026,10 +1017,8 @@ void drawTextLineScaledCrisp(int x, int y, int right, int z, float scale,
     GSTEXTURE *page=fontPages[glyph->page];
     int savedFilter=page->Filter;
     {
-      /* Source UVs include the hardware-required extra atlas texel. Give
-       * that transparent padding its matching destination extent too,
-       * instead of compressing width+1 texels into width pixels. */
-      endX=roundf(endX+scale);endY=roundf(endY+scale);
+      // Snap native glyph bounds to the pixel grid without adding padding.
+      endX=roundf(endX);endY=roundf(endY);
       left=roundf(left);top=roundf(top);
       page->Filter=GS_FILTER_NEAREST;
     }
@@ -1056,7 +1045,6 @@ void drawTextLineScaledCrisp(int x, int y, int right, int z, float scale,
 
 int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *text, int scrollX) {
   color = glassTextColor(color);
-  const int padding = authoredTextLayout ? 1 : 0;
   float curX = x1 - scrollX;
   const int previousAlphaTest = gsGlobal->Test->ATST;
   const int previousAlphaReference = gsGlobal->Test->AREF;
@@ -1072,16 +1060,16 @@ int drawTextMarquee(int x1, int y, int x2, int z, uint64_t color, const char *te
       continue;
 
     float glyphLeft = curX + glyph->xoffset;
-    float glyphRight = glyphLeft + glyph->width + padding;
+    float glyphRight = glyphLeft + glyph->width;
     if (glyph->width > 0 && glyphRight > x1 && glyphLeft < x2) {
       float clippedLeft = (glyphLeft < x1) ? x1 : glyphLeft;
       float clippedRight = (glyphRight > x2) ? x2 : glyphRight;
-      float textureScale = (glyph->width + 1.0f) / (glyph->width + padding);
+      float textureScale = (glyph->width + 1.0f) / glyph->width;
       float u1 = glyph->x + (clippedLeft - glyphLeft) * textureScale;
       float u2 = glyph->x + (clippedRight - glyphLeft) * textureScale;
       gsKit_prim_sprite_texture(gsGlobal, fontPages[glyph->page],
                                 clippedLeft, y + glyph->yoffset, u1, glyph->y,
-                                clippedRight, y + glyph->yoffset + glyph->height + padding,
+                                clippedRight, y + glyph->yoffset + glyph->height,
                                 u2, glyph->y + glyph->height + 1, z, color);
     }
 
