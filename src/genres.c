@@ -13,7 +13,7 @@
 
 static const char *const defaults[LUNA_GENRE_DEFAULTS] = {
   "Action", "Adventure", "RPG", "Racing", "Fighting", "Sports",
-  "Shooters", "Platformers", "Puzzle", "Strategy", "Rhythm & Music", "Horror"};
+  "Shooters", "Platformers", "Puzzle", "Strategy", "Rhythm", "Horror"};
 static const char signature[] = "LUNA_GENRES_1\n";
 static TargetList *library;
 static uint32_t *masks;
@@ -122,7 +122,7 @@ static int findGenre(const char *name) {
   // Preserve explicit assignments saved with the earlier display names.
   if(!strcasecmp(name,"Shooter"))return 6;
   if(!strcasecmp(name,"Platform"))return 7;
-  if(!strcasecmp(name,"Rhythm Action"))return 10;
+  if(!strcasecmp(name,"Rhythm Action") || !strcasecmp(name,"Rhythm & Music"))return 10;
   return -1;
 }
 int lunaGenreCount(void) { return LUNA_GENRE_DEFAULTS; }

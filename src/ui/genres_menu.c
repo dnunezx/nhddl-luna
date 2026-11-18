@@ -17,7 +17,8 @@ typedef struct {
   PsnowGenreModel model;
   int genres[PSNOW_GENRE_ITEMS],counts[PSNOW_GENRE_ITEMS],count,assign;
   int inGames,assignFromGames,gameSelected;
-  int assignGenre,assignSelected,assignFirst,assignHeld;
+  int assignGenre,assignSelected,assignHeld;
+  LunaCubePageFocus assignFocus;
   uint32_t assignRepeatAt;
   TargetList *library,*games;
   LunaGenreBrowser *state;
@@ -26,6 +27,7 @@ typedef struct {
   const unsigned char *favorites;
   char status[160];
 } GenreMenu;
+#include "genre_lettering.inc"
 
 static int matches(const GenreMenu *m,const Target *t) {
   return !(m->platform==TARGET_PS2_ONLY && t->platform!=TARGET_PS2) &&
@@ -33,6 +35,7 @@ static int matches(const GenreMenu *m,const Target *t) {
          (!m->favorites || m->favorites[t->idx]);
 }
 static void populate(GenreMenu *m,int selectedGenre) {
+  genreLetteringOpen();
   setGenreCoverArt(0);
   int counts[LUNA_GENRE_LIMIT]={0};
   for(int i=0;i<m->library->total;i++) {
@@ -59,6 +62,7 @@ static const char *genreLabel(int genre) {
 }
 static int openGames(GenreMenu *m,int genre) {
   if(genre<0 || genre>=lunaGenreCount())return -1;
+  genreLetteringClose();
   releasePSBBNCovers();
   setGenreCoverArt(1);
   if(lunaGenreFilter(m->games,m->library,m->platform,m->favorites,genre))return -1;
@@ -74,40 +78,45 @@ static int openGames(GenreMenu *m,int genre) {
   m->status[0]=0;return 0;
 }
 static int assignmentRows(void) {
-  int line=getFontLineHeight(),top=18+2*(line+8);
-  int rows=(gsGlobal->Height-footerHeight-2*line-32-top)/(line+8);
+  int line=getFontLineHeight();
+  int rows=(gsGlobal->Height*370/480-gsGlobal->Height*127/480)/(line+line/3);
   return rows>0?rows:1;
 }
 static void openAssignment(GenreMenu *m) {
+  genreLetteringClose();
   m->assignFromGames=m->inGames;
   m->assignGenre=m->inGames?m->state->genre:m->genres[m->model.selected];
   Target *selected=m->inGames?m->state->selectedGame:m->target;
   releasePSBBNCovers();setGenreCoverArt(0);setCollectionArtForeground(0);
+  uiCubeGenreEnd();
   filterTargetView(m->games,m->library,TARGET_ALL,NULL);
   m->assignSelected=targetViewIndex(m->games,selected);
   if(m->assignSelected<0)m->assignSelected=0;
-  m->assignFirst=m->assignHeld=0;m->assign=1;m->inGames=0;m->status[0]=0;
+  m->assignFocus=(LunaCubePageFocus){.selected=-1,.glideMs=110};
+  m->assignHeld=0;m->assign=1;m->inGames=0;m->status[0]=0;
+}
+static const char *assignmentLabel(void *context,int row) {
+  GenreMenu *m=context;
+  return getTargetByIdx(m->games,row)->name;
+}
+static const char *assignmentValue(void *context,int row) {
+  GenreMenu *m=context;
+  return lunaGenreMask(getTargetByIdx(m->games,row))&(1U<<m->assignGenre)?"On":"Off";
 }
 static void drawAssignment(GenreMenu *m) {
-  int line=getFontLineHeight(),step=line+8,top=18+2*step,rows=assignmentRows();
-  if(m->assignSelected<m->assignFirst)m->assignFirst=m->assignSelected;
-  if(m->assignSelected>=m->assignFirst+rows)m->assignFirst=m->assignSelected-rows+1;
-  drawTextLineNative(24,18+line+8,gsGlobal->Width-24,6,HeaderTextColor,
-      lunaText("Select games to add or remove."));
-  for(int row=0;row<rows && m->assignFirst+row<m->games->total;row++) {
-    int index=m->assignFirst+row,y=top+row*step;
-    Target *game=getTargetByIdx(m->games,index);
-    int enabled=(lunaGenreMask(game)&(1U<<m->assignGenre))!=0;
-    char label[512];snprintf(label,sizeof(label),"[%c] %s",enabled?'x':' ',game->name);
-    if(index==m->assignSelected)drawMenuRowSelector(24,y,gsGlobal->Width-40);
-    drawTextWindow(36,y,gsGlobal->Width-48,y+line,6,FontMainColor,ALIGN_LEFT,label);
-  }
-  drawListScrollbar(gsGlobal->Width-30,top,top+rows*step,
-      m->games->total,m->assignFirst,rows,6);
-  if(!m->games->total)drawTextLineNative(36,top,gsGlobal->Width-48,6,
-      HeaderTextColor,lunaText("No games found."));
-  char count[48];snprintf(count,sizeof(count),"%d / %d",m->games->total?m->assignSelected+1:0,m->games->total);
-  drawTextLineNative(24,gsGlobal->Height-footerHeight-2*line-24,gsGlobal->Width-24,6,HeaderTextColor,count);
+  char subtitle[160];snprintf(subtitle,sizeof(subtitle),"%s  (%d / %d)",
+      genreLabel(m->assignGenre),m->games->total?m->assignSelected+1:0,m->games->total);
+  uiCubePanelGlassDraw(gsGlobal->Width*22/640,gsGlobal->Height*99/480,
+      gsGlobal->Width*518/640,gsGlobal->Height*383/480,4,0);
+  LunaCubePage page={.title="Assign",.sectionTitle="Genres",.subtitle=subtitle,
+      .count=m->games->total,.label=assignmentLabel,.value=assignmentValue,.context=m,
+      .status=m->status[0]?m->status:"Select games to add or remove.",.libraryFooter=1};
+  uiCubeSubmenuPageDraw(&page,m->assignSelected,&m->assignFocus,1);
+  Target *game=getTargetByIdx(m->games,m->assignSelected);
+  int assigned=game && (lunaGenreMask(game)&(1U<<m->assignGenre));
+  const ButtonPrompt prompts[]={{ICON_CROSS,lunaText(assigned?"Remove":"Add")},
+                               {ICON_CIRCLE,lunaText("Done")}};
+  uiCubeSubmenuFooterDraw(&(PromptBar){NULL,prompts,2},1);
 }
 static void centerText(float cx,float cy,float nativeSize,uint64_t color,const char *text) {
   float scale=nativeSize*gsGlobal->Height/(480.0f*getFontLineHeight());
@@ -159,7 +168,7 @@ static void draw(GenreMenu *m) {
   gsKit_TexManager_nextFrame(gsGlobal);gsKit_clear(gsGlobal,BGColor);
   drawSharedLibraryBackground(uiNowMs());
   gsKit_set_test(gsGlobal,GS_ZTEST_OFF);
-  if(m->assign){drawAssignment(m);goto footer;}
+  if(m->assign){drawAssignment(m);goto present;}
   psnowRingDraw(&m->model);
   if(m->inGames){drawGames(m);goto footer;}
   int order[PSNOW_GENRE_ITEMS];PsnowVec positions[PSNOW_GENRE_ITEMS];
@@ -191,7 +200,8 @@ static void draw(GenreMenu *m) {
     /* Original front-facing labels retain their projected anchors. Fit only
      * viewport edges and the library footer to the active output/font. */
     uint64_t color=i==m->model.selected?GS_SETREG_RGBA(255,255,0,128):FontMainColor;
-    centerText(cx,cy,28,faded(color,alpha),label);
+    if(!genreLetteringDraw(m->genres[i],cx,cy,28,faded(color,alpha)))
+      centerText(cx,cy,28,faded(color,alpha),label);
     if(i==m->model.selected) {
       float x=320-10*500.0f/750,y=240+120*500.0f/750,age=m->model.descriptionAge;
       centerText(x,y,24,faded(HeaderTextColor,psnowDescriptionAlpha(age)),detail);
@@ -199,22 +209,20 @@ static void draw(GenreMenu *m) {
     }
   }
 footer:
-  if(m->assign || m->inGames) {
+  if(m->inGames) {
     char heading[160];snprintf(heading,sizeof(heading),"%s / %s",
-        lunaText(m->assign?"Assign":"Genres"),genreLabel(m->assign?m->assignGenre:m->state->genre));
+        lunaText("Genres"),genreLabel(m->state->genre));
     drawTextLineNative(24,18,gsGlobal->Width-24,7,FontMainColor,heading);
   }else
   drawTextLineNative(24,18,gsGlobal->Width-24,7,FontMainColor,
       lunaText("Genres"));
-  if(m->status[0])drawTextWindow(24,gsGlobal->Height-footerHeight-(m->assign?getFontLineHeight()+12:60),
+  if(m->status[0])drawTextWindow(24,gsGlobal->Height-footerHeight-60,
       gsGlobal->Width-24,gsGlobal->Height-footerHeight-12,7,WarnTextColor,ALIGN_HCENTER,m->status);
   const ButtonPrompt browse[]={{ICON_CROSS,lunaText(m->inGames?"Launch":"Open")},{ICON_TRIANGLE,lunaText("Assign")},
                                {ICON_CIRCLE,lunaText(m->inGames?"Genres":"Back")}};
-  Target *assignment=m->assign?getTargetByIdx(m->games,m->assignSelected):NULL;
-  int assigned=assignment && (lunaGenreMask(assignment)&(1U<<m->assignGenre));
-  const ButtonPrompt assign[]={{ICON_CROSS,lunaText(assigned?"Remove":"Add")},{ICON_CIRCLE,lunaText("Done")}};
   drawPromptBar(20,gsGlobal->Height-footerHeight+8,gsGlobal->Width-20,gsGlobal->Height,
-      8,FontMainColor,(PromptBar){NULL,m->assign?assign:browse,m->assign?2:3});
+      8,FontMainColor,(PromptBar){NULL,browse,3});
+present:
   gsKit_set_test(gsGlobal,GS_ZTEST_ON);
   gsKit_queue_exec(gsGlobal);gsKit_finish();gsKit_sync_flip(gsGlobal);usleep(1000);
 }
@@ -242,6 +250,7 @@ int uiGenresLoop(TargetList *library,Target *target,TargetFilter platform,
     if(!menu.assign && menu.model.entryAge<1000)continue;
     if(pressed&PAD_CIRCLE) {
       if(menu.assign) {
+        uiCubeGenreBegin();
         menu.assign=0;
         if(menu.assignFromGames)openGames(&menu,menu.assignGenre);
         else populate(&menu,menu.assignGenre);
@@ -297,7 +306,7 @@ int uiGenresLoop(TargetList *library,Target *target,TargetFilter platform,
     }
   }
   releasePSBBNCovers();setGenreCoverArt(0);setCollectionArtForeground(0);freeTargetList(menu.games);
-  psnowRingClose();uiCubeGenreEnd();
+  genreLetteringClose();psnowRingClose();uiCubeGenreEnd();
   gsKit_set_primalpha(gsGlobal,savedBlend,savedPabe);gsGlobal->PrimAlphaEnable=savedAlpha;
   *gsGlobal->Test=savedTest;
   gsKit_set_test(gsGlobal,savedTest.ATE?GS_ATEST_ON:GS_ATEST_OFF);
