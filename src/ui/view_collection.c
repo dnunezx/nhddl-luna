@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/view_internal.h"
 #include "ui/language.h"
@@ -33,6 +34,7 @@ void setCollectionGameList(int enabled) {
 }
 
 static int collectionListScrollOffset(int overflow, uint32_t elapsed) {
+  if(!lunaAnimationBlink())return 0;
   if (overflow <= 0)
     return 0;
   const uint32_t travelMs = (uint32_t)overflow * 1000U / COLLECTION_TITLE_SCROLL_SPEED;
@@ -656,7 +658,7 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
         collectionVisibleTitle = focusTitle;
         collectionTitleStartMs = frameNowMs;
       }
-      uint32_t titleElapsedMs = frameNowMs - collectionTitleStartMs;
+      uint32_t titleElapsedMs = lunaAnimationElapsed(LUNA_ANIM_ARTWORK,frameNowMs - collectionTitleStartMs);
       int slideProgress = titleElapsedMs >= COLLECTION_TITLE_SLIDE_MS ? 1000
           : lunaNavEase((int)(titleElapsedMs * 1000U / COLLECTION_TITLE_SLIDE_MS));
       // Begin inside the selected cover area and rise above its top edge.
@@ -670,7 +672,7 @@ void drawPSBBNCollection(TargetList *titles, int selectedTitleIdx, GSTEXTURE **c
         uint32_t travelMs = (uint32_t)overflow * 1000 / COLLECTION_TITLE_SCROLL_SPEED;
         uint32_t cycleMs = COLLECTION_TITLE_START_PAUSE_MS +
                            COLLECTION_TITLE_END_PAUSE_MS + 2 * travelMs;
-        uint32_t phase = titleElapsedMs < COLLECTION_TITLE_SLIDE_MS ? 0
+        uint32_t phase = !lunaAnimationBlink() || titleElapsedMs < COLLECTION_TITLE_SLIDE_MS ? 0
             : (titleElapsedMs - COLLECTION_TITLE_SLIDE_MS) % cycleMs;
         int scrollX = 0;
         if (phase > COLLECTION_TITLE_START_PAUSE_MS) {

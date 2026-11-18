@@ -111,7 +111,7 @@ static int libraryViewEntryProgress(int entryView, UILibraryView view,
                                     uint32_t startMs, uint32_t durationMs, uint32_t now) {
   if (entryView != (int)view)
     return 1000;
-  uint32_t elapsed = now - startMs;
+  uint32_t elapsed = lunaAnimationElapsed(LUNA_ANIM_VIEW_CHANGE,now - startMs);
   if (elapsed >= durationMs)
     return 1000;
   return lunaNavEase((int)(elapsed * 1000U / durationMs));
@@ -483,6 +483,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
   libraryBackground = loadLibraryBackground(curTarget);
   LunaAppearance libraryAppearance;
   loadAppearance(curTarget,&libraryAppearance);
+  lunaAnimationApply(&libraryAppearance.animations,uiNowMs());
   lunaSpaceSetSpeed(libraryAppearance.spaceSpeed);
   lunaSpaceSetDepth(libraryAppearance.spaceDepth);
   setNeoAppearance(libraryAppearance.neoSpeed,libraryAppearance.neoDensity,libraryAppearance.neoColor);
@@ -866,7 +867,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       const int coverPending = classicArtRequestedIdx == selectedTitleIdx;
       int listEntryProgress = 1000;
       if (classicEntryListSlideActive) {
-        const uint32_t elapsed = frameNowMs - classicEntryListSlideStartMs;
+        const uint32_t elapsed = lunaAnimationElapsed(LUNA_ANIM_VIEW_CHANGE,frameNowMs - classicEntryListSlideStartMs);
         if (elapsed >= classicEntryListSlideDurationMs)
           classicEntryListSlideActive = 0;
         else
@@ -900,6 +901,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
     uint32_t quickNow = uiNowMs();
     uint32_t quickElapsed = quickNow - quickMenuFrameMs;
     quickMenuFrameMs = quickNow;
+    quickElapsed=lunaAnimationElapsed(LUNA_ANIM_DIALOG,quickElapsed);
     int quickStep = quickElapsed >= QUICK_MENU_SLIDE_MS ? 1000 :
                     (int)(quickElapsed * 1000U / QUICK_MENU_SLIDE_MS);
     quickMenuProgress += quickMenu.open ? quickStep : -quickStep;
@@ -937,7 +939,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
       serviceCollectionCovers(titles, selectedTitleIdx);
     }
     if (libraryReturnFadeStartMs != 0) {
-      uint32_t fadeElapsed = uiNowMs() - libraryReturnFadeStartMs;
+      uint32_t fadeElapsed = lunaAnimationElapsed(LUNA_ANIM_VIEW_CHANGE,uiNowMs() - libraryReturnFadeStartMs);
       if (fadeElapsed >= LIBRARY_RETURN_FADE_MS) {
         libraryReturnFadeStartMs = 0;
       } else {
@@ -1872,7 +1874,7 @@ void uiSplashThread() {
 
     gsKit_TexManager_nextFrame(gsGlobal);
     gsKit_clear(gsGlobal, GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80));
-    const uint32_t now = uiNowMs();
+    const uint32_t now = lunaAnimationNow(LUNA_ANIM_CLOCK_BACKGROUND,uiNowMs());
     drawAmbientOrbsSplash(gsGlobal->Width / 2, gsGlobal->Height * 48 / 100,
                           gsGlobal->Width * 31 / 100,
                           gsGlobal->Height * 36 / 100, now, 1);
@@ -1897,7 +1899,7 @@ void uiSplashThread() {
 // Stops UI splash thread
 void stopUISplashThread() {
   // A fast scan otherwise exits before the LUNA-to-cube animation is visible.
-  while ((uint32_t)(uiNowMs() - splashVisibleStartMs) < SPLASH_MIN_VISIBLE_MS)
+  while ((uint32_t)(uiNowMs() - splashVisibleStartMs) < lunaAnimationDuration(LUNA_ANIM_STARTUP,SPLASH_MIN_VISIBLE_MS))
     usleep(16000);
   SignalSema(logBuffer.doneSema);
   SignalSema(logBuffer.newStringSema);

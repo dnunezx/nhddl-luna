@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/view_internal.h"
 #include "ui/language.h"
@@ -60,7 +61,7 @@ static int caseFocusSlot = -1;
 
 static float caseMotionEase(uint32_t now, uint32_t start, uint32_t delay,
                              uint32_t duration) {
-  uint32_t elapsed = now - start;
+  uint32_t elapsed = lunaAnimationElapsed(LUNA_ANIM_VIEW_CHANGE,now - start);
   if (elapsed <= delay)
     return 0.0f;
   elapsed -= delay;
@@ -82,7 +83,7 @@ void beginCaseGridExit(uint32_t now) {
 }
 
 int caseGridExitFinished(uint32_t now) {
-  return caseExitActive && now - caseExitStartMs >= CASE_EXIT_MS && gridArtIsIdle();
+  return caseExitActive && lunaAnimationElapsed(LUNA_ANIM_VIEW_CHANGE,now - caseExitStartMs) >= CASE_EXIT_MS && gridArtIsIdle();
 }
 
 void setCaseGridPageDirection(int direction) {
@@ -247,7 +248,7 @@ static void updateCaseFocus(int pageBase, int selectedSlot, uint32_t now) {
     caseFocusSlot = -1;
     caseFocusStartMs = now;
   }
-  uint32_t elapsed = now - caseFocusStartMs;
+  uint32_t elapsed = lunaAnimationElapsed(LUNA_ANIM_LIBRARY_MOVE,now - caseFocusStartMs);
   int progress = elapsed >= CASE_FOCUS_MS ? 1000 :
       (int)(elapsed * 1000U / CASE_FOCUS_MS);
   float eased = lunaNavEase(progress) / 1000.0f;
@@ -263,6 +264,10 @@ static void updateCaseFocus(int pageBase, int selectedSlot, uint32_t now) {
     caseFocus[i] = caseFocusStart[i] + (target - caseFocusStart[i]) * eased;
     float turnEase = target > 0 ? turnInEase : turnOutEase;
     caseTurn[i] = caseTurnStart[i] + (target - caseTurnStart[i]) * turnEase;
+  }
+  if(lunaAnimationInstant(LUNA_ANIM_LIBRARY_MOVE)) {
+    caseFocusSlot=selectedSlot;
+    for(int i=0;i<CASE_GRID_PAGE_SIZE;i++)caseFocus[i]=caseTurn[i]=i==selectedSlot?1:0;
   }
   if (caseFocusSlot != selectedSlot) {
     // Retarget both motions from their current values so rapid input stays smooth.
@@ -346,7 +351,7 @@ static void drawCaseShimmer(const CaseGeometry *g, int z, float phase,
       phase * (width + 2.0f * band + width * 0.16f);
   float edge[4] = {sweep, sweep + band * 0.28f,
                    sweep + band * 0.55f, sweep + band};
-  int peak = large ? 0x22 : 0x18;
+  int peak = (int)((large ? 0x22 : 0x18)*lunaAnimationEffects());
   int alpha[4] = {0, peak / 3, peak, 0};
   for (int i = 0; i < 3; i++) {
     float topLeft = clampCaseX(edge[i], width);
@@ -616,7 +621,7 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
   const float pageTravel = cellWidth * 1.35f;
   float shimmerPhase = -1.0f;
   uint32_t focusElapsed = frameNowMs - caseFocusStartMs;
-  if (focusElapsed >= CASE_FOCUS_MS + CASE_TURN_MS) {
+  if (!lunaAnimationInstant(LUNA_ANIM_ARTWORK) && lunaAnimationEffects()>0 && lunaAnimationBlink() && focusElapsed >= CASE_FOCUS_MS + CASE_TURN_MS) {
     uint32_t sweepElapsed = (focusElapsed - CASE_FOCUS_MS - CASE_TURN_MS) %
         CASE_SHIMMER_PERIOD_MS;
     if (sweepElapsed < CASE_SHIMMER_MS)
@@ -689,7 +694,7 @@ void drawCaseGrid(TargetList *titles, int selectedTitleIdx, uint32_t frameNowMs)
     if (travelMs == 0) travelMs = 1;
     uint32_t cycleMs = CASE_TITLE_START_PAUSE_MS + CASE_TITLE_END_PAUSE_MS +
                        2 * travelMs;
-    uint32_t phase = (frameNowMs - caseFocusStartMs) % cycleMs;
+    uint32_t phase = lunaAnimationBlink()?(frameNowMs - caseFocusStartMs) % cycleMs:0;
     int scrollX = 0;
     if (phase > CASE_TITLE_START_PAUSE_MS) {
       phase -= CASE_TITLE_START_PAUSE_MS;

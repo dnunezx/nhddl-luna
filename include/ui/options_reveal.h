@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 #ifndef LUNA_OPTIONS_REVEAL_H
 #define LUNA_OPTIONS_REVEAL_H
 
@@ -38,7 +39,15 @@ static inline float lunaOptionsRevealEase(float t) {
 }
 
 static inline int lunaOptionsRevealTick(LunaOptionsReveal *r, uint32_t now) {
-  uint32_t elapsed=now-r->startedMs;
+  if(lunaAnimationInstant(LUNA_ANIM_VIEW_CHANGE)) {
+    r->opacity=r->position=r->opening?1:0;r->shade=.3f*r->opacity;
+    r->previousMs=now;r->remainder=0;
+#ifdef LUNA_CAMERA_ANIMATIONS
+    r->camera.position[1]=r->camera.previous[1]=r->position;r->camera.active=0;
+#endif
+    return 1;
+  }
+  uint32_t elapsed=lunaAnimationElapsed(LUNA_ANIM_VIEW_CHANGE,now-r->startedMs);
   uint32_t delta=now-r->previousMs;
   r->previousMs=now;
   float destination=r->opening ? 1 : 0;

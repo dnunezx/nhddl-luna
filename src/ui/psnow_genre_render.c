@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 /* PS Now RingMenuScript's textured scene plane, using its recovered texture,
  * scale (2400 / 2000), transform, blend and 1000 ms linear alpha manager. */
 #include "ui/psnow_genre_render.h"
@@ -127,14 +128,14 @@ static void ringPlane(const PsnowGenreModel *model,float opacity) {
 }
 void psnowRingDraw(const PsnowGenreModel *model) {
   ringPlane(model,fminf(1,model->entryAge/1000));
-  if(model->profile==1)for(int i=0;i<3;i++) {
+  if(lunaAnimationEffects()>0 && model->profile==1)for(int i=0;i<3;i++) {
     float age=psnowSmallWaveAge(model,i);
     if(age<0)continue;
     // nowhot 0x7f14 -> EffectType3 -> 0x4fc8: Scene(0) planes,
     // world (0,50,0), no SetRot; ringSmallTexId, not the base ring.
     float diameter=100*psnowSmallWaveScale(age);
     scenePlane(model,&smallRing,smallTiles,(PsnowVec){0,50,0},
-        (PsnowVec){diameter,0,0},(PsnowVec){0,diameter,0},1-age/1000);
+        (PsnowVec){diameter,0,0},(PsnowVec){0,diameter,0},(1-age/1000)*lunaAnimationEffects());
   }
 }
 void psnowDescriptionDraw(const PsnowGenreModel *model,float cx,float cy,float halfWidth,float age) {

@@ -103,6 +103,18 @@ int main(int argc, char *argv[]) {
   if (res)
     goto fail;
 
+  Target animationTarget={0};
+  for(int i=0;i<MAX_DEVICES;i++) {
+    if(deviceModeMap[i].mountpoint && deviceModeMap[i].mode!=MODE_NONE && deviceModeMap[i].mode!=MODE_ALL) {
+      animationTarget.device=&deviceModeMap[i];break;
+    }
+  }
+  if(animationTarget.device) {
+    LunaAppearance appearance;
+    loadAppearance(&animationTarget,&appearance);
+    lunaAnimationApply(&appearance.animations,uiNowMs());
+  }
+
   titles = storageRefresh(NULL);
   if (titles == NULL)
     goto fail;
@@ -131,6 +143,9 @@ int main(int argc, char *argv[]) {
         }
       }
     }
+    LunaAppearance startupAppearance;
+    loadAppearance(audioTarget,&startupAppearance);
+    lunaAnimationApply(&startupAppearance.animations,uiNowMs());
     ambientStart(loadAmbientSoundEnabled(audioTarget));
 
     UILibraryView startupView = loadStartupLibraryView(audioTarget);

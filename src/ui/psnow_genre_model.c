@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 /* Numeric port of PS Now's RingMenuScript, separate from the Start menu.
  * nowhot.amx: 0x21698/0x21ef0/0x221a0 layout, 0x1d224 pivot placement,
  * 0x22440 entry, 0x26ab8 angle motion, 0x2b484 move_type 1.
@@ -33,11 +34,13 @@ float psnowGenreProjectionScale(const PsnowGenreModel *m) {
 }
 float psnowDescriptionRight(float age) {
   static const float target[]={1,-.9f,-.2f,-.9f,-.2f,-.9f,1};
+  if(!lunaAnimationBlink())return 1;
   if(age<0 || age>=600)return 1;
   int stage=(int)(age/100);
   return target[stage]+(target[stage+1]-target[stage])*(age-stage*100)/100;
 }
 float psnowDescriptionAlpha(float age) {
+  if(!lunaAnimationBlink())return 1;
   if(age<600)return 0;
   if(age>=1000)return 1;
   float phase=fmodf(age-600,80)/40;
@@ -144,12 +147,34 @@ void psnowGenreMove(PsnowGenreModel *m,int direction) {
     p->angleAge=p->angleProgress=p->age=0;
   }
   m->items[m->selected].boost=15;
+  if(lunaAnimationInstant(LUNA_ANIM_MENU_MOVE)) {
+    m->cubePhase=m->cubeTarget;m->cubeProgress=1;m->descriptionAge=10000;m->selectionAge=10000;
+    for(int i=0;i<m->count;i++) {
+      PsnowGenreItem *p=&m->items[i];p->current=p->target;p->stage=0;
+      p->age=10000;p->angleProgress=1;
+      for(int a=0;a<3;a++)p->color[a]=a==2?(i==m->selected?1:.1f):0;
+    }
+  }
 }
 void psnowGenreStep(PsnowGenreModel *m,unsigned elapsedMs) {
   if(elapsedMs>250)return;
-  float tick=1000.0f/m->fps;m->ticks+=elapsedMs;
+  float tick=1000.0f/m->fps;
+  if(lunaAnimationInstant(LUNA_ANIM_MENU_ENTRY)) {
+    m->entryAge=10000;m->entryProgress=m->entryRotation=1;
+  } else {
+    m->entryTicks+=lunaAnimationStep(LUNA_ANIM_MENU_ENTRY,elapsedMs,10000);
+    while(m->entryTicks>=tick) {
+      m->entryTicks-=tick;m->entryAge+=tick;
+      m->entryProgress=psnowGenreExponent(m->entryProgress,m->entryAge,1000,m->fps);
+      if(m->profile==2 && m->entryAge>500)
+        m->entryRotation=psnowGenreExponent(m->entryRotation,m->entryAge-500,1000,m->fps);
+    }
+  }
+  if(lunaAnimationInstant(LUNA_ANIM_MENU_MOVE) || (!lunaAnimationBlink() && m->descriptionAge>=0))m->descriptionAge=10000;
+  m->ticks+=lunaAnimationInstant(LUNA_ANIM_MENU_MOVE)?elapsedMs:
+      lunaAnimationStep(LUNA_ANIM_MENU_MOVE,elapsedMs,10000);
   while(m->ticks>=tick) {
-    m->ticks-=tick;m->entryAge+=tick;
+    m->ticks-=tick;
     m->descriptionAge+=tick;
     if(m->selectionAge>=0)m->selectionAge+=tick;
     if(m->profile==1 && m->cubeProgress<1) {
@@ -158,11 +183,9 @@ void psnowGenreStep(PsnowGenreModel *m,unsigned elapsedMs) {
       if(m->cubeProgress>=.998f)m->cubeProgress=1;
       m->cubePhase=m->cubeFrom+(m->cubeTarget-m->cubeFrom)*m->cubeProgress;
     }
-    m->entryProgress=psnowGenreExponent(m->entryProgress,m->entryAge,1000,m->fps);
-    if(m->profile==2 && m->entryAge>500)
-      m->entryRotation=psnowGenreExponent(m->entryRotation,m->entryAge-500,1000,m->fps);
+
     m->ringVelocity=fminf(.02f,m->ringVelocity+.001f);
-    m->ringPhase+=m->ringVelocity;
+    if(lunaAnimationEffects()>0 && lunaAnimationBlink())m->ringPhase+=m->ringVelocity;
     for(int i=0;i<m->count;i++) {
       PsnowGenreItem *p=&m->items[i];p->age+=tick;
       if(p->stage) {
@@ -191,7 +214,7 @@ void psnowGenreStep(PsnowGenreModel *m,unsigned elapsedMs) {
         float target=a==2?(i==m->selected?1:.1f):0;
         p->color[a]=p->colorFrom[a]+(target-p->colorFrom[a])*clamp((p->age-1000)/500);
       }
-      for(int a=0;a<3;a++)p->rotation[a]+=p->speed[a]*p->boost;
+      if(lunaAnimationEffects()>0)for(int a=0;a<3;a++)p->rotation[a]+=p->speed[a]*p->boost;
       p->boost=fmaxf(1,p->boost-.1f);
     }
   }

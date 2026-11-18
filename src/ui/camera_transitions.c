@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 #include "ui/camera_transitions.h"
 #include "ui/graphics.h"
 #include "ui/luna_motion.h"
@@ -42,6 +43,7 @@ void lunaCameraMenuReturnCancel(void) {
 
 void lunaCameraMenuReturnStart(uint32_t nowMs) {
   lunaCameraMenuReturnCancel();
+  if(lunaAnimationInstant(LUNA_ANIM_VIEW_CHANGE))return;
   menuReturn.position[0] = menuReturn.previous[0] = 0.78f;
   const float destination[3] = {1.0f, 0, 0};
   lunaMotionRetarget(&menuReturn, destination, 750.0f, 1.0f);
@@ -59,7 +61,7 @@ void lunaCameraChannelCancel(void) {
 
 void lunaCameraChannelStart(int target) {
   lunaCameraChannelCancel();
-  if (!LUNA_CAMERA_ORBIT_TRANSITION || target < 0) return;
+  if (!LUNA_CAMERA_ORBIT_TRANSITION || target < 0 || lunaAnimationInstant(LUNA_ANIM_VIEW_CHANGE)) return;
   channelTarget = target;
   const float destination[3] = {1, 0, 0};
   lunaMotionRetarget(&channelMotion, destination, 750.0f, 1.0f);
@@ -101,6 +103,7 @@ void lunaCameraViewCancel(void) {
 
 void lunaCameraViewStart(GSTEXTURE *cover, int target, const float rect[4]) {
   lunaCameraViewCancel();
+  if(lunaAnimationInstant(LUNA_ANIM_VIEW_CHANGE))return;
   if (!LUNA_CAMERA_LIST_TURN || !cover || !cover->Mem || cover->Width <= 0 || cover->Height <= 0 ||
       rect[2] <= 0 || rect[3] <= 0)
     return;
@@ -180,7 +183,7 @@ void lunaCameraSceneBegin(int open, uint32_t nowMs) {
   if (menuReturning && menuReturn.position[0] >= 0.999f)
     lunaCameraMenuReturnCancel();
   if (viewCover) {
-    turnMs += elapsed;
+    turnMs += lunaAnimationElapsed(LUNA_ANIM_VIEW_CHANGE,elapsed);
     if (turnMs >= TURN_HALF_MS) {
       turnMs = TURN_HALF_MS;
       if (!turnBack && viewReady) {
@@ -194,7 +197,7 @@ void lunaCameraSceneBegin(int open, uint32_t nowMs) {
       lunaCameraViewCancel();
   }
   if (lunaCameraChannelActive()) {
-    channelAgeMs += elapsed;
+    channelAgeMs += lunaAnimationElapsed(LUNA_ANIM_VIEW_CHANGE,elapsed);
     if (open || (channelAgeMs >= 350U && lunaCameraChannelProgress() >= 0.998f))
       lunaCameraChannelCancel();
   }

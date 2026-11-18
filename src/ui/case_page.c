@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/case_page.h"
 #include <string.h>
@@ -7,7 +8,7 @@ static int motionProgress(const LunaCasePage *page, int row, uint32_t now) {
     return 1000;
   uint32_t duration = page->stage == CASE_PAGE_OUT ? CASE_PAGE_OUT_MS : CASE_PAGE_IN_MS;
   uint32_t delay = row * CASE_PAGE_ROW_DELAY_MS;
-  uint32_t elapsed = now - page->startMs;
+  uint32_t elapsed = lunaAnimationElapsed(LUNA_ANIM_LIBRARY_MOVE,now - page->startMs);
   if (elapsed <= delay)
     return 0;
   if (elapsed >= duration)
@@ -59,6 +60,9 @@ void lunaCasePageUpdate(LunaCasePage *page, int selectedIdx, int direction, uint
     page->visibleIdx = selectedIdx;
   direction = direction < 0 ? -1 : 1;
   page->targetIdx = selectedIdx;
+  if(lunaAnimationInstant(LUNA_ANIM_LIBRARY_MOVE)) {
+    page->visibleIdx=selectedIdx;page->stage=CASE_PAGE_IDLE;return;
+  }
   if (selectedIdx / CASE_GRID_PAGE_SIZE == page->visibleIdx / CASE_GRID_PAGE_SIZE) {
     if (page->stage == CASE_PAGE_OUT)
       retargetMotion(page, CASE_PAGE_IN, direction, now);
@@ -67,16 +71,16 @@ void lunaCasePageUpdate(LunaCasePage *page, int selectedIdx, int direction, uint
     // Retarget from the visible shelf's current position, never queue pages.
     retargetMotion(page, CASE_PAGE_OUT, direction, now);
   }
-  if (page->stage == CASE_PAGE_OUT && now - page->startMs >= CASE_PAGE_OUT_MS) {
+  if (page->stage == CASE_PAGE_OUT && lunaAnimationElapsed(LUNA_ANIM_LIBRARY_MOVE,now - page->startMs) >= CASE_PAGE_OUT_MS) {
     page->visibleIdx = page->targetIdx;
     page->stage = CASE_PAGE_IN;
-    page->startMs += CASE_PAGE_OUT_MS;
+    page->startMs += lunaAnimationDuration(LUNA_ANIM_LIBRARY_MOVE,CASE_PAGE_OUT_MS);
     for (int row = 0; row < CASE_GRID_ROWS; row++) {
       page->startOffset[row] = page->direction * 1000;
       page->startVisibility[row] = 0;
     }
     page->startPreviewVisibility = 0;
   }
-  if (page->stage == CASE_PAGE_IN && now - page->startMs >= CASE_PAGE_IN_MS)
+  if (page->stage == CASE_PAGE_IN && lunaAnimationElapsed(LUNA_ANIM_LIBRARY_MOVE,now - page->startMs) >= CASE_PAGE_IN_MS)
     page->stage = CASE_PAGE_IDLE;
 }

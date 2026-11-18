@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 #include "ui/luna_motion.h"
 #include <math.h>
 #include <string.h>
@@ -10,6 +11,11 @@ void lunaMotionReset(LunaMotion *motion) {
 
 void lunaMotionRetarget(LunaMotion *motion, const float target[3],
                            float durationMs, float historyScale) {
+  durationMs=(float)lunaAnimationDuration(LUNA_ANIM_VIEW_CHANGE,(uint32_t)fmaxf(0,durationMs));
+  if(!durationMs) {
+    for(int axis=0;axis<3;axis++)motion->position[axis]=motion->previous[axis]=motion->start[axis]=motion->target[axis]=target[axis];
+    motion->active=0;motion->progress=1;return;
+  }
   const float requested = fmaxf(0.0f, durationMs) * 0.001f;
   int frames = (int)(requested * 60.0f);
   static const float shortCoefficients[] = {

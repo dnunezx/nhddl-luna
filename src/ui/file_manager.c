@@ -121,7 +121,7 @@ typedef struct {
 } BrowserSelector;
 
 static int browserSelectorProgress(const BrowserSelector *menu, uint32_t now) {
-  uint32_t elapsed = now - menu->startMs;
+  uint32_t elapsed = lunaAnimationElapsed(LUNA_ANIM_DIALOG,now - menu->startMs);
   return elapsed >= BROWSER_SELECTOR_GLIDE_MS ? 1000 :
       lunaNavEase((int)(elapsed * 1000U / BROWSER_SELECTOR_GLIDE_MS));
 }
@@ -138,7 +138,7 @@ static int browserSelectorY(BrowserSelector *menu, int selected, int first, int 
     menu->toY = y * 256;
     menu->startMs = now;
     menu->selected = selected;
-    progress = 0;
+    progress = lunaAnimationInstant(LUNA_ANIM_DIALOG)?1000:0;
   }
   return (menu->fromY + (menu->toY - menu->fromY) * progress / 1000) / 256;
 }
@@ -1235,7 +1235,7 @@ static FileManagerTrayAnimation fileManagerTray;
 
 // This transition belongs only to the File Explorer drawer.
 static int fileManagerTrayWidth(int target) {
-  uint32_t now = uiNowMs(), elapsed = now - fileManagerTray.startMs;
+  uint32_t now = uiNowMs(), elapsed = lunaAnimationElapsed(LUNA_ANIM_DIALOG,now - fileManagerTray.startMs);
   int progress = elapsed >= 140 ? 1000 : lunaNavEase((int)(elapsed * 1000U / 140));
   int width = fileManagerTray.from +
       (fileManagerTray.to - fileManagerTray.from) * progress / 1000;
@@ -1243,6 +1243,7 @@ static int fileManagerTrayWidth(int target) {
     fileManagerTray.from = width;
     fileManagerTray.to = target;
     fileManagerTray.startMs = now;
+    if(lunaAnimationInstant(LUNA_ANIM_DIALOG))width=target;
   }
   return width;
 }
@@ -2808,6 +2809,7 @@ int uiMainMenuLoop(int hasLibrary, Target *target) {
   }
   LunaAppearance appearance;
   loadAppearance(target,&appearance);
+  lunaAnimationApply(&appearance.animations,uiNowMs());
   lunaSpaceSetSpeed(appearance.spaceSpeed);
   lunaSpaceSetDepth(appearance.spaceDepth);
   setNeoAppearance(appearance.neoSpeed,appearance.neoDensity,appearance.neoColor);

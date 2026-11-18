@@ -537,6 +537,7 @@ void loadLegacyAppearance(Target *target, LunaAppearance *settings) {
   settings->classicOverlap = legacyClassicArtOverlap(target);
   settings->collectionGameList = legacyCollectionGameList(target);
   settings->collectionCoverEcho = 0;
+  lunaAnimationDefaults(&settings->animations);
   settings->ps1CaseStyle = legacyPs1CaseStyle(target);
   settings->orbsTheme = legacyAmbientOrbsTheme(target);
   settings->orbsAppearance = legacyAmbientOrbsAppearance(target);

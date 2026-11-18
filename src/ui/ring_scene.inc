@@ -143,6 +143,7 @@ static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
   float bracketY=(captionTop+captionHeight*.5f)/ringSY(1);
   float bracketHeight=(captionHeight+8)/ringSY(1);
   float infoAge=fminf(menu->effectAge-2550,menu->moveAge-1800);
+  if(!lunaAnimationBlink() && infoAge>=0)infoAge=10000;
   float infoFade=(1-ringClamp(menu->exit/500))*(info.visible?1:0);
   float blink=fmodf(fmaxf(0,infoAge-600),80)/40;
   float textAlpha=infoAge<600?0:infoAge<1000?(blink<1?1-blink:blink-1):1;

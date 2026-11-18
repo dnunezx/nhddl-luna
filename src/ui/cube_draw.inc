@@ -120,13 +120,13 @@ void uiCubeSubmenuPageDraw(const LunaCubePage *page,int selected,
   int first=selected/visible*visible,y=top+(selected-first)*step;
   uint32_t now=uiNowMs();
   unsigned duration=focus->glideMs>0?(unsigned)focus->glideMs:110;
-  float progress=cubeClamp((now-focus->startMs)/(float)duration);
+  float progress=cubeClamp(lunaAnimationElapsed(LUNA_ANIM_MENU_MOVE,now-focus->startMs)/(float)duration);
   if(focus->selected<0||focus->first!=first) {
     focus->fromY=focus->toY=y*256;focus->selected=selected;focus->first=first;
   } else if(focus->selected!=selected) {
     focus->fromY+=(int)((focus->toY-focus->fromY)*
         lunaNavEase((int)(progress*1000)))/1000;
-    focus->toY=y*256;focus->startMs=now;focus->selected=selected;progress=0;
+    focus->toY=y*256;focus->startMs=now;focus->selected=selected;progress=lunaAnimationInstant(LUNA_ANIM_MENU_MOVE)?1:0;
   }
   int focusY=(focus->fromY+(focus->toY-focus->fromY)*
       lunaNavEase((int)(progress*1000))/1000)/256;
@@ -261,12 +261,19 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
   if(hub->subtitle)drawTextWindow((int)cubeSX(25),(int)cubeSY(65),(int)cubeSX(615),
       (int)cubeSY(112),6,cubeColor(215,229,244,text),ALIGN_HCENTER,hub->subtitle);
   const int listTop=(int)cubeSY(167);
-  const int rowStep=getFontLineHeight()+getFontLineHeight()/3;
+  int rowStep=getFontLineHeight()+getFontLineHeight()/3;
   const int listLeft=(int)cubeSX(60),rowRight=(int)cubeSX(300);
   int visible=(int)((cubeSY(352)-listTop)/rowStep);
   if(visible<1)visible=1;
   if(visible>m->itemCount)visible=m->itemCount;
   int first=m->selected>=visible?m->selected-visible+1:0;
+  if(hub->showAllCategories) {
+    if(m->itemCount>1) {
+      int fitStep=((int)cubeSY(352)-listTop-getFontLineHeight())/(m->itemCount-1);
+      if(fitStep<rowStep)rowStep=fitStep;
+    }
+    visible=m->itemCount;first=0;
+  }
   const char *selectedLabel=lunaText(labels[m->selected]);
   const int selectedLeft=listLeft;
   int textRight=selectedLeft+(int)ceilf(getLineDrawWidth(selectedLabel));

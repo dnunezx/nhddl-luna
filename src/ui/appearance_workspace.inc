@@ -1,5 +1,5 @@
 /* Appearance categories share the Settings crystals and reversible portals. */
-static const int appearanceCubeCategories[]={AP_THEMES,AP_BACKGROUND,AP_VIEWS,AP_COLORS,AP_TEXT,AP_SOUND};
+static const int appearanceCubeCategories[]={AP_THEMES,AP_BACKGROUND,AP_VIEWS,AP_COLORS,AP_TEXT,AP_SOUND,AP_ANIMATIONS};
 #define AP_CUBE_CATEGORIES (sizeof(appearanceCubeCategories)/sizeof(*appearanceCubeCategories))
 typedef struct { AppearanceEditor *editor; int category; } AppearanceCubeCategory;
 static int appearanceWorkspaceEffects(const AppearanceEditor *s) {
@@ -55,6 +55,8 @@ static void appearanceCubeDraw(void *context,float opacity) {
     .label=appearanceCubeLabel,.value=appearanceCubeValue,
     .description=appearanceWorkspaceDescription,.adjust=appearanceWorkspaceAdjust,
     .context=s,.sectionTitle="Appearance"};
+  if(s->category==AP_ANIMATIONS && s->animationEditor)
+    page.title=s->animationEditor==1?"Customize Cinematic":"Customize Instant";
   uiCubeSubmenuPageDraw(&page,s->rows[s->category],&s->pageFocus,opacity);
   uint64_t ink=GS_SETREG_RGBA(235,247,255,(int)(128*opacity));
   if(s->savedAt&&uiNowMs()-s->savedAt<1800U)
@@ -69,12 +71,25 @@ static void appearanceCubeDraw(void *context,float opacity) {
 }
 static int appearanceCubeInput(void *context,int input) {
   AppearanceEditor *s=((AppearanceCubeCategory *)context)->editor;
+  if(s->category==AP_ANIMATIONS && s->animationEditor && (input&(PAD_CIRCLE|PAD_TRIANGLE|PAD_START))) {
+    s->animationRows[s->animationEditor-1]=s->rows[AP_ANIMATIONS];
+    s->rows[AP_ANIMATIONS]=s->animationEditor;
+    s->animationEditor=0;s->pageFocus.selected=-1;
+    return LUNA_CUBE_SUBMENU_STAY;
+  }
   if(input&(PAD_CIRCLE|PAD_TRIANGLE|PAD_START))return LUNA_CUBE_SUBMENU_BACK;
   int count=appearanceWorkspaceRows(s),*row=&s->rows[s->category];
   if(*row>=count)*row=0;
   if(input&(PAD_UP|PAD_L1))*row=(*row+count-1)%count;
   else if(input&(PAD_DOWN|PAD_R1))*row=(*row+1)%count;
-  else if(s->category==AP_THEMES&&*row==1) {
+  else if(s->category==AP_ANIMATIONS && !s->animationEditor && *row>0) {
+    if(input&PAD_CROSS) {
+      s->animationEditor=*row;
+      *row=s->animationRows[s->animationEditor-1];s->pageFocus.selected=-1;
+    }
+  } else if(s->category==AP_ANIMATIONS && s->animationEditor && *row==LUNA_ANIM_COUNT+3) {
+    if(input&PAD_CROSS)appearanceWorkspaceAdjust(s,*row,0);
+  } else if(s->category==AP_THEMES&&*row==1) {
     if(input&PAD_CROSS)appearanceWorkspaceAdjust(s,*row,0);
   } else if(input&(PAD_LEFT|PAD_RIGHT|PAD_CROSS))
     appearanceWorkspaceAdjust(s,*row,input&PAD_LEFT?-1:1);
@@ -92,7 +107,7 @@ static void appearanceCubeLoop(AppearanceEditor *s) {
   }
   LunaCubeHub hub={.title="Appearance",.labels=labels,.count=AP_CUBE_CATEGORIES,
     .submenus=submenus,.submenuCount=AP_CUBE_CATEGORIES,.confirmRow=-1,
-    .context=s,.description=appearanceCubeDescription};
+    .context=s,.description=appearanceCubeDescription,.showAllCategories=1};
   int selected=0;
   uiCubeHubLoop(&selected,NULL,&hub);
 }

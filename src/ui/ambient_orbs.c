@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 // Ambient Orbs: reusable animated formation asset.
 #include "ui/view_internal.h"
 #include "ui/ambient_orbs.h"
@@ -378,6 +379,7 @@ void observeAmbientOrbsSelection(int selectedTitleIdx, uint32_t now) {
 }
 
 static float orbSelectionPulse(uint32_t elapsedMs) {
+  if(!lunaAnimationBlink())return 0;
   float strongest = 0.0f;
   for (int i = 0; i < orbSelectionEventCount; i++) {
     if (elapsedMs < orbSelectionEvents[i])
@@ -435,6 +437,7 @@ typedef struct {
 
 static OrbMotion orbMotion(uint32_t elapsedMs) {
   OrbMotion motion;
+  if(!lunaAnimationBlink())return (OrbMotion){0,100};
   motion.breath = orbWave(glassPhase(elapsedMs, ORB_SPREAD_PERIOD_MS, 0));
   // Fast grouping rides on a slower swell, as in the reference animation.
   const float slowScale = 80.0f + orbWave(glassPhase(elapsedMs,
@@ -1599,7 +1602,7 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
     if (opacity <= 0.0f)
       continue;
     const float logoOrbScale = 1.0f - logoStrength * 0.5f;
-    const float sizePulse = 1.0f +
+    const float sizePulse = 1.0f + (lunaAnimationBlink()?1.0f:0.0f)*
         orbWave(glassPhase(elapsedMs,
                            ORB_SIZE_PULSE_MS + (uint32_t)(i % 4) * 170U,
                            (uint32_t)i * 311U)) *
@@ -1709,7 +1712,10 @@ void drawAmbientOrbsSystemConfig(uint64_t clockMs, uint32_t now,
 
 void drawAmbientOrbsSplash(int centerX, int centerY, int radiusX,
                            int radiusY, uint32_t now, int trailZ) {
-  const uint32_t elapsedMs = glassElapsedMs(now);
+  uint32_t elapsedMs = glassElapsedMs(now);
+  if(lunaAnimationInstant(LUNA_ANIM_STARTUP))elapsedMs=splashStartMs;
+  else if(elapsedMs>=splashStartMs)elapsedMs=splashStartMs+
+      lunaAnimationElapsed(LUNA_ANIM_STARTUP,elapsedMs-splashStartMs);
   drawAmbientOrbs(centerX, centerY, radiusX, radiusY, elapsedMs,
                    elapsedMs, elapsedMs, 1, 1, 100, trailZ, 2);
 }

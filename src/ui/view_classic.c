@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/view_internal.h"
 #include "ui/language.h"
@@ -113,6 +114,8 @@ static uint32_t classicDiscPausedMs;
 static uint32_t classicDiscLastFrameMs;
 
 static uint32_t discRotationPhase(uint32_t frameNowMs) {
+  if(lunaAnimationInstant(LUNA_ANIM_ARTWORK))return 0;
+  frameNowMs=lunaAnimationNow(LUNA_ANIM_CLOCK_ARTWORK,frameNowMs);
   return (uint32_t)(((uint64_t)(frameNowMs - classicDiscPausedMs) << 16) /
                     DISC_ROTATION_PERIOD_MS);
 }
@@ -120,7 +123,8 @@ static uint32_t discRotationPhase(uint32_t frameNowMs) {
 void holdClassicDiscRotation(uint32_t resumeMs) {
   // Options displays the last library frame as a still image. Keep the next
   // live disc frame at that same angle instead of advancing while hidden.
-  classicDiscPausedMs += resumeMs - classicDiscLastFrameMs;
+  if(!lunaAnimationInstant(LUNA_ANIM_ARTWORK))
+    classicDiscPausedMs += lunaAnimationElapsed(LUNA_ANIM_ARTWORK,resumeMs - classicDiscLastFrameMs);
 }
 
 static int classicGlowInitialized;
@@ -131,7 +135,7 @@ static uint32_t classicGlowStartMs;
 static uint32_t classicGlowLastDrawMs;
 
 static int classicGlowEasedProgress(uint32_t now) {
-  uint32_t elapsed = now - classicGlowStartMs;
+  uint32_t elapsed = lunaAnimationElapsed(LUNA_ANIM_LIBRARY_MOVE,now - classicGlowStartMs);
   int progress;
 
   if (elapsed >= CLASSIC_SELECTION_GLOW_DURATION_MS)

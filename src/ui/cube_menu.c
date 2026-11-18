@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 /* Shared category menus with authored crystal rendering and portal effects. */
 #include <math.h>
 #include <stdint.h>
@@ -79,6 +80,7 @@ static void cubeMotionStep(CubeMenu *m,float milliseconds) {
   }
 }
 static void cubeSpin(CubeMenu *m) {
+  if(lunaAnimationInstant(LUNA_ANIM_MENU_MOVE)) {m->spinning=0;return;}
   m->spinProgress[m->selected]=0;
   m->spinning|=1U<<m->selected;
 }
@@ -111,25 +113,25 @@ static void cubeClose(CubeMenu *m,int entering) {
 static void cubeStep(CubeMenu *m,uint32_t now) {
   uint32_t dt=now-m->lastMs;m->lastMs=now;
   if(dt>250)return;
-  m->entry=fminf(500,m->entry+dt);
-  if(m->closing)m->exit+=dt;
+  m->entry=fminf(500,m->entry+lunaAnimationStep(LUNA_ANIM_MENU_ENTRY,dt,500));
+  if(m->closing)m->exit+=lunaAnimationStep(m->entering?LUNA_ANIM_MENU_ENTRY:LUNA_ANIM_MENU_EXIT,dt,m->entering?1440:500);
   else if(!m->submenuOpen) {
     m->time+=dt*.001f;
-    cubeMotionStep(m,dt);
+    if(lunaAnimationEffects()>0)cubeMotionStep(m,dt);
   }
   if(m->submenuDirection) {
     m->submenuAge=fmaxf(0,fminf(CUBE_SUBMENU_MS,
-        m->submenuAge+(float)dt*m->submenuDirection));
+        m->submenuAge+lunaAnimationStep(m->submenuDirection>0?LUNA_ANIM_MENU_ENTRY:LUNA_ANIM_MENU_EXIT,dt,CUBE_SUBMENU_MS)*m->submenuDirection));
     if(m->submenuAge==0||m->submenuAge==CUBE_SUBMENU_MS) {
       m->submenuDirection=0;
       if(m->submenuAge==0)m->submenuOpen=0;
     }
   }
-  m->moveAge=fminf(150,m->moveAge+dt);
+  m->moveAge=fminf(150,m->moveAge+lunaAnimationStep(LUNA_ANIM_MENU_MOVE,dt,150));
   float u=cubeClamp(m->moveAge/150);
   m->row=m->rowFrom+(m->selected-m->rowFrom)*u;
   for(int i=0;i<CUBE_COUNT;i++) {
-    m->lightAge[i]+=dt;
+    m->lightAge[i]+=lunaAnimationStep(LUNA_ANIM_MENU_MOVE,dt,m->lightDuration[i]);
     float a=cubeClamp(m->lightAge[i]/m->lightDuration[i]);
     m->light[i]=m->lightFrom[i]+(m->lightTarget[i]-m->lightFrom[i])*a;
   }

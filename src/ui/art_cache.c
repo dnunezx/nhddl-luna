@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "devices/devices.h"
 #include "ui/art_cache.h"
@@ -200,11 +201,11 @@ GSTEXTURE *orbitCoverHandoff(int cacheIdx, uint32_t now, int *outgoingVisibility
       handoff->ready = 1;
       handoff->readyMs = now;
     }
-    uint32_t elapsed = handoff->ready ? now - handoff->readyMs : 0;
+    uint32_t elapsed = handoff->ready ? lunaAnimationElapsed(LUNA_ANIM_ARTWORK,now - handoff->readyMs) : 0;
     int progress = elapsed >= ORBIT_COVER_FADE_MS ? 1000 :
         (int)(elapsed * 1000U / ORBIT_COVER_FADE_MS);
     *incomingVisibility = handoff->ready ? progress : 0;
-    uint32_t age = now - handoff->capturedMs;
+    uint32_t age = lunaAnimationElapsed(LUNA_ANIM_ARTWORK,now - handoff->capturedMs);
     int remaining = age <= ORBIT_COVER_HOLD_MS ? 1000 :
         age >= ORBIT_COVER_HOLD_MS + ORBIT_COVER_FADE_MS ? 0 :
         1000 - (int)((age - ORBIT_COVER_HOLD_MS) * 1000U / ORBIT_COVER_FADE_MS);

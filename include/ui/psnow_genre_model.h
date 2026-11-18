@@ -15,7 +15,7 @@ typedef struct {
   PsnowGenreItem items[PSNOW_GENRE_ITEMS];
   int count,selected,fps,profile;
   float ticks,entryProgress,entryAge,entryRotation,ringPhase,ringVelocity;
-  float descriptionAge,selectionAge;
+  float descriptionAge,selectionAge,entryTicks;
   float cubePhase,cubeFrom,cubeTarget,cubeProgress,cubeAge;
 } PsnowGenreModel;
 /* Translated numeric routines of PS Now RingMenuScript, move/fin type 1.

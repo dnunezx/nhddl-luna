@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/handoff.h"
 #include "ui/graphics.h"
@@ -36,6 +37,7 @@ static void presentBlack(int waitForVSync) {
 }
 
 void uiPlayLaunchTransition(void) {
+  if(lunaAnimationInstant(LUNA_ANIM_STARTUP)) {presentBlack(1);presentBlack(1);return;}
   uint32_t start = uiNowMs();
   uint32_t elapsed;
   int bufferFade[2] = {0, 0};
@@ -43,7 +45,7 @@ void uiPlayLaunchTransition(void) {
   // Fade the still library frame in each display buffer. Track its existing
   // opacity so repeated overlays stay linear instead of darkening too fast.
   do {
-    elapsed = uiNowMs() - start;
+    elapsed = lunaAnimationElapsed(LUNA_ANIM_STARTUP,uiNowMs() - start);
     if (elapsed > LAUNCH_LIBRARY_FADE_MS)
       elapsed = LAUNCH_LIBRARY_FADE_MS;
     const int fade = (int)(elapsed * 1000U / LAUNCH_LIBRARY_FADE_MS);
@@ -61,7 +63,7 @@ void uiPlayLaunchTransition(void) {
   // Bring the moving background through black after the library disappears.
   start = uiNowMs();
   do {
-    elapsed = uiNowMs() - start;
+    elapsed = lunaAnimationElapsed(LUNA_ANIM_STARTUP,uiNowMs() - start);
     if (elapsed > LAUNCH_BACKGROUND_IN_MS)
       elapsed = LAUNCH_BACKGROUND_IN_MS;
     gsKit_TexManager_nextFrame(gsGlobal);
@@ -76,7 +78,7 @@ void uiPlayLaunchTransition(void) {
   // Leave the background playing alone before it fades away.
   start = uiNowMs();
   do {
-    elapsed = uiNowMs() - start;
+    elapsed = lunaAnimationElapsed(LUNA_ANIM_STARTUP,uiNowMs() - start);
     gsKit_TexManager_nextFrame(gsGlobal);
     gsKit_set_test(gsGlobal, GS_ZTEST_OFF);
     drawSharedLibraryBackground(uiNowMs());
@@ -86,7 +88,7 @@ void uiPlayLaunchTransition(void) {
 
   start = uiNowMs();
   do {
-    elapsed = uiNowMs() - start;
+    elapsed = lunaAnimationElapsed(LUNA_ANIM_STARTUP,uiNowMs() - start);
     if (elapsed > LAUNCH_FADE_MS)
       elapsed = LAUNCH_FADE_MS;
     gsKit_TexManager_nextFrame(gsGlobal);

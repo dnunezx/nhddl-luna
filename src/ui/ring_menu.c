@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 /* Circular Start menu with authored lettering and effects. */
 #include <math.h>
 #include <stdint.h>
@@ -71,12 +72,21 @@ static void ringStep(RingMenu *menu, uint32_t now) {
   uint32_t elapsed = now-menu->lastMs;
   menu->lastMs = now;
   if (elapsed>250) return;
-  menu->entry = fminf(5000, menu->entry+elapsed);
-  menu->phase += elapsed * 0.0012f;
+  menu->entry = fminf(5000, menu->entry+lunaAnimationStep(LUNA_ANIM_START_ENTRY,elapsed,5000));
+  if(lunaAnimationEffects()>0 && lunaAnimationBlink())menu->phase += elapsed * 0.0012f;
   if (menu->phase>RING_TAU) menu->phase-=RING_TAU;
-  if (menu->closing) menu->exit = fminf(2000, menu->exit+elapsed);
-  ringEffectsStep(menu,elapsed);
-  menu->ticks += elapsed * 0.06f;
+  float previousExit=menu->exit;
+  if (menu->closing) menu->exit = fminf(2000, menu->exit+lunaAnimationStep(LUNA_ANIM_START_EXIT,elapsed,2000));
+  ringEffectsStep(menu,elapsed,lunaAnimationPercent(LUNA_ANIM_START_EXIT)==100?elapsed:menu->exit-previousExit);
+  if(lunaAnimationInstant(LUNA_ANIM_START_MOVE)) {
+    for(int i=0;i<RING_ITEM_COUNT;i++) {
+      menu->angle[i]=menu->from[i]=menu->target[i]=menu->finalTarget[i]=ringSlots[(i-menu->selected+RING_ITEM_COUNT)%RING_ITEM_COUNT];
+      menu->duration[i]=0;menu->stage[i]=0;
+    }
+    menu->moveAge=10000;
+    return;
+  }
+  menu->ticks += lunaAnimationStep(LUNA_ANIM_START_MOVE,elapsed,2000) * 0.06f;
   while(menu->ticks>=1) {
     menu->ticks-=1;
     for (int i=0; i<RING_ITEM_COUNT; ++i) {

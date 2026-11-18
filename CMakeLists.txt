@@ -55,6 +55,7 @@ set(SOURCES
     src/homebrew_transfer.S
 
     # UI
+    src/ui/animation.c
     src/genres.c
     src/ui/genres_menu.c
     src/ui/psnow_genre_model.c

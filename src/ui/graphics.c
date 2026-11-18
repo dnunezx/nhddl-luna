@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 // LUNA 2026
 #include "ui/graphics.h"
 #include "ui/ui.h"
@@ -602,7 +603,7 @@ void drawMenuPromptBar(MenuPromptTransition *state,int left,int top,int right,
     state->started=now;
   } else menuPromptText(state->to.note,sizeof(state->to.note),bar.note);
   state->lastDraw=now;
-  unsigned elapsed=now-state->started;
+  unsigned elapsed=lunaAnimationElapsed(LUNA_ANIM_DIALOG,now-state->started);
   float progress=lunaNavEase(elapsed>=180U?1000:(int)(elapsed*1000U/180U))/1000.0f;
   PromptBar from=menuPromptBar(&state->from),to=menuPromptBar(&state->to);
   if(!from.note&&!to.note) {

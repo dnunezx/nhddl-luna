@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 // Original LUNA code: Danny Nunez (dnunezx) 2026
 #include "ui/navigation.h"
 #include "ui/language.h"
@@ -13,7 +14,7 @@ int lunaNavEntryInputBlocked(int *pending, int viewReady, int controlsHeld) {
 int lunaQuickMenuUpdate(LunaQuickMenu *menu, int held, int controlsHeld,
                         int count, int shortcut, uint32_t now) {
   if (menu->releasePending &&
-      now - menu->releaseStartMs >= QUICK_MENU_CLOSE_DELAY_MS) {
+      now - menu->releaseStartMs >= lunaAnimationDuration(LUNA_ANIM_DIALOG,QUICK_MENU_CLOSE_DELAY_MS)) {
     menu->open = 0;
     menu->releasePending = 0;
   }
@@ -205,7 +206,7 @@ int lunaNavAnimatedOffset(int startOffset, uint32_t startTime, uint32_t duration
 
 uint32_t lunaNavDurationFrames(uint32_t durationMs, int framesPerSecond) {
   uint32_t frames = (uint32_t)(((uint64_t)durationMs * framesPerSecond + 500) / 1000);
-  return frames > 0 ? frames : 1;
+  return lunaAnimationDuration(LUNA_ANIM_LIBRARY_MOVE,frames > 0 ? frames : 1);
 }
 
 int lunaNavClassicGlideFrameOffset(int startOffset, uint32_t elapsedFrames,
@@ -254,6 +255,7 @@ float lunaNavGlideCarry(int start, uint32_t frames, float velocity) {
 // calls their original integer easing, including its quantization and wrap.
 int lunaNavTimedGlideOffset(int start, uint32_t startTime, uint32_t duration,
                                uint32_t now, float velocity) {
+  duration=lunaAnimationDuration(LUNA_ANIM_LIBRARY_MOVE,duration);
   if (velocity == 0.0f)
     return lunaNavAnimatedOffset(start, startTime, duration, now);
   return lunaNavGlideOffset(start, now - startTime, duration, velocity);

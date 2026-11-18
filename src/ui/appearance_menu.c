@@ -18,9 +18,9 @@
 #include <string.h>
 #include <unistd.h>
 
-enum { AP_BACKGROUND,AP_VIEWS,AP_COLORS,AP_EFFECTS,AP_TEXT,AP_SOUND,AP_THEMES,AP_CATEGORY_COUNT };
+enum { AP_BACKGROUND,AP_VIEWS,AP_COLORS,AP_EFFECTS,AP_TEXT,AP_SOUND,AP_THEMES,AP_ANIMATIONS,AP_CATEGORY_COUNT };
 static const char *const categories[]={"Backgrounds","Library Views","Interface Colors",
-  "Background Effects","Text","Ambient Sound","Themes"};
+  "Background Effects","Text","Ambient Sound","Themes","Animations"};
 static const char *const backgrounds[]={"Stars & Cubes","Ambient Orbs","Red Clouds","Midnight Cubes",
   "System Configuration","Neo","Aurora","Ronin","Torch","Tempest","Space Flight","Underground","Static-X","Phantom"};
 static const struct {
@@ -71,6 +71,7 @@ typedef struct {
   const char *message;
   char value[96];
   int rows[AP_CATEGORY_COUNT];
+  int animationEditor,animationRows[2];
   LunaCubePageFocus pageFocus;
 } AppearanceEditor;
 
@@ -95,6 +96,7 @@ static int appearancePreview(AppearanceEditor *s,const LunaAppearance *a) {
   setClassicArtOverlap(a->classicOverlap);setPs1CaseStyle((Ps1CaseStyle)a->ps1CaseStyle);
   setCollectionGameList(a->collectionGameList);ambientSetEnabled(a->ambientSound);
   setCollectionCoverEcho(a->collectionCoverEcho);
+  lunaAnimationApply(&a->animations,uiNowMs());
   if(a->orbsTheme!=old->orbsTheme)setAmbientOrbsTheme((AmbientOrbsTheme)a->orbsTheme,uiNowMs());
   if(a->orbShapes!=old->orbShapes)setAmbientOrbsShapes(a->orbShapes,uiNowMs());
   setAmbientOrbsColor(ORBS_COLOR_PART_ORBS,(AmbientOrbsColor)a->orbsColor);
@@ -103,6 +105,7 @@ static int appearancePreview(AppearanceEditor *s,const LunaAppearance *a) {
   setNeoAppearance(a->neoSpeed,a->neoDensity,a->neoColor);
   s->runtime=*a;return 0;
 }
+#include "appearance_animations.inc"
 static const char *appearanceHubDescription(void *context,int row) {
   AppearanceEditor *s=context;
   if(s->message)return s->message;
@@ -110,10 +113,12 @@ static const char *appearanceHubDescription(void *context,int row) {
     "Preview the background used throughout LUNA.","Choose library views and cover layouts.",
     "Choose the glass tint and Start-menu ring color.","Tune Ambient Orbs, Neo, or Space Flight.",
     "Choose the interface font. Wide menu headings stay unchanged.","Play ambient music while browsing.",
-    "Apply or reset a coordinated background, interface, ring and orb palette."};
+    "Apply or reset a coordinated background, interface, ring and orb palette.",
+    "Choose Cinematic or Instant and customize every launcher animation."};
   return descriptions[row];
 }
 static int appearanceRowCount(AppearanceEditor *s) {
+  if(s->category==AP_ANIMATIONS)return s->animationEditor?LUNA_ANIM_COUNT+4:3;
   if(s->category==AP_THEMES)return 2;
   if(s->category==AP_VIEWS)return UI_VIEW_COUNT+4;
   if(s->category==AP_COLORS)return 4;
@@ -124,6 +129,7 @@ static int appearanceRowCount(AppearanceEditor *s) {
 static const char *appearanceRowLabel(void *context,int row) {
   AppearanceEditor *s=context;
   switch(s->category) {
+    case AP_ANIMATIONS:return appearanceAnimationLabel(s,row);
     case AP_THEMES:return row?"Reset theme":"Theme";
     case AP_BACKGROUND:return "Background";
     case AP_COLORS:return (const char *const[]){"Glass color","Ring color","Menu exterior glow","Menu interior glow"}[row];
@@ -142,6 +148,7 @@ static const char *appearanceRowLabel(void *context,int row) {
 static const char *appearanceRowValue(void *context,int row) {
   AppearanceEditor *s=context;LunaAppearance *a=&s->pending;int value=0;
   switch(s->category) {
+    case AP_ANIMATIONS:return appearanceAnimationValue(s,row);
     case AP_THEMES: {
       if(row)return appearanceThemes[s->theme].name;
       const int theme=appearanceThemeIndex(a);
@@ -181,6 +188,7 @@ static const char *appearanceRowValue(void *context,int row) {
 static const char *appearanceRowDescription(void *context,int row) {
   AppearanceEditor *s=context;
   if(s->message)return s->message;
+  if(s->category==AP_ANIMATIONS)return appearanceAnimationDescription(s,row);
   if(s->category==AP_VIEWS&&row==UI_VIEW_COUNT+3)
     return "Show a blurred copy of the selected cover behind Collections. Off by default.";
   if(s->category==AP_THEMES)return row?
@@ -203,6 +211,7 @@ static const char *appearanceRowDescription(void *context,int row) {
 }
 static void appearanceAdjust(void *context,int row,int direction) {
   AppearanceEditor *s=context;s->message=NULL;
+  if(s->category==AP_ANIMATIONS && !appearanceAnimationCanAdjust(s,row,direction))return;
   if(s->category==AP_THEMES&&row==1&&direction!=0)return;
   if(s->loadError) {
     LunaAppearance recovered;
@@ -215,6 +224,7 @@ static void appearanceAdjust(void *context,int row,int direction) {
   LunaAppearance candidate=s->pending;
   int selectedTheme=s->theme;
   switch(s->category) {
+    case AP_ANIMATIONS:appearanceAnimationAdjust(s,&candidate,row,direction);break;
     case AP_THEMES: {
       if(!row) {
         int theme=appearanceThemeIndex(&candidate);

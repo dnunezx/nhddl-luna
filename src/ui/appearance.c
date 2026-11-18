@@ -14,9 +14,9 @@
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h>
 
-#define APPEARANCE_VERSION 8U
-#define RECORD_LIMIT 2048
-#define RECORD_WRITE_SIZE 1024
+#define APPEARANCE_VERSION 11U
+#define RECORD_LIMIT 4096
+#define RECORD_WRITE_SIZE 2048
 static const char *const recordNames[] = {
   "/appearance.cfg", "/appearance.cfg.tmp", "/appearance.cfg.bak"
 };
@@ -35,6 +35,10 @@ static const char *const ringColors[] = {"original","cyan","blue","violet","rose
 static const char *const ringInteriorColors[] = {"original","cyan","blue","violet","rose","green","white","crimson","dark"};
 static const char *const spaceSpeeds[] = {"0","1","2","3","4","5","6","7","8"};
 static const char *const spaceDepths[] = {"0","1","2","3","4"};
+static const char *const animationModes[] = {"cinematic","instant"};
+static const char *const animationTimings[] = {"instant","25","50","75","100","150","200"};
+static const char *const animationBackgrounds[] = {"off","slow","normal","25"};
+static const char *const animationEffects[] = {"off","reduced","full","25"};
 static const char *const neoSpeeds[] = {"slow","normal","fast"};
 static const char *const neoDensities[] = {"sparse","normal","dense"};
 static const char *const neoColors[] = {"green","cyan","blue","violet","red","amber","white"};
@@ -66,6 +70,7 @@ typedef struct {
   int mask;
 } AppearanceField;
 #define FIELD(member, names, mask) {#member, offsetof(LunaAppearance, member), names, sizeof(names)/sizeof(*names), mask}
+#define ANIM_FIELD(key,member,names) {key,offsetof(LunaAppearance,member),names,sizeof(names)/sizeof(*names),0}
 static const AppearanceField fields[] = {
   FIELD(background, backgrounds, 0), FIELD(glassColor, glasses, 0),
   FIELD(font, fonts, 0), FIELD(ambientSound, switches, 0),
@@ -77,9 +82,39 @@ static const AppearanceField fields[] = {
   FIELD(spaceSpeed, spaceSpeeds, 0), FIELD(spaceDepth, spaceDepths, 0),
   FIELD(ringEffectsColor, ringColors, 0), FIELD(ringOrbInteriorColor, ringInteriorColors, 0),
   FIELD(neoSpeed, neoSpeeds, 0), FIELD(neoDensity, neoDensities, 0), FIELD(neoColor, neoColors, 0),
-  FIELD(collectionCoverEcho, switches, 0)
+  FIELD(collectionCoverEcho, switches, 0),
+  ANIM_FIELD("animation_mode",animations.mode,animationModes),
+  ANIM_FIELD("cinematic_start_entry",animations.profiles[0].timing[0],animationTimings),
+  ANIM_FIELD("cinematic_start_exit",animations.profiles[0].timing[1],animationTimings),
+  ANIM_FIELD("cinematic_start_move",animations.profiles[0].timing[2],animationTimings),
+  ANIM_FIELD("cinematic_menu_entry",animations.profiles[0].timing[3],animationTimings),
+  ANIM_FIELD("cinematic_menu_exit",animations.profiles[0].timing[4],animationTimings),
+  ANIM_FIELD("cinematic_menu_move",animations.profiles[0].timing[5],animationTimings),
+  ANIM_FIELD("cinematic_library_move",animations.profiles[0].timing[6],animationTimings),
+  ANIM_FIELD("cinematic_view_change",animations.profiles[0].timing[7],animationTimings),
+  ANIM_FIELD("cinematic_artwork",animations.profiles[0].timing[8],animationTimings),
+  ANIM_FIELD("cinematic_dialogs",animations.profiles[0].timing[9],animationTimings),
+  ANIM_FIELD("cinematic_startup",animations.profiles[0].timing[10],animationTimings),
+  ANIM_FIELD("cinematic_background",animations.profiles[0].background,animationBackgrounds),
+  ANIM_FIELD("cinematic_effects",animations.profiles[0].effects,animationEffects),
+  ANIM_FIELD("cinematic_blink",animations.profiles[0].blink,switches),
+  ANIM_FIELD("instant_start_entry",animations.profiles[1].timing[0],animationTimings),
+  ANIM_FIELD("instant_start_exit",animations.profiles[1].timing[1],animationTimings),
+  ANIM_FIELD("instant_start_move",animations.profiles[1].timing[2],animationTimings),
+  ANIM_FIELD("instant_menu_entry",animations.profiles[1].timing[3],animationTimings),
+  ANIM_FIELD("instant_menu_exit",animations.profiles[1].timing[4],animationTimings),
+  ANIM_FIELD("instant_menu_move",animations.profiles[1].timing[5],animationTimings),
+  ANIM_FIELD("instant_library_move",animations.profiles[1].timing[6],animationTimings),
+  ANIM_FIELD("instant_view_change",animations.profiles[1].timing[7],animationTimings),
+  ANIM_FIELD("instant_artwork",animations.profiles[1].timing[8],animationTimings),
+  ANIM_FIELD("instant_dialogs",animations.profiles[1].timing[9],animationTimings),
+  ANIM_FIELD("instant_startup",animations.profiles[1].timing[10],animationTimings),
+  ANIM_FIELD("instant_background",animations.profiles[1].background,animationBackgrounds),
+  ANIM_FIELD("instant_effects",animations.profiles[1].effects,animationEffects),
+  ANIM_FIELD("instant_blink",animations.profiles[1].blink,switches),
 };
 #define FIELD_COUNT (sizeof(fields)/sizeof(*fields))
+_Static_assert(FIELD_COUNT<64,"Appearance field mask capacity");
 typedef struct {
   LunaAppearance settings;
   uint32_t generation;
@@ -204,6 +239,7 @@ static int readRecord(const char *path, AppearanceRecord *record) {
   *footer = '\0';
   memset(record, 0, sizeof(*record));
   // Older records retain Space Flight's original speed and depth defaults.
+  lunaAnimationDefaults(&record->settings.animations);
   record->settings.spaceSpeed=4;
   record->settings.spaceDepth=2;
   record->settings.neoSpeed=NEO_SPEED_NORMAL;
@@ -216,7 +252,7 @@ static int readRecord(const char *path, AppearanceRecord *record) {
   if (strncmp(line, "generation=", 11) || parseUnsigned(line + 11, &record->generation) ||
       !record->generation) return -EINVAL;
   line = lineEnd + 1;
-  uint32_t seen = 0;
+  uint64_t seen = 0;
   while (*line) {
     lineEnd = strchr(line, '\n');
     if (lineEnd) *lineEnd = '\0';
@@ -225,15 +261,28 @@ static int readRecord(const char *path, AppearanceRecord *record) {
     *equals++ = '\0';
     unsigned i;
     for (i = 0; i < FIELD_COUNT; i++) if (!strcmp(line, fields[i].key)) break;
-    if (i == FIELD_COUNT || (seen & (1U << i)) ||
+    if (i == FIELD_COUNT || (seen & (UINT64_C(1) << i)) ||
         parseField(&fields[i], equals, fieldValue(&record->settings, &fields[i]))) return -EINVAL;
-    seen |= 1U << i;
+    seen |= UINT64_C(1) << i;
     if (!lineEnd) break;
     line = lineEnd + 1;
   }
   // Appended fields retain their defaults, including the cover echo being Off.
-  unsigned count=FIELD_COUNT-(version<8U?1:0)-(version<7U?3:0)-(version<6U?1:0)-(version<5U?1:0)-(version==1U?3:version==2U?2:0);
-  uint32_t required=(1U << count)-1U;
+  unsigned count=FIELD_COUNT-(version<9U?29:0)-(version<8U?1:0)-(version<7U?3:0)-(version<6U?1:0)-(version<5U?1:0)-(version==1U?3:version==2U?2:0);
+  uint64_t required=(UINT64_C(1) << count)-1U;
+  if(version>=9U && version<11U) {
+    // Older Instant profiles can retain Off values alongside an adjusted
+    // control. Upgrade those old zeros without losing nonzero adjustments.
+    LunaAnimations defaults;
+    lunaAnimationDefaults(&defaults);
+    LunaAnimationProfile *instant=&record->settings.animations.profiles[LUNA_ANIMATION_INSTANT];
+    const LunaAnimationProfile *preset=&defaults.profiles[LUNA_ANIMATION_INSTANT];
+    for(unsigned i=0;i<LUNA_ANIM_COUNT;i++)
+      if(!instant->timing[i])instant->timing[i]=preset->timing[i];
+    if(!instant->background)instant->background=preset->background;
+    if(!instant->effects)instant->effects=preset->effects;
+    if(!instant->blink)instant->blink=preset->blink;
+  }
   return seen == required && validSettings(&record->settings) ? 0 : -EINVAL;
 }
 

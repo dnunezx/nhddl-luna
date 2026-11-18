@@ -54,6 +54,7 @@ typedef struct {
   int (*input)(void *context, int buttons);
   void (*footer)(void *context, float pageProgress);
   int gameOptionsLogo;
+  int showAllCategories;
 } LunaCubeHub;
 // One crystal per row, up to seven. Returns the chosen row, or -1 for Back.
 int uiCubeHubLoop(int *selected, const char *status, const LunaCubeHub *hub);

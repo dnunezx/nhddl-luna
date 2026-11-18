@@ -2,6 +2,7 @@
 #define LUNA_UI_APPEARANCE_H
 
 #include "target.h"
+#include "ui/animation.h"
 #include <stdint.h>
 
 // Storage values have explicit names; enum ordinals are never serialized.
@@ -15,6 +16,7 @@ typedef struct {
   uint32_t ringOrbInteriorColor;
   uint32_t neoSpeed, neoDensity, neoColor;
   uint32_t collectionCoverEcho;
+  LunaAnimations animations;
 } LunaAppearance;
 
 // Always fills settings, including legacy/default fallback on read errors.

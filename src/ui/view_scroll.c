@@ -1,3 +1,4 @@
+#include "ui/animation.h"
 // LUNA visual rendering extracted from gui.c.
 #include "ui/view_internal.h"
 #include "ui/language.h"
@@ -1558,6 +1559,7 @@ static void drawBiosSystemConfiguration(uint32_t frameNowMs) {
 static int optionsBackgroundDrawn;
 
 static void drawLibraryBackground(uint32_t frameNowMs, int orbit) {
+  frameNowMs=lunaAnimationNow(LUNA_ANIM_CLOCK_BACKGROUND,frameNowMs);
   if (optionsBackgroundDrawn) return;
 #ifdef LUNA_CAMERA_ANIMATIONS
   lunaCameraSceneBeforeBackground();
