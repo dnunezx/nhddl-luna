@@ -67,7 +67,16 @@ static RingRibbonVertex ringRibbonVertex(RingVec center,RingVec u,RingVec v,floa
   return (RingRibbonVertex){inner,outer,coverage,1};
 }
 static void ringRibbonDraw(RingVec center,RingVec u,RingVec v,float diameter,float opacity,int bright,GSTEXTURE *texture) {
-  if(opacity<=0 || diameter<=0 || !bindTextureSafe(gsGlobal,texture)) return;
+  if(opacity<=0 || diameter<=0) return;
+  /* Overlapping exit ripples can outgrow the one-shot command buffer.
+   * Submit complete ribbons in order, reserving space for the next ribbon
+   * and following UI. This keeps every segment without changing frames. */
+  GSQUEUE *queue=gsGlobal->CurQueue;
+  if(queue==gsGlobal->Os_Queue &&
+      (uintptr_t)queue->pool_cur+RING_RIBBON_SEGMENTS*256U+128U*1024U >=
+          (uintptr_t)queue->pool_max[queue->dbuf])
+    gsKit_queue_exec(gsGlobal);
+  if(!bindTextureSafe(gsGlobal,texture)) return;
   /* The source textures have a narrow transparent margin around their rim. */
   float radius=diameter*(bright?.477f:.471f);
   float halfWidth=diameter*(bright?.028f:.030f);
