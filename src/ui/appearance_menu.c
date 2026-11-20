@@ -21,7 +21,7 @@
 enum { AP_BACKGROUND,AP_VIEWS,AP_COLORS,AP_EFFECTS,AP_TEXT,AP_SOUND,AP_THEMES,AP_ANIMATIONS,AP_CATEGORY_COUNT };
 static const char *const categories[]={"Backgrounds","Library Views","Interface Colors",
   "Background Effects","Text","Ambient Sound","Themes","Animations"};
-static const char *const backgrounds[]={"Stars & Cubes","Ambient Orbs","Red Clouds","Midnight Cubes",
+static const char *const backgrounds[]={"Stars & Cubes","Ambient Orbs","Red Clouds",
   "System Configuration","Neo","Aurora","Ronin","Torch","Tempest","Space Flight","Underground","Static-X","Phantom"};
 static const struct {
   const char *name;

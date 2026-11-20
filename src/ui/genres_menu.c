@@ -126,6 +126,21 @@ static void centerText(float cx,float cy,float nativeSize,uint64_t color,const c
   if(y<0 || y>=gsGlobal->Height || x>=gsGlobal->Width || x+width<0)return;
   drawTextLineScaledCrisp(x,y,gsGlobal->Width-20,6,scale,color,text);
 }
+static void drawGenreCount(const GenreMenu *m,int count) {
+  char detail[64];
+  snprintf(detail,sizeof(detail),lunaText(count==1?"%d game":"%d games"),count);
+  const int layout=setAuthoredTextLayout(0);
+  float width=getLineDrawWidth(detail);
+  float sx=gsGlobal->Width/640.0f,sy=gsGlobal->Height/480.0f;
+  float cx=320-10*500.0f/750,cy=240+120*500.0f/750;
+  float age=m->model.descriptionAge;
+  /* Match native menu descriptions: no glyph enlargement or added padding. */
+  drawTextLineNative((int)roundf(cx*sx-width*.5f),
+      (int)roundf(cy*sy-getFontLineHeight()*.5f),gsGlobal->Width-20,6,
+      faded(HeaderTextColor,psnowDescriptionAlpha(age)),detail);
+  setAuthoredTextLayout(layout);
+  psnowDescriptionDraw(&m->model,cx,cy,fmaxf(90,(width*.5f+14)/sx),age);
+}
 static void drawGames(GenreMenu *m) {
   if(!m->games->total) {
     centerText(320,240,24,HeaderTextColor,lunaText("No games assigned to this genre."));return;
@@ -195,18 +210,12 @@ static void draw(GenreMenu *m) {
     float scale=500*psnowGenreProjectionScale(&m->model)/depth;
     float cx=320+p.x*scale,cy=240-p.y*scale;
     const char *label=lunaText(lunaGenreName(m->genres[i]));
-    char detail[64];
-    snprintf(detail,sizeof(detail),lunaText(m->counts[i]==1?"%d game":"%d games"),m->counts[i]);
     /* Original front-facing labels retain their projected anchors. Fit only
      * viewport edges and the library footer to the active output/font. */
     uint64_t color=i==m->model.selected?GS_SETREG_RGBA(255,255,0,128):FontMainColor;
     if(!genreLetteringDraw(m->genres[i],cx,cy,28,faded(color,alpha)))
       centerText(cx,cy,28,faded(color,alpha),label);
-    if(i==m->model.selected) {
-      float x=320-10*500.0f/750,y=240+120*500.0f/750,age=m->model.descriptionAge;
-      centerText(x,y,24,faded(HeaderTextColor,psnowDescriptionAlpha(age)),detail);
-      psnowDescriptionDraw(&m->model,x,y,90,age);
-    }
+    if(i==m->model.selected)drawGenreCount(m,m->counts[i]);
   }
 footer:
   if(m->inGames) {

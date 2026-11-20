@@ -33,8 +33,9 @@ typedef struct {
 // If targetFileName is NULL, will return path to config directory
 int buildConfigFilePath(char *targetPath, size_t targetSize, const char *targetMountpoint,
                         const char *targetFileName);
-// Commit a completed temporary config file, with a copy fallback for filesystems
-// whose rename operation fails even after the destination is removed.
+// Returns true when the storage driver confirms a config file is absent.
+int configFileMissing(const char *path);
+// Copy a completed temporary config file into place before removing the temporary copy.
 int commitConfigFile(const char *tempPath, const char *path);
 int buildLegacyConfigFilePath(char *targetPath, size_t targetSize, const char *targetMountpoint,
                               const char *targetFileName);

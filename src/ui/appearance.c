@@ -11,8 +11,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#define NEWLIB_PORT_AWARE
-#include <fileXio_rpc.h>
 
 #define APPEARANCE_VERSION 11U
 #define RECORD_LIMIT 4096
@@ -21,7 +19,7 @@ static const char *const recordNames[] = {
   "/appearance.cfg", "/appearance.cfg.tmp", "/appearance.cfg.bak"
 };
 static const char *const backgrounds[] = {
-  "stars", "orbs", "red-clouds", "midnight-cubes", "system-config", "neo",
+  "stars", "orbs", "red-clouds", "system-config", "neo",
   "aurora", "ronin", "torch", "tempest", "space-flight", "underground", "static-x", "phantom"
 };
 static const char *const glasses[] = {"original", "white-gray", "black", "cyber", "underground", "static-x", "phantom"};
@@ -160,7 +158,8 @@ static int parseUnsigned(const char *text, uint32_t *value) {
 static int parseField(const AppearanceField *field, char *value, uint32_t *out) {
   *out = 0;
   // Retired backgrounds fall back without discarding the other preferences.
-  if (field->offset == offsetof(LunaAppearance, background) && !strcmp(value, "gridrunner")) {
+  if (field->offset == offsetof(LunaAppearance, background) &&
+      (!strcmp(value, "gridrunner") || !strcmp(value, "midnight-cubes"))) {
     *out = LIBRARY_BACKGROUND_STARS;
     return 0;
   }
@@ -197,21 +196,9 @@ static int validSettings(const LunaAppearance *settings) {
   return 1;
 }
 
-static int recordMissing(const char *path) {
-  // BDM FatFs exposes negated FRESULTs through the PS2 file API. NO_FILE
-  // and NO_PATH are 4/5; its 2 is an internal error, not POSIX ENOENT.
-  if (!strncmp(path, "mass", 4) && path[4] >= '0' && path[4] <= '9' && path[5] == ':') {
-    iox_stat_t info;
-    int result = fileXioGetStat(path, &info);
-    return result == -4 || result == -5;
-  }
-  struct stat info;
-  return stat(path, &info) < 0 && errno == ENOENT;
-}
-
 static int readRecord(const char *path, AppearanceRecord *record) {
   FILE *file = fopen(path, "rb");
-  if (!file) return recordMissing(path) ? -ENOENT : -EIO;
+  if (!file) return configFileMissing(path) ? -ENOENT : -EIO;
   char bytes[RECORD_LIMIT + 1];
   size_t length = fread(bytes, 1, RECORD_LIMIT, file);
   int bad = ferror(file), extra = fgetc(file);
@@ -372,7 +359,7 @@ static int writeRecord(const char *path, const AppearanceRecord *record,
   struct stat info;
   if (!stat(path, &info) && info.st_size > length && remove(path)) return -EIO;
   FILE *file = fopen(path, "r+b");
-  if (!file && recordMissing(path)) file = fopen(path, "wb");
+  if (!file && configFileMissing(path)) file = fopen(path, "wb");
   if (!file) return -EIO;
   int result = fwrite(bytes, 1, (size_t)length, file) == (size_t)length ? 0 : -EIO;
   if (fclose(file)) result = -EIO;

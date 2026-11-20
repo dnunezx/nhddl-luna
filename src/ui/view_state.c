@@ -257,8 +257,6 @@ static LibraryBackground legacyLibraryBackground(Target *target) {
       return LIBRARY_BACKGROUND_ORBS;
     if (!strcmp(value, "red-clouds") || !strcmp(value, "tunnel"))
       return LIBRARY_BACKGROUND_RED_CLOUDS;
-    if (!strcmp(value, "midnight-cubes"))
-      return LIBRARY_BACKGROUND_MIDNIGHT_CUBES;
     if (!strcmp(value, "system-config"))
       return LIBRARY_BACKGROUND_SYSTEM_CONFIG;
     if (!strcmp(value, "neo"))

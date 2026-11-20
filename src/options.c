@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #define NEWLIB_PORT_AWARE
@@ -61,6 +62,47 @@ int buildLegacyConfigFilePath(char *targetPath, size_t targetSize, const char *t
                               const char *targetFileName) {
   return buildConfigFilePathAtBase(targetPath, targetSize, targetMountpoint,
                                    LEGACY_BASE_CONFIG_PATH, targetFileName);
+}
+
+static int mmcePathMissing(const char *path) {
+  const char *name = strrchr(path, '/');
+  if (!name || !name[1] || name - path >= PATH_MAX)
+    return 0;
+  char parent[PATH_MAX];
+  size_t length = (size_t)(name - path);
+  memcpy(parent, path, length);
+  parent[length] = '\0';
+
+  int directory = fileXioDopen(parent);
+  if (directory < 0)
+    return directory == -ENOENT || (directory == -1 && mmcePathMissing(parent));
+  iox_dirent_t entry;
+  int result;
+  while ((result = fileXioDread(directory, &entry)) > 0) {
+    if (!strcasecmp(entry.name, name + 1))
+      break;
+  }
+  return fileXioDclose(directory) >= 0 && result == 0;
+}
+
+int configFileMissing(const char *path) {
+  iox_stat_t info;
+  // BDM exposes raw FatFs errors. PS2SDK's stat wrapper can also obscure the
+  // UDPFS server's distinction between a missing file and a storage error.
+  if (!strncmp(path, "mass", 4) && path[4] >= '0' && path[4] <= '9' && path[5] == ':') {
+    int result = fileXioGetStat(path, &info);
+    return result == -4 || result == -5;
+  }
+  if (!strncmp(path, "udpfs0:", 7))
+    return fileXioGetStat(path, &info) == -ENOENT;
+  if (!strncmp(path, "mmce0:", 6) || !strncmp(path, "mmce1:", 6)) {
+    int result = fileXioGetStat(path, &info);
+    // MMCE can return the same -1 for a missing file and a device error.
+    // Require a complete directory listing before treating the path as absent.
+    return result == -ENOENT || (result == -1 && mmcePathMissing(path));
+  }
+  struct stat posixInfo;
+  return stat(path, &posixInfo) < 0 && errno == ENOENT;
 }
 
 static int readAll(int fd, void *buffer, size_t length) {

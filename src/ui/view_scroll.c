@@ -304,15 +304,20 @@ static int loadBiosConfigTextures(void) {
 // OSDSYS carries the original 16-face rod model in its compressed .data.
 // Locate its scene descriptor by face count and the three adjacent arrays,
 // since their absolute addresses vary between BIOS versions.
-static int findBiosRodGeometry(const unsigned char *image, uint32_t imageSize) {
-  const uint32_t base = 0x200000U;
+static int findBiosRodGeometry(const unsigned char *image, uint32_t imageSize,
+                               uint32_t base) {
+  const uint32_t geometrySize = sizeof(configRodVerts) + sizeof(configRodUvs) +
+                                sizeof(configRodNormals);
+  if (imageSize < geometrySize)
+    return -1;
   for (uint32_t i = 0; i + 20 < imageSize; i += 4) {
     if (tunnelReadLE32(image + i) != 16)
       continue;
     const uint32_t verts = tunnelReadLE32(image + i + 4);
     const uint32_t normals = tunnelReadLE32(image + i + 8);
     const uint32_t uvs = tunnelReadLE32(image + i + 12);
-    if (verts < base || uvs != verts + sizeof(configRodVerts) ||
+    if (verts < base || verts - base > imageSize - geometrySize ||
+        uvs != verts + sizeof(configRodVerts) ||
         normals != uvs + sizeof(configRodUvs) ||
         normals - base > imageSize - sizeof(configRodNormals))
       continue;
@@ -324,6 +329,80 @@ static int findBiosRodGeometry(const unsigned char *image, uint32_t imageSize) {
       return 0;
   }
   return -1;
+}
+
+static int expandBiosRodGeometry(FILE *rom, long offset, uint32_t size,
+                                  uint32_t outputSize) {
+  // Keep the maximum 16 KiB back-reference history plus a fresh 16 KiB page.
+  // The descriptor and its adjacent geometry fit in the retained overlap.
+  // Loading after artwork is resident must not need a full OSDSYS image and
+  // another allocation for its compressed input (over a megabyte together).
+  enum { HISTORY = 16 * 1024, WINDOW = 2 * HISTORY };
+  unsigned char header[4];
+  if (size < 8 || size > 1024 * 1024 || fseek(rom, offset, SEEK_SET) ||
+      fread(header, 1, sizeof(header), rom) != sizeof(header) ||
+      tunnelReadLE32(header) != outputSize)
+    return -1;
+  unsigned char *window = malloc(WINDOW);
+  if (window == NULL)
+    return -1;
+  int result = -1, found = 0;
+  uint32_t position = 4, produced = 0, used = 0, base = 0x200000U;
+  uint32_t descriptor = 0;
+  int flagsLeft = 0, shift = 0, backMask = 0;
+  while (produced < outputSize) {
+    if (!flagsLeft) {
+      unsigned char flags[4];
+      if (size - position < sizeof(flags) ||
+          fread(flags, 1, sizeof(flags), rom) != sizeof(flags))
+        goto done;
+      descriptor = (uint32_t)flags[0] << 24 | (uint32_t)flags[1] << 16 |
+                   (uint32_t)flags[2] << 8 | flags[3];
+      position += sizeof(flags);
+      const int mode = descriptor & 3;
+      shift = 14 - mode;
+      backMask = 0x3fff >> mode;
+      flagsLeft = 30;
+    }
+    if (position >= size)
+      goto done;
+    const int value = fgetc(rom);
+    if (value == EOF)
+      goto done;
+    position++;
+    uint32_t back = 0, count = 1;
+    if (descriptor & 0x80000000U) {
+      if (position >= size)
+        goto done;
+      const int low = fgetc(rom);
+      if (low == EOF)
+        goto done;
+      position++;
+      const int code = (value << 8) | low;
+      back = 1 + (code & backMask);
+      count = 3 + (code >> shift);
+      if (back > produced || count > outputSize - produced)
+        goto done;
+    }
+    while (count--) {
+      window[used] = back ? window[used - back] : value;
+      used++;
+      produced++;
+      if (used == WINDOW) {
+        if (!found && !findBiosRodGeometry(window, used, base))
+          found = 1;
+        memmove(window, window + HISTORY, HISTORY);
+        used = HISTORY;
+        base += HISTORY;
+      }
+    }
+    descriptor <<= 1;
+    flagsLeft--;
+  }
+  result = found ? 0 : findBiosRodGeometry(window, used, base);
+done:
+  free(window);
+  return result;
 }
 
 static int loadBiosConfigGeometry(void) {
@@ -345,17 +424,10 @@ static int loadBiosConfigGeometry(void) {
       const uint32_t expandedSize = tunnelReadLE32(header);
       if (expandedSize < 0x80000 || expandedSize > 0x180000)
         continue;
-      unsigned char *expanded = malloc(expandedSize);
-      if (expanded == NULL)
-        break;
-      if (!tunnelExpandResource(rom, offset, fileSize - offset,
-                                expanded, expandedSize) &&
-          !findBiosRodGeometry(expanded, expandedSize)) {
+      if (!expandBiosRodGeometry(rom, offset, fileSize - offset, expandedSize)) {
         result = 0;
-        free(expanded);
         break;
       }
-      free(expanded);
     }
   }
   fclose(rom);
@@ -371,8 +443,6 @@ int setLibraryBackground(LibraryBackground background) {
     return -1;
   if (background == LIBRARY_BACKGROUND_RED_CLOUDS &&
       loadBiosFogTexture())
-    return -1;
-  if (background == LIBRARY_BACKGROUND_MIDNIGHT_CUBES && loadBiosCubeTexture())
     return -1;
   if (background == LIBRARY_BACKGROUND_SYSTEM_CONFIG &&
       (!configCaptureReady || loadBiosConfigTextures() || loadBiosConfigGeometry() ||
@@ -952,31 +1022,6 @@ static void drawRedClouds(uint32_t frameNowMs) {
   drawOrbitalDisc(centerX, centerY, width * 13 / 100, 0,
                   GS_SETREG_RGBA(0xD0, 0x5A, 0x64, 0x20),
                   GS_SETREG_RGBA(0x78, 0x1A, 0x28, 0));
-}
-
-static void drawMidnightCubes(uint32_t frameNowMs) {
-  const int width = gsGlobal->Width;
-  const int height = gsGlobal->Height;
-  const uint32_t elapsedMs = glassElapsedMs(frameNowMs);
-  gsKit_prim_sprite(gsGlobal, 0, 0, width, height, 0,
-                    GS_SETREG_RGBA(0x02, 0x04, 0x0B, 0x80));
-  drawOrbitalDisc(width * 34 / 100, height * 49 / 100, width * 43 / 100, 0,
-                  GS_SETREG_RGBA(0x15, 0x35, 0x53, 0x28),
-                  GS_SETREG_RGBA(0x02, 0x08, 0x15, 0));
-
-  // Floating cubes keep the BIOS bump texture from the original trial.
-  drawGlassCube(width * 0.17f,
-                height * 0.33f + orbWave(glassPhase(elapsedMs, 13000, 0)) / 10.0f,
-                23, glassPhase(elapsedMs, 16000, 0), 0x26, 0xAE, 0xDC, 0, &bumpTexture, 0);
-  drawGlassCube(width * 0.36f,
-                height * 0.18f + orbWave(glassPhase(elapsedMs, 17000, 2300)) / 12.0f,
-                18, glassPhase(elapsedMs, 22000, 5500), 0x43, 0xA0, 0xDB, 0, &bumpTexture, 0);
-  drawGlassCube(width * 0.31f,
-                height * 0.67f + orbWave(glassPhase(elapsedMs, 15000, 5900)) / 11.0f,
-                15, glassPhase(elapsedMs, 19000, 11000), 0x7E, 0x75, 0xB9, 0, &bumpTexture, 0);
-  drawGlassCube(width * 0.47f,
-                height * 0.51f + orbWave(glassPhase(elapsedMs, 14000, 8100)) / 13.0f,
-                11, glassPhase(elapsedMs, 26000, 17000), 0x68, 0x83, 0xB8, 0, &bumpTexture, 0);
 }
 
 typedef struct {
@@ -1581,8 +1626,6 @@ static void drawLibraryBackground(uint32_t frameNowMs, int orbit) {
     drawNeoBackground(frameNowMs);
   else if (libraryBackground == LIBRARY_BACKGROUND_RED_CLOUDS)
     drawRedClouds(frameNowMs);
-  else if (libraryBackground == LIBRARY_BACKGROUND_MIDNIGHT_CUBES)
-    drawMidnightCubes(frameNowMs);
   else if (libraryBackground == LIBRARY_BACKGROUND_SYSTEM_CONFIG)
     drawBiosSystemConfiguration(frameNowMs);
   else if (!drawAmbientOrbsBackground(frameNowMs))
