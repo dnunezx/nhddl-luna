@@ -104,7 +104,7 @@ static struct {
   const int *trayCollapsed;
   const int *move;
 } fileManagerScene;
-static MenuPromptTransition fileFooterTransitions[6];
+static MenuPromptTransition fileFooterTransitions[5];
 
 static void drawFileManagerContents(const BrowserRoot *roots, int rootCount,
     const BrowserPane *browser, const CopyQueue *queue, int trayCollapsed,
@@ -618,10 +618,45 @@ static int validFileName(const char *name) {
          strpbrk(name, "/\\:") == NULL;
 }
 
+static const char *const keyboardRows[] = {
+    "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM", " ._-"
+};
+enum {
+  KEYBOARD_COLUMNS = 10,
+  KEYBOARD_ROWS = sizeof(keyboardRows) / sizeof(*keyboardRows),
+  KEYBOARD_LETTER_ROW = 1,
+  KEYBOARD_SPACE_WIDTH = 5
+};
+
+// Measure the stagger in half-columns so navigation and drawing use the same centers.
+static int keyboardKeyWidth(int row, int key) {
+  return keyboardRows[row][key] == ' ' ? KEYBOARD_SPACE_WIDTH : 1;
+}
+
+static int keyboardKeyLeft(int row, int key) {
+  int length = (int)strlen(keyboardRows[row]);
+  int extra = row == KEYBOARD_ROWS - 1 ? KEYBOARD_SPACE_WIDTH - 1 : 0;
+  return KEYBOARD_COLUMNS - length - extra + 2 * (key + (key ? extra : 0));
+}
+
+static int keyboardKeyCenter(int row, int key) {
+  return keyboardKeyLeft(row, key) + keyboardKeyWidth(row, key);
+}
+
+static int keyboardClosestKey(int row, int center) {
+  int closest = 0;
+  for (int key = 1; keyboardRows[row][key]; key++) {
+    if (abs(keyboardKeyCenter(row, key) - center) <
+        abs(keyboardKeyCenter(row, closest) - center))
+      closest = key;
+  }
+  return closest;
+}
+
 static int editBrowserText(const char *title, char *name, size_t capacity,
                            size_t maxLength, int allowEmpty) {
-  static const char keys[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._- ";
-  int selected = 0;
+  int selectedRow = KEYBOARD_LETTER_ROW, selectedKey = 0;
+  int selectedCenter = keyboardKeyCenter(selectedRow, selectedKey);
   int lowerCase = 0;
   char message[96] = "";
   if (maxLength >= capacity)
@@ -643,41 +678,53 @@ static int editBrowserText(const char *title, char *name, size_t capacity,
           .count=-1,.libraryFooter=1};
       uiCubeHubPageDraw(&page,0,&focus);
     } else drawFileManagerModal(left, top, right, bottom, title);
-    int fieldTop = top + line + 32;
+    int fieldTop = top + (browserPageSection ? 12 : line + 32);
     gsKit_prim_sprite(gsGlobal, left + 14, fieldTop, right - 14,
                       fieldTop + line + 12, 14,
                       glassPresetColor(0x06, 0x12, 0x22, 0x70));
     drawTextWindow(left + 22, fieldTop + 6, right - 22,
                    fieldTop + 6 + line, 15, FontMainColor, ALIGN_LEFT, visible);
     int gridTop = fieldTop + line + 26;
-    int step = (bottom - gridTop - 3 * line - 24) / 4;
-    int cell = (right - left - 28) / 10;
-    for (int index = 0; index < 40; index++) {
-      int x = left + 14 + (index % 10) * cell;
-      int y = gridTop + (index / 10) * step;
-      char label[3] = {keys[index], '\0', '\0'};
-      if (label[0] == ' ') snprintf(label, sizeof(label), "SP");
-      else if (lowerCase && label[0] >= 'A' && label[0] <= 'Z')
-        label[0] += 'a' - 'A';
-      if (index == selected)
-        drawFileManagerSelection(x + 1, y, x + cell - 3, line, 1);
-      drawTextWindow(x, y, x + cell, y + line, 15,
-                     index == selected ? ColorSelectedText : FontMainColor,
-                     ALIGN_CENTER, label);
+    int editTop = bottom - (browserPageSection ? line + 12 : 2 * line + 16);
+    int messageTop = editTop - line - 4;
+    int step = (messageTop - 4 - gridTop - line) / (KEYBOARD_ROWS - 1);
+    int cell = (right - left - 28) / KEYBOARD_COLUMNS;
+    for (int row = 0; row < KEYBOARD_ROWS; row++) {
+      int y = gridTop + row * step;
+      for (int key = 0; keyboardRows[row][key]; key++) {
+        int x = left + 14 + keyboardKeyLeft(row, key) * cell / 2;
+        int end = x + keyboardKeyWidth(row, key) * cell;
+        int selected = row == selectedRow && key == selectedKey;
+        char label[2] = {keyboardRows[row][key], '\0'};
+        if (lowerCase && label[0] >= 'A' && label[0] <= 'Z')
+          label[0] += 'a' - 'A';
+        if (label[0] == ' ')
+          gsKit_prim_sprite(gsGlobal, x + 1, y, end - 3, y + line, 14,
+                            glassPresetColor(0x06, 0x12, 0x22, 0x70));
+        if (selected)
+          drawFileManagerSelection(x + 1, y, end - 3, line, 1);
+        drawTextWindow(x, y, end, y + line, 15,
+                       selected ? ColorSelectedText : FontMainColor, ALIGN_CENTER,
+                       label[0] == ' ' ? lunaText("Space") : label);
+      }
     }
     char fitted[128];
     fileManagerFitText(message, right - left - 28, fitted, sizeof(fitted), 0);
-    drawTextWindow(left + 14, bottom - 3 * line - 20, right - 14,
-                   bottom - 2 * line - 20, 15, ErrorTextColor, ALIGN_LEFT, fitted);
+    drawTextWindow(left + 14, messageTop, right - 14, messageTop + line, 15,
+                   ErrorTextColor, ALIGN_LEFT, fitted);
     const ButtonPrompt edit[] = {
         {ICON_CROSS, lunaText("Type")}, {ICON_SQUARE, lunaText("Space")},
         {ICON_TRIANGLE, lunaText("Delete")}, {ICON_R1, lunaText("Case")}};
-    drawMenuPromptBar(&fileFooterTransitions[3],left + 14, bottom - 2 * line - 16, right - 14,
-                  bottom - line - 16, 15, HeaderTextColor,
-                  (PromptBar){NULL, edit, 4},1);
-    PromptBar done=PROMPT_TWO(ICON_START,lunaText("Save"),ICON_CIRCLE,lunaText("Cancel"));
-    if(browserPageSection)drawBrowserPageFooter(done);
-    else drawFileManagerModalHelp(left,right,bottom,done);
+    // This editor waits for input after presenting a single frame.
+    drawPromptBar(left + 14, editTop, right - 14, editTop + line, 15,
+                  HeaderTextColor, (PromptBar){NULL, edit, 4});
+    PromptBar done = PROMPT_TWO(ICON_START, lunaText("Save"), ICON_CIRCLE, lunaText("Cancel"));
+    if (browserPageSection)
+      drawPromptBar(20, gsGlobal->Height - footerHeight + 8, gsGlobal->Width - 20,
+                    gsGlobal->Height, 8, FontMainColor, done);
+    else
+      drawPromptBar(left + 14, bottom - line - 12, right - 14,
+                    bottom - 8, 14, HeaderTextColor, done);
     presentBrowserFrame();
     int input = waitForInput(-1);
     if (input & PAD_CIRCLE)
@@ -701,21 +748,22 @@ static int editBrowserText(const char *title, char *name, size_t capacity,
       if (length >= maxLength) {
         snprintf(message, sizeof(message), lunaText("Name is at its length limit."));
       } else {
-        char letter = input & PAD_SQUARE ? ' ' : keys[selected];
+        char letter = input & PAD_SQUARE ? ' ' : keyboardRows[selectedRow][selectedKey];
         if (lowerCase && letter >= 'A' && letter <= 'Z')
           letter += 'a' - 'A';
         name[length] = letter;
         name[length + 1] = '\0';
         message[0] = '\0';
       }
-    } else if (input & PAD_LEFT) {
-      selected = selected % 10 == 0 ? selected + 9 : selected - 1;
-    } else if (input & PAD_RIGHT) {
-      selected = selected % 10 == 9 ? selected - 9 : selected + 1;
-    } else if (input & PAD_UP) {
-      selected = (selected + 30) % 40;
-    } else if (input & PAD_DOWN) {
-      selected = (selected + 10) % 40;
+    } else if (input & (PAD_LEFT | PAD_RIGHT)) {
+      int length = (int)strlen(keyboardRows[selectedRow]);
+      int direction = input & PAD_LEFT ? -1 : 1;
+      selectedKey = (selectedKey + direction + length) % length;
+      selectedCenter = keyboardKeyCenter(selectedRow, selectedKey);
+    } else if (input & (PAD_UP | PAD_DOWN)) {
+      int direction = input & PAD_UP ? -1 : 1;
+      selectedRow = (selectedRow + direction + KEYBOARD_ROWS) % KEYBOARD_ROWS;
+      selectedKey = keyboardClosestKey(selectedRow, selectedCenter);
     }
   }
 }
@@ -1388,7 +1436,7 @@ static void drawFileManagerContents(const BrowserRoot *roots, int rootCount,
     const ButtonPrompt ready[] = {
         {ICON_R1, lunaText("Tray")}, {ICON_START,
          fileManagerScene.move && *fileManagerScene.move ? lunaText("Move here") : lunaText("Paste here")}};
-    drawMenuPromptBar(&fileFooterTransitions[5],actionLeft, layout.summaryTop, right - 8, layout.summaryTop + line,
+    drawMenuPromptBar(&fileFooterTransitions[4],actionLeft, layout.summaryTop, right - 8, layout.summaryTop + line,
                    5, HeaderTextColor, (PromptBar){NULL, ready, browser->root >= 0 ? 2 : 1},1);
   }
   const char *message = status;
@@ -2316,7 +2364,7 @@ static void viewTextFile(const char *path, char *status, size_t statusSize) {
     const ButtonPrompt controls[] = {
         {ICON_DPAD, lunaText("Scroll")}, {ICON_L1, lunaText("Page up")},
         {ICON_R1, lunaText("Page down")}, {ICON_CIRCLE, lunaText("Back")}};
-    drawMenuPromptBar(&fileFooterTransitions[4],left + 8, gsGlobal->Height - footerHeight, right - 8,
+    drawMenuPromptBar(&fileFooterTransitions[3],left + 8, gsGlobal->Height - footerHeight, right - 8,
         gsGlobal->Height - 8, 0, HeaderTextColor, (PromptBar){NULL, controls, 4},1);
     presentBrowserFrame();
     int input = readInput();
