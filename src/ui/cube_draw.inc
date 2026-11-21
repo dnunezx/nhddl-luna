@@ -206,6 +206,34 @@ void uiCubeSubmenuPageDraw(const LunaCubePage *page,int selected,
     uiCubeSubmenuFooterDraw(&(PromptBar){NULL,prompts,2},opacity);
   }
 }
+static float cubeListVisibility(const CubeMenu *m,int row) {
+  float slot=row-m->scroll;
+  return cubeClamp(fminf(slot+1,m->itemCount-slot));
+}
+static void cubeDrawScrollingRows(const CubeMenu *m,const LunaCubeHub *hub,
+                                  int first,int past,float opacity) {
+  int left=(int)cubeSX(60),right=(int)cubeSX(300);
+  int top=(int)cubeSY(CUBE_LIST_TOP);
+  int bottom=(int)cubeSY(CUBE_LIST_TOP+m->itemCount*m->listStep);
+  int selectedY=(int)roundf(cubeSY(cubeListY(m,m->row,m->scroll)));
+  int clipTop=top-getFontLineHeight()/2;
+  gsKit_set_scissor(gsGlobal,GS_SETREG_SCISSOR(0,gsGlobal->Width-1,clipTop,bottom-1));
+  const char *selectedLabel=hub->labels[m->selected];
+  if(!hub->literalLabels)selectedLabel=lunaText(selectedLabel);
+  if(opacity>.01f)drawPSBBNFocusGlow(left,selectedY,right,
+      left+(int)ceilf(getLineDrawWidth(selectedLabel)));
+  for(int row=first;row<past;row++) {
+    int selected=row==m->selected;
+    float alpha=opacity*cubeListVisibility(m,row)*(selected?1:.65f);
+    const char *label=hub->literalLabels?hub->labels[row]:lunaText(hub->labels[row]);
+    int y=(int)roundf(cubeSY(cubeListY(m,row,m->scroll)));
+    uint64_t color=selected?GS_SETREG_RGBA(0xF0,0xFA,0xFF,0x80):HeaderTextColor;
+    uiCubeMenuTextDraw(left,y,right-12,6,cubeTextFade(color,alpha),label,0);
+  }
+  gsKit_set_scissor(gsGlobal,GS_SETREG_SCISSOR(0,gsGlobal->Width-1,0,gsGlobal->Height-1));
+  if(opacity>.01f)drawListScrollbar((int)cubeSX(36),top,bottom,hub->count,
+      (int)roundf(m->scroll),m->itemCount,6);
+}
 static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCubeHub *hub,const LunaCubeSubmenu *submenu) {
   const char *const *labels=hub->labels;
   gsKit_clear(gsGlobal,BGColor);gsKit_TexManager_nextFrame(gsGlobal);
@@ -232,19 +260,28 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
   }
   cubeSceneScale=1;
   cubeSceneOffsetX=cubeSceneOffsetY=0;
-  CubeGlass scene[CUBE_COUNT];int order[CUBE_COUNT];
-  for(int i=0;i<m->itemCount;i++) {
-    float fade=overall;
-    if(m->submenuOpen&&i!=m->selected%CUBE_COUNT)fade*=1-cubeSmooth(submenuProgress);
-    if(m->entering&&i!=m->selected%CUBE_COUNT)fade*=1-cubeClamp(m->exit/1000);
-    cubeGlassBuild(&scene[i],i,m,camera,fade);order[i]=i;
+  int firstRow=0,pastRow=m->itemCount;
+  if(hub->scrollable) {
+    firstRow=(int)m->scroll;
+    pastRow=(int)ceilf(m->scroll)+m->itemCount;
+    if(pastRow>hub->count)pastRow=hub->count;
   }
-  for(int i=1;i<m->itemCount;i++) {
+  int sceneCount=pastRow-firstRow;
+  CubeGlass scene[CUBE_COUNT];int order[CUBE_COUNT];
+  for(int i=0;i<sceneCount;i++) {
+    int row=firstRow+i;
+    float fade=overall;
+    if(hub->scrollable)fade*=cubeListVisibility(m,row);
+    if(m->submenuOpen&&row!=m->selected)fade*=1-cubeSmooth(submenuProgress);
+    if(m->entering&&row!=m->selected)fade*=1-cubeClamp(m->exit/1000);
+    cubeGlassBuild(&scene[i],row,m,camera,fade);order[i]=i;
+  }
+  for(int i=1;i<sceneCount;i++) {
     int index=order[i],j=i;
     while(j>0&&scene[order[j-1]].depth<scene[index].depth){order[j]=order[j-1];j--;}
     order[j]=index;
   }
-  for(int i=0;i<m->itemCount;i++) {
+  for(int i=0;i<sceneCount;i++) {
     if(m->submenuOpen&&order[i]==m->selected%CUBE_COUNT)continue;
     cubeGlassDraw(&scene[order[i]],camera);
   }
@@ -260,7 +297,9 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
   if(status)cubeText(320,53,cubeColor(215,229,244,text),status);
   if(hub->subtitle)drawTextWindow((int)cubeSX(25),(int)cubeSY(65),(int)cubeSX(615),
       (int)cubeSY(112),6,cubeColor(215,229,244,text),ALIGN_HCENTER,hub->subtitle);
-  const int listTop=(int)cubeSY(167);
+  if(hub->scrollable)cubeDrawScrollingRows(m,hub,firstRow,pastRow,text);
+  else {
+  const int listTop=(int)cubeSY(CUBE_LIST_TOP);
   int rowStep=getFontLineHeight()+getFontLineHeight()/3;
   const int listLeft=(int)cubeSX(60),rowRight=(int)cubeSX(300);
   int visible=(int)((cubeSY(352)-listTop)/rowStep);
@@ -274,17 +313,18 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
     }
     visible=m->itemCount;first=0;
   }
-  const char *selectedLabel=lunaText(labels[m->selected]);
+  const char *selectedLabel=hub->literalLabels?labels[m->selected]:lunaText(labels[m->selected]);
   const int selectedLeft=listLeft;
   int textRight=selectedLeft+(int)ceilf(getLineDrawWidth(selectedLabel));
   if(textRight>rowRight-12)textRight=rowRight-12;
   if(text>.01f)drawPSBBNFocusGlow(selectedLeft,(int)(listTop+rowStep*fmaxf(0,fminf(visible-1,m->row-first))),rowRight,textRight);
   for(int i=first;i<first+visible;i++) {
     float alpha=text*(i==m->selected?1:.65f);
-    const char *label=lunaText(labels[i]);
+    const char *label=hub->literalLabels?labels[i]:lunaText(labels[i]);
     uint64_t color=i==m->selected?GS_SETREG_RGBA(0xF0,0xFA,0xFF,0x80):HeaderTextColor;
     uiCubeMenuTextDraw(listLeft,listTop+rowStep*(i-first),rowRight-12,6,
         cubeTextFade(color,alpha),label,0);
+  }
   }
   ButtonPrompt prompts[]={{ICON_CROSS,lunaText("Open")},
       {ICON_CIRCLE,lunaText("Back")}};
@@ -296,8 +336,10 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
     uiCubeMenuHelpDraw((int)cubeSX(32),(int)cubeSX(608),cubeColor(190,211,232,text),lunaText(description));
   }
   cubeFooterCollect=!hub->libraryFooter&&!cubeBackdropOnly;
-  if(cubeFooterCollect)uiCubeSubmenuFooterDraw(
-      &(PromptBar){NULL,confirming?confirm:prompts,2},overall);
+  if(cubeFooterCollect) {
+    if(hub->footer)hub->footer(hub->context,overall);
+    else uiCubeSubmenuFooterDraw(&(PromptBar){NULL,confirming?confirm:prompts,2},overall);
+  }
   if(m->submenuOpen&&submenu) {
     float opacity=cubeSmooth((m->submenuAge/CUBE_SUBMENU_MS-.28f)/.72f);
     if(opacity>0)submenu->draw(submenu->context,opacity);

@@ -9,6 +9,7 @@
 #include "ui/file_operations.h"
 #include "ui/text_file.h"
 #include "homebrew_launch.h"
+#include "apps.h"
 #include "vmc_create.h"
 #include "vmc_storage.h"
 #include "ui/game_options.h"
@@ -48,6 +49,7 @@
 #define FILE_MANAGER_GLASS_MARGIN 8
 #define FILE_MANAGER_NAME_MAX 255
 #define BROWSER_SELECTOR_GLIDE_MS 110
+static void addAppShortcut(const char *path,char *status,size_t size);
 
 #define PROMPT_TEXT(text) ((PromptBar){text, NULL, 0})
 #define PROMPT_ONE(icon, label) \
@@ -888,7 +890,7 @@ enum {
   FILE_ACTION_COPY_ITEM, FILE_ACTION_MOVE_ITEM,
   FILE_ACTION_FOLDER_MENU, FILE_ACTION_SORT_MENU, FILE_ACTION_SELECTION_MENU,
   FILE_ACTION_CLEAR_QUEUE, FILE_ACTION_COPY_MARKED, FILE_ACTION_MOVE_MARKED,
-  FILE_ACTION_FOLDER_DETAILS
+  FILE_ACTION_FOLDER_DETAILS, FILE_ACTION_ADD_APP
 };
 
 typedef struct {
@@ -903,7 +905,7 @@ static const char *fileActionLabel(int action) {
       "Clear filter", "Name", "Size", "Date",
       "Mark all listed items", "Invert listed marks", "Review tray",
       "View as text", "Launch ELF", "Open", "Copy", "Move",
-      "Folder options", "Sort by", "Selection", "Clear tray", "Copy", "Move", "Folder details"};
+      "Folder options", "Sort by", "Selection", "Clear tray", "Copy", "Move", "Folder details", "Add to Apps"};
   return lunaText(labels[action]);
 }
 
@@ -928,6 +930,8 @@ static int chooseFileAction(const BrowserPane *pane, const CopyQueue *queue,
         menu.actions[menu.count++] = FILE_ACTION_COPY_ITEM;
         menu.actions[menu.count++] = FILE_ACTION_MOVE_ITEM;
         menu.actions[menu.count++] = FILE_ACTION_RENAME;
+        if (!entry->isDirectory && lunaFileKind(entry->name) == LUNA_FILE_ELF)
+          menu.actions[menu.count++] = FILE_ACTION_ADD_APP;
         if (!entry->isDirectory && lunaFileKind(entry->name) != LUNA_FILE_TEXT)
           menu.actions[menu.count++] = FILE_ACTION_VIEW_TEXT;
       }
@@ -2413,7 +2417,12 @@ static void uiFileManagerLoop(void) {
         snprintf(status, sizeof(status), "%s", lunaText("Tray cleared."));
       } else if (action == FILE_ACTION_DETAILS || action == FILE_ACTION_FOLDER_DETAILS)
         showFileDetails(roots, rootCount, pane, action == FILE_ACTION_FOLDER_DETAILS);
-      else if (action == FILE_ACTION_VIEW_TEXT || action == FILE_ACTION_LAUNCH_ELF)
+      else if (action == FILE_ACTION_ADD_APP) {
+        BrowserEntry *entry=browserPaneEntry(pane,pane->selected);
+        char path[PATH_MAX+1];
+        if(entry && snprintf(path,sizeof(path),"%s/%s",pane->path,entry->name)<(int)sizeof(path))
+          addAppShortcut(path,status,sizeof(status));
+      } else if (action == FILE_ACTION_VIEW_TEXT || action == FILE_ACTION_LAUNCH_ELF)
         openPaneFile(pane, action == FILE_ACTION_VIEW_TEXT, status, sizeof(status));
       else if (action == FILE_ACTION_RENAME)
         renamePaneEntry(pane, roots, &queue, status, sizeof(status));
@@ -2519,6 +2528,7 @@ static void uiFileManagerLoop(void) {
   free(roots);
 }
 
+#include "apps_menu.inc"
 #include "vmc_common.inc"
 #ifdef LUNA_ENABLE_PSXCORE
 #include "ps1_vmc.inc"
@@ -2824,6 +2834,7 @@ int uiMainMenuLoop(int hasLibrary, Target *target) {
     waitMenuButtonRelease();
     if (action == LUNA_RING_LIBRARY) return 0;
     if (action == LUNA_RING_BROWSER) uiFileManagerLoop();
+    else if (action == LUNA_RING_APPS) uiAppsLoop();
     else if (action == LUNA_MENU_APPEARANCE) uiAppearanceLoop(target);
     else {
       int result = uiSystemSettingsLoop(hasLibrary,target);

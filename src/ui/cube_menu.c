@@ -9,11 +9,13 @@
 #define CUBE_PI 3.14159265359f
 #define CUBE_ITEMS 6
 #define CUBE_COUNT 7
+#define CUBE_LIST_TOP 167
 #define CUBE_SIDE 56.0f
 #define CUBE_SIZE_RATIO (CUBE_SIDE/40.0f)
 typedef struct { float x,y,z; } CubeVec;
 typedef struct {
   float entry,exit,time,moveAge,rowFrom,row;
+  float scrollFrom,scroll,listStep,listLine;
   float light[CUBE_COUNT],lightFrom[CUBE_COUNT],lightTarget[CUBE_COUNT];
   float lightAge[CUBE_COUNT],lightDuration[CUBE_COUNT];
   float phase[CUBE_COUNT],spinProgress[CUBE_COUNT];
@@ -22,7 +24,7 @@ typedef struct {
   CubeVec cameraTarget;
   uint32_t lastMs;
   int selected,closing,entering;
-  int itemCount;
+  int itemCount,firstRow;
   float submenuAge;
   int submenuOpen,submenuDirection;
 } CubeMenu;
@@ -57,6 +59,18 @@ static CubeVec cubeRotation(int i,float seconds) {
   }
   return (CubeVec){x*CUBE_PI/180,y*CUBE_PI/180,z*CUBE_PI/180};
 }
+static float cubeListY(const CubeMenu *m,float row,float scroll) {
+  return CUBE_LIST_TOP+(row-scroll)*m->listStep;
+}
+static CubeVec cubeRowPosition(const CubeMenu *m,int row,float scroll) {
+  int index=row%CUBE_COUNT;
+  CubeVec p=cubePosition(index,m->phase[index]);
+  if(m->listStep>0) {
+    float center=cubeListY(m,row,scroll)+m->listLine*.5f;
+    p.y=(240-center)*(500+p.z)/500;
+  }
+  return p;
+}
 /* top_list 0x883c/0xb708/0xb804: selection advances the existing motion
  * timer by 1000 times the change in native mode-6 progress. Evaluate its
  * stateful recurrence at the video cadence, retaining fractional ticks. */
@@ -81,30 +95,48 @@ static void cubeMotionStep(CubeMenu *m,float milliseconds) {
 }
 static void cubeSpin(CubeMenu *m) {
   if(lunaAnimationInstant(LUNA_ANIM_MENU_MOVE)) {m->spinning=0;return;}
-  m->spinProgress[m->selected]=0;
-  m->spinning|=1U<<m->selected;
+  int index=m->selected%CUBE_COUNT;
+  m->spinProgress[index]=0;
+  m->spinning|=1U<<index;
 }
 static void cubeInit(CubeMenu *m,uint32_t now,int selected,float fps) {
   memset(m,0,sizeof(*m));m->lastMs=now;m->selected=selected;
   m->itemCount=CUBE_ITEMS;
   m->motionFps=fps;
   m->row=m->rowFrom=selected;m->moveAge=1000;
-  for(int i=0;i<CUBE_COUNT;i++) {m->lightTarget[i]=i==selected;m->lightDuration[i]=150;}
+  for(int i=0;i<CUBE_COUNT;i++) {m->lightTarget[i]=i==selected%CUBE_COUNT;m->lightDuration[i]=150;}
   cubeSpin(m);
 }
-static void cubeMove(CubeMenu *m,int dir) {
+static void cubeSelect(CubeMenu *m,int selected) {
   if(m->closing)return;
-  m->selected=(m->selected+dir+m->itemCount)%m->itemCount;
+  m->selected=selected;
   m->rowFrom=m->row;m->moveAge=0;
+  m->scrollFrom=m->scroll;
   cubeSpin(m);
   for(int i=0;i<CUBE_COUNT;i++) {
-    m->lightFrom[i]=m->light[i];m->lightTarget[i]=i==m->selected%CUBE_COUNT;
-    m->lightAge[i]=0;m->lightDuration[i]=i==m->selected?150:200;
+    m->lightFrom[i]=m->light[i];m->lightTarget[i]=i==selected%CUBE_COUNT;
+    m->lightAge[i]=0;m->lightDuration[i]=m->lightTarget[i]?150:200;
   }
+}
+static void cubeMove(CubeMenu *m,int dir) {
+  cubeSelect(m,(m->selected+dir+m->itemCount)%m->itemCount);
+}
+static int cubeScrollFirst(int first,int visible,int selected) {
+  if(selected<first)return selected;
+  if(selected>=first+visible)return selected-visible+1;
+  return first;
+}
+static void cubeScrollMove(CubeMenu *m,int count,int offset) {
+  int next=m->selected+offset;
+  if(next<0)next=0;
+  if(next>=count)next=count-1;
+  if(next==m->selected||m->closing)return;
+  m->firstRow=cubeScrollFirst(m->firstRow,m->itemCount,next);
+  cubeSelect(m,next);
 }
 static void cubeClose(CubeMenu *m,int entering) {
   m->closing=1;m->entering=entering;m->exit=0;
-  CubeVec p=cubePosition(m->selected,m->phase[m->selected]);
+  CubeVec p=cubeRowPosition(m,m->selected,m->firstRow);
   /* camera.bnx: lateral offset 96, vertical -4, near destination z+260.
    * Camera/root handedness is expressed in our projection coordinates. */
   m->cameraTarget=(CubeVec){-p.x-96*CUBE_SIZE_RATIO,p.y-4*CUBE_SIZE_RATIO,
@@ -130,6 +162,7 @@ static void cubeStep(CubeMenu *m,uint32_t now) {
   m->moveAge=fminf(150,m->moveAge+lunaAnimationStep(LUNA_ANIM_MENU_MOVE,dt,150));
   float u=cubeClamp(m->moveAge/150);
   m->row=m->rowFrom+(m->selected-m->rowFrom)*u;
+  m->scroll=m->scrollFrom+(m->firstRow-m->scrollFrom)*u;
   for(int i=0;i<CUBE_COUNT;i++) {
     m->lightAge[i]+=lunaAnimationStep(LUNA_ANIM_MENU_MOVE,dt,m->lightDuration[i]);
     float a=cubeClamp(m->lightAge[i]/m->lightDuration[i]);
@@ -240,15 +273,27 @@ static void cubeHubClose(void) {
 
 int uiCubeHubLoop(int *selected,const char *status,const LunaCubeHub *hub) {
   static CubeMenu menu;
-  if(!hub||!hub->labels||hub->count<1||hub->count>CUBE_COUNT)return -1;
+  if(!hub||!hub->labels||hub->count<1||(!hub->scrollable&&hub->count>CUBE_COUNT))return -1;
+  if(hub->scrollable&&hub->submenuCount)return -1;
   uiCubePanelGlassClose();
   int initial=*selected;
   if(initial<0||initial>=hub->count)initial=0;
   cubeInit(&menu,uiNowMs(),initial,gsGlobal->Mode==GS_MODE_PAL?50:60);
   menu.itemCount=hub->count;*selected=initial;
+  if(hub->scrollable) {
+    int line=getFontLineHeight(),step=line+line/3;
+    menu.listLine=line*480.0f/gsGlobal->Height;
+    menu.listStep=step*480.0f/gsGlobal->Height;
+    int visible=(int)((352-CUBE_LIST_TOP)/menu.listStep);
+    // Leave one crystal slot free for the row entering during a scroll.
+    menu.itemCount=(int)fmaxf(1,fminf(visible,fminf(CUBE_ITEMS,hub->count)));
+    menu.firstRow=cubeScrollFirst(0,menu.itemCount,initial);
+    menu.scroll=menu.scrollFrom=menu.firstRow;
+  }
   cubeMaterialInit();
   int previous=pollInput(),destination=-1,confirm=0;
   const LunaCubeSubmenu *submenu=NULL;
+  int repeatHeld=0;uint32_t repeatAt=0;
   for(;;) {
     int wasSubmenuOpen=menu.submenuOpen;
     cubeStep(&menu,uiNowMs());
@@ -256,11 +301,17 @@ int uiCubeHubLoop(int *selected,const char *status,const LunaCubeHub *hub) {
       if(submenu->end)submenu->end(submenu->context);
       submenu=NULL;
     }
+    *selected=menu.selected;
     activeCubeMenu=&menu;activeCubeHub=hub;activeCubeSubmenu=submenu;
     activeCubeStatus=status;activeCubeConfirm=confirm;
     int sceneReady=cubeDraw(&menu,status,confirm,hub,submenu);
     gsKit_queue_exec(gsGlobal);gsKit_finish();gsKit_sync_flip(gsGlobal);usleep(1000);
     int held=pollInput(),input=held&~previous;previous=held;
+    if(hub->scrollable&&!menu.closing) {
+      int directions=held&(PAD_UP|PAD_DOWN);uint32_t now=uiNowMs();
+      if(directions!=repeatHeld){repeatHeld=directions;repeatAt=now+350;}
+      else if(directions&&(int32_t)(now-repeatAt)>=0){input|=directions;repeatAt=now+100;}
+    }
     if(menu.submenuOpen) {
       if(menu.submenuDirection)continue;
       int result=submenu->input(submenu->context,input);
@@ -288,7 +339,11 @@ int uiCubeHubLoop(int *selected,const char *status,const LunaCubeHub *hub) {
       else if(input&PAD_CROSS) {destination=menu.selected;cubeClose(&menu,1);}
     } else if(input&(PAD_CIRCLE|PAD_TRIANGLE|PAD_START)) {
       destination=-1;cubeClose(&menu,0);
-    } else if(input&(PAD_UP|PAD_LEFT|PAD_L1))cubeMove(&menu,-1);
+    } else if(hub->scrollable&&(input&(PAD_UP|PAD_LEFT|PAD_L1|PAD_L2)))
+      cubeScrollMove(&menu,hub->count,input&PAD_L2?-menu.itemCount:-1);
+    else if(hub->scrollable&&(input&(PAD_DOWN|PAD_RIGHT|PAD_R1|PAD_R2)))
+      cubeScrollMove(&menu,hub->count,input&PAD_R2?menu.itemCount:1);
+    else if(input&(PAD_UP|PAD_LEFT|PAD_L1))cubeMove(&menu,-1);
     else if(input&(PAD_DOWN|PAD_RIGHT|PAD_R1))cubeMove(&menu,1);
     else if(input&PAD_CROSS) {
       if(menu.selected==hub->confirmRow)confirm=1;

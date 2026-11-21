@@ -36,6 +36,7 @@ endif()
 set(SOURCES
     src/main.c
     src/common.c
+    src/apps.c
     src/runtime_locks.c
     src/options.c
     src/display.c

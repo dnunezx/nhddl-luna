@@ -20,11 +20,11 @@ static LunaRingColor ringOrbInteriorColorPreset=LUNA_RING_ORIGINAL;
 void uiRingSetOrbInteriorColor(LunaRingColor color) {
   ringOrbInteriorColorPreset=color>=LUNA_RING_ORIGINAL&&color<LUNA_RING_INTERIOR_COLOR_COUNT?color:LUNA_RING_ORIGINAL;
 }
-#define RING_ITEM_COUNT 4
-/* Preserve the three recovered positions; the fourth is a LUNA extension. */
-static const float ringSlots[RING_ITEM_COUNT] = {-2.28f, 0, 1.3f, 2.4f};
+#define RING_ITEM_COUNT 5
+/* Add one rear slot; the original focal position and animation clocks remain. */
+static const float ringSlots[RING_ITEM_COUNT] = {-2.28f, -1.1f, 0, 1.3f, 2.4f};
 static const int ringActions[RING_ITEM_COUNT] = {
-  LUNA_RING_LIBRARY,LUNA_RING_BROWSER,LUNA_MENU_APPEARANCE,LUNA_RING_SETTINGS
+  LUNA_RING_LIBRARY,LUNA_RING_BROWSER,LUNA_MENU_APPEARANCE,LUNA_RING_SETTINGS,LUNA_RING_APPS
 };
 static int ringCanOpen(int selected,int hasLibrary) {
   return hasLibrary || ringActions[selected]!=LUNA_RING_LIBRARY;

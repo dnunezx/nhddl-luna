@@ -55,8 +55,11 @@ typedef struct {
   void (*footer)(void *context, float pageProgress);
   int gameOptionsLogo;
   int showAllCategories;
+  // Opt-in app lists recycle the standard crystal scene across longer lists.
+  int scrollable;
+  int literalLabels;
 } LunaCubeHub;
-// One crystal per row, up to seven. Returns the chosen row, or -1 for Back.
+// One crystal per visible row. Longer lists opt into scrollable windows.
 int uiCubeHubLoop(int *selected, const char *status, const LunaCubeHub *hub);
 // Redraw the active hub or page beneath a blocking picker, without presenting.
 void uiCubeHubDrawBackdrop(void);

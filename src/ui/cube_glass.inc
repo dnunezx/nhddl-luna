@@ -174,11 +174,12 @@ static void cubeBlit(GSTEXTURE *texture,float u0,float v0,float u1,float v1,floa
   cubeBind(texture,0,0);cubeBlend(mode);
   cubeEmit(p,uv,4,cubeColor(128,128,128,alpha),mode!=0);
 }
-static void cubeGlassBuild(CubeGlass *s,int index,const CubeMenu *m,CubeVec camera,float fade) {
-  memset(s,0,sizeof(*s));s->position=cubePosition(index,m->phase[index]);
+static void cubeGlassBuild(CubeGlass *s,int row,const CubeMenu *m,CubeVec camera,float fade) {
+  int index=row%CUBE_COUNT;
+  memset(s,0,sizeof(*s));s->position=cubeRowPosition(m,row,m->scroll);
   CubeVec angles=cubeRotation(index,m->phase[index]);
   CubeVec size={CUBE_SIDE,CUBE_SIDE,CUBE_SIDE};
-  int portal=m->submenuOpen&&index==m->selected%CUBE_COUNT;
+  int portal=m->submenuOpen&&row==m->selected;
   if(portal) {
     float t=cubeSmooth(m->submenuAge/CUBE_SUBMENU_MS);
     /* The selected crystal unfolds into the options pane at (20,97)-(520,385).

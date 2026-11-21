@@ -74,11 +74,11 @@ static float ringTitleHeight(float size) {
 }
 static void ringDraw(RingMenu *menu,int hasLibrary,const char *status) {
   const int previousTextLayout=setAuthoredTextLayout(1);
-  static const char *labels[]={"Game Library","File Browser","Appearance","Settings"};
-  static const char *labelKeys[]={"Return to Library","File Explorer","Appearance","System Configuration"};
-  static const char *details[]={"Other worlds await.","Discover what lies within.","Shape your atmosphere.","Fine-tune your system."};
-  static const float widths[]={280,261,220,220};
-  static const float slotAlpha[]={1,.4f,.3f,.3f};
+  static const char *labels[]={"Game Library","File Browser","Appearance","Settings","Apps"};
+  static const char *labelKeys[]={"Return to Library","File Explorer","Appearance","System Configuration","Apps"};
+  static const char *details[]={"Other worlds await.","Discover what lies within.","Shape your atmosphere.","Fine-tune your system.","Access the unknown."};
+  static const float widths[]={280,261,220,220,220};
+  static const float slotAlpha[]={1,.4f,.3f,.3f,.3f};
   gsKit_clear(gsGlobal,BGColor); gsKit_TexManager_nextFrame(gsGlobal);
   GSTEST savedTest=*gsGlobal->Test;
   uint64_t savedBlend=gsGlobal->PrimAlpha;

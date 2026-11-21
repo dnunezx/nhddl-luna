@@ -1,5 +1,6 @@
 // LUNA 2026
 #include "common.h"
+#include "apps.h"
 #include "display.h"
 #include "ui/display_menu.h"
 #include "devices/devices.h"
@@ -236,6 +237,7 @@ int argInit() {
   if (initDevices() < 0)
     return -EIO;
 
+  lunaAppsConfigure(cwdPath);
   lunaLanguageConfigure(cwdPath);
   lunaDisplayConfigure(cwdPath);
 
@@ -283,6 +285,7 @@ int init(char *elfPath) {
     return -EIO;
   }
 
+  lunaAppsConfigure(elfPath);
   lunaLanguageConfigure(elfPath);
   lunaDisplayConfigure(elfPath);
 
