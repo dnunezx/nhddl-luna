@@ -9,6 +9,7 @@
 #include "ui/file_operations.h"
 #include "ui/text_file.h"
 #include "homebrew_launch.h"
+#include "igr_return.h"
 #include "apps.h"
 #include "ui/animation.h"
 #include "vmc_create.h"
@@ -2822,12 +2823,64 @@ static void waitMenuButtonRelease(void) {
     usleep(1000);
 }
 
+typedef struct {
+  LunaCubePageFocus focus;
+  int selected;
+  const char *status;
+  const char *path;
+} IgrReturnEditor;
+
+static void igrReturnSubmenuBegin(void *context) {
+  IgrReturnEditor *editor = context;
+  *editor = (IgrReturnEditor){.focus = {.selected = -1}};
+  editor->path = lunaIgrReturnPath();
+  if (*lunaIgrCustomPath() && editor->path != lunaIgrCustomPath())
+    editor->status = "The configured return path is currently in use.";
+}
+
+static const char *igrReturnRowLabel(void *context, int row) {
+  (void)context;
+  return row ? "Use configured return path" : "Choose LUNA ELF";
+}
+
+static void igrReturnSubmenuDraw(void *context, float opacity) {
+  IgrReturnEditor *editor = context;
+  const LunaCubePage page = {.title = "PS2 IGR Return", .count = 2,
+    .label = igrReturnRowLabel, .subtitle = *editor->path ? editor->path : lunaText("Default"),
+    .status = editor->status, .libraryFooter = 1};
+  uiCubeSubmenuPageDraw(&page, editor->selected, &editor->focus, opacity);
+  PromptBar footer = PROMPT_TWO(ICON_CROSS, lunaText("Select"), ICON_CIRCLE, lunaText("Back"));
+  uiCubeSubmenuFooterDraw(&footer, opacity);
+}
+
+static int igrReturnSubmenuInput(void *context, int input) {
+  IgrReturnEditor *editor = context;
+  if (input & (PAD_CIRCLE | PAD_TRIANGLE | PAD_START))
+    return LUNA_CUBE_SUBMENU_BACK;
+  if (input & (PAD_UP | PAD_DOWN)) editor->selected ^= 1;
+  else if (input & PAD_CROSS) {
+    char path[LUNA_IGR_PATH_SIZE] = "";
+    if (!editor->selected) {
+      const char *previousSection = browserPageSection;
+      uiFileManagerSetPageSection("PS2 IGR Return");
+      int chosen = pickElfFile(path, sizeof(path), "Choose LUNA ELF", lunaIgrDeviceSupported);
+      uiFileManagerSetPageSection(previousSection);
+      if (!chosen) return LUNA_CUBE_SUBMENU_STAY;
+    }
+    const char *error = lunaIgrSavePath(path);
+    if (!error) editor->path = lunaIgrReturnPath();
+    editor->status = error ? error : "Saved";
+  }
+  return LUNA_CUBE_SUBMENU_STAY;
+}
+
 static int uiSystemSettingsLoop(int hasLibrary, Target *target) {
   int selected = 0;
   StorageEditor storage = {0};
   VmcEditor vmc = {0};
   LanguageEditor language = {0};
-  const LunaCubeSubmenu submenus[5] = {
+  IgrReturnEditor igrReturn = {0};
+  const LunaCubeSubmenu submenus[6] = {
     {.context=&vmc,.begin=vmcSubmenuBegin,.draw=vmcSubmenuDraw,
      .input=vmcSubmenuInput,.end=vmcSubmenuEnd},
     {.context=&storage,.begin=storageSubmenuBegin,.draw=storageSubmenuDraw,
@@ -2835,7 +2888,9 @@ static int uiSystemSettingsLoop(int hasLibrary, Target *target) {
     {.context=&language,.begin=languageSubmenuBegin,.draw=languageSubmenuDraw,
      .input=languageSubmenuInput},
     uiDisplaySubmenu(),
-    uiDefaultsSubmenu(target)
+    uiDefaultsSubmenu(target),
+    {.context=&igrReturn,.begin=igrReturnSubmenuBegin,.draw=igrReturnSubmenuDraw,
+     .input=igrReturnSubmenuInput}
   };
   for (;;) {
     int action = uiCubeSettingsLoop(&selected, startMenuStatus(hasLibrary), submenus);

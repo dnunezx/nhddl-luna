@@ -267,11 +267,12 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
     if(pastRow>hub->count)pastRow=hub->count;
   }
   int sceneCount=pastRow-firstRow;
+  int portal=m->submenuOpen?m->selected-firstRow:-1;
   CubeGlass scene[CUBE_COUNT];int order[CUBE_COUNT];
   for(int i=0;i<sceneCount;i++) {
     int row=firstRow+i;
     float fade=overall;
-    if(hub->scrollable)fade*=cubeListVisibility(m,row);
+    if(hub->scrollable&&i!=portal)fade*=cubeListVisibility(m,row);
     if(m->submenuOpen&&row!=m->selected)fade*=1-cubeSmooth(submenuProgress);
     if(m->entering&&row!=m->selected)fade*=1-cubeClamp(m->exit/1000);
     cubeGlassBuild(&scene[i],row,m,camera,fade);order[i]=i;
@@ -282,10 +283,17 @@ static int cubeDraw(CubeMenu *m,const char *status,int confirming,const LunaCube
     order[j]=index;
   }
   for(int i=0;i<sceneCount;i++) {
-    if(m->submenuOpen&&order[i]==m->selected%CUBE_COUNT)continue;
+    if(order[i]==portal)continue;
     cubeGlassDraw(&scene[order[i]],camera);
   }
-  if(m->submenuOpen)cubeGlassDraw(&scene[m->selected%CUBE_COUNT],camera);
+  if(m->submenuOpen) {
+    // A quick open can select a crystal before it enters the scrolling window.
+    if(portal<0||portal>=sceneCount) {
+      portal=0;
+      cubeGlassBuild(&scene[portal],m->selected,m,camera,overall);
+    }
+    cubeGlassDraw(&scene[portal],camera);
+  }
   cubeRestoreGlassState();
   if(!cubePageSceneOnly) {
   if(hub->gameOptionsLogo)

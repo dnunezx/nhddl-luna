@@ -30,11 +30,17 @@ static int appFileMatches(const char *name) {
   size_t length=strlen(name);
   return length>4 && !strcasecmp(name+length-4,".elf");
 }
-static int appPickFile(char *path,size_t size) {
+static int pickElfFile(char *path,size_t size,const char *title,int (*rootAllowed)(const char *)) {
   BrowserRoot *roots=calloc(BROWSER_MAX_ROOTS,sizeof(*roots));
   BrowserPane *pane=calloc(1,sizeof(*pane));
   if(!roots || !pane){free(roots);free(pane);return 0;}
   pane->root=-1;int rootCount=collectRoots(roots),previous=pollInput(),result=0;
+  if(rootAllowed) {
+    int kept=0;
+    for(int i=0;i<rootCount;i++)
+      if(rootAllowed(roots[i].path))roots[kept++]=roots[i];
+    rootCount=kept;
+  }
   BrowserSelector selector={.selected=-1};char status[160]="";
   for(;;) {
     if(pane->root>=0) {
@@ -45,7 +51,7 @@ static int appPickFile(char *path,size_t size) {
     }
     int total=pane->root<0?rootCount:pane->visibleCount;
     int *selected=pane->root<0?&pane->rootSelected:&pane->selected;
-    drawBrowserFrameSelected(lunaText("Choose application"),
+    drawBrowserFrameSelected(lunaText(title),
         pane->root<0?lunaText("Devices"):pane->path,status,
         PROMPT_TWO(ICON_CROSS,lunaText("Select"),ICON_CIRCLE,lunaText("Back")),
         total,*selected,browserFirstRow(*selected),pane->root<0?rootRow:appPickerRow,
@@ -71,14 +77,21 @@ static int appPickFile(char *path,size_t size) {
         if(entry && entry->isDirectory) {
           if(!browserPaneEnter(pane,entry->name))snprintf(status,sizeof(status),"%s",lunaText("Could not open this folder."));
         } else if(entry && !pane->scanning) {
-          int length=snprintf(path,size,"%s/%s",pane->path,entry->name);
-          if(length>0 && (size_t)length<size){result=1;break;}
+          if(rootAllowed)result=joinPath(path,size,pane->path,entry->name);
+          else {
+            int length=snprintf(path,size,"%s/%s",pane->path,entry->name);
+            result=length>0 && (size_t)length<size;
+          }
+          if(result)break;
           snprintf(status,sizeof(status),"%s",lunaText("The current path is too long."));
         }
       }
     }
   }
   browserPaneDestroy(pane);free(pane);free(roots);return result;
+}
+static int appPickFile(char *path,size_t size) {
+  return pickElfFile(path,size,"Choose application",NULL);
 }
 static int appOptionRow(int index,char *name,size_t size,char *detail,size_t detailSize,void *context) {
   (void)context;static const char *const labels[]={"Rename","Move up","Move down","Locate ELF","Remove from Apps"};

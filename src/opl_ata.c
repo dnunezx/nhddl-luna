@@ -3,6 +3,7 @@
 #include "opl_ata.h"
 #include "opl_ata_abi.h"
 #include "opl_devices.h"
+#include "igr_return.h"
 #include "opl_logo.h"
 #include "opl_vmc.h"
 #include "common.h"
@@ -572,7 +573,7 @@ int launchOplTitle(Target *target, ArgumentList *arguments, const char *cheatPay
   // The HDD return target uses the console's browser boot chain, which
   // routes the held START button back into LUNA. Other configured targets
   // are launcher ELFs that OPL can load directly after IGR.
-  const char *returnPath = LAUNCHER_OPTIONS.returnPath;
+  const char *returnPath = lunaIgrReturnPath();
   if (returnPath[0] == '\0' || strcmp(returnPath, "hdd") == 0)
     strcpy(config->ExitPath, "Browser");
   else if (strlen(returnPath) < sizeof(config->ExitPath))

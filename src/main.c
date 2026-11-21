@@ -7,6 +7,7 @@
 #include "devices/init.h"
 #include "devices/title_id.h"
 #include "forwarder.h"
+#include "igr_return.h"
 #include "neutrino.h"
 #include "options.h"
 #include "target.h"
@@ -27,6 +28,7 @@
 
 // Launcher options
 LauncherOptions LAUNCHER_OPTIONS = {.returnPath = "hdd"};
+static int commandLineIgrPath;
 // Options file name relative to CWD
 static const char optionsFile[] = "luna.yaml";
 static const char legacyOptionsFile[] = "nhddl.yaml";
@@ -240,6 +242,7 @@ int argInit() {
   lunaAppsConfigure(cwdPath);
   lunaLanguageConfigure(cwdPath);
   lunaDisplayConfigure(cwdPath);
+  lunaIgrConfigure(cwdPath, commandLineIgrPath);
 
   // Search for neutrino.elf
   getcwd(cwdPath, PATH_MAX + 1);
@@ -288,6 +291,7 @@ int init(char *elfPath) {
   lunaAppsConfigure(elfPath);
   lunaLanguageConfigure(elfPath);
   lunaDisplayConfigure(elfPath);
+  lunaIgrConfigure(elfPath, commandLineIgrPath);
 
   // Search for neutrino.elf
   res = findNeutrinoELF(elfPath);
@@ -385,6 +389,7 @@ void parseArgv(int argc, char *argv[]) {
       LAUNCHER_OPTIONS.image = strdup(val);
     } else if (val && !strcmp(OPTION_RETURN_PATH, arg)) {
       strlcpy(LAUNCHER_OPTIONS.returnPath, val, sizeof(LAUNCHER_OPTIONS.returnPath));
+      commandLineIgrPath = 1;
     } else if (!strcmp(OPTION_NO_INIT, arg)) {
       LAUNCHER_OPTIONS.noInit = 1;
     }

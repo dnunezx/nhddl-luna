@@ -11,7 +11,7 @@ struct PromptBar;
 void uiCubeSubmenuFooterDraw(const struct PromptBar *bar,float opacity);
 enum { LUNA_CUBE_BACK, LUNA_CUBE_VMC, LUNA_CUBE_STORAGE,
        LUNA_CUBE_LANGUAGE, LUNA_CUBE_EXIT, LUNA_CUBE_SHUTDOWN, LUNA_CUBE_DEFAULTS,
-       LUNA_CUBE_DISPLAY };
+       LUNA_CUBE_DISPLAY, LUNA_CUBE_IGR_RETURN };
 typedef struct {
   const char *title;
   int count; // -1 leaves the list area free for custom controls.
@@ -90,7 +90,7 @@ void uiCubeHubPageDraw(const LunaCubePage *page, int selected,
 void uiCubeSubmenuPageDraw(const LunaCubePage *page, int selected,
                          LunaCubePageFocus *focus, float opacity);
 void uiCubeSubmenuFocusDraw(int left, int top, int right, int bottom, float opacity);
-// The first five rows supply VMC, Storage, Language, Display, and Defaults.
+// The first six rows supply VMC, Storage, Language, Display, Defaults and IGR Return.
 int uiCubeSettingsLoop(int *selected, const char *status,
-                      const LunaCubeSubmenu submenus[5]);
+                      const LunaCubeSubmenu submenus[6]);
 #endif

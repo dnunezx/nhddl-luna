@@ -5,6 +5,7 @@
 #include "neutrino.h"
 #include "opl_ata.h"
 #include "opl_devices.h"
+#include "igr_return.h"
 #include "ui/ambient.h"
 #include "options.h"
 #include "cheat_storage.h"
@@ -53,7 +54,10 @@ int launchELF(int argc, char *argv[]);
 
 int launchTitleArgumentsFit(Target *target, ArgumentList *arguments, const char *payload) {
   // Reserve space for bsd, bsdfs, dvd, pfs, qb, igr and udpfs_ip added at launch.
-  size_t bytes = 1024 + strlen(target->fullPath) + strlen(LAUNCHER_OPTIONS.returnPath);
+  size_t returnBytes = strlen(LAUNCHER_OPTIONS.returnPath);
+  size_t customReturnBytes = strlen(lunaIgrCustomPath());
+  if (returnBytes < customReturnBytes) returnBytes = customReturnBytes;
+  size_t bytes = 1024 + strlen(target->fullPath) + returnBytes;
   for (Argument *arg = arguments->first; arg; arg = arg->next)
     bytes += sizeof(char *) + strlen(arg->arg) + (arg->value ? strlen(arg->value) : 0) + 3;
   bytes += strlen(NEUTRINO_ELF_PATH) + (payload ? strlen(payload) + 16 : 0);
@@ -191,9 +195,10 @@ void launchTitleWithCheatProgress(Target *target, ArgumentList *arguments,
   if (target->device->mode == MODE_UDPFS && LAUNCHER_OPTIONS.udpfsIp[0])
     appendArgument(arguments, newArgument("udpfs_ip", LAUNCHER_OPTIONS.udpfsIp));
   Argument *disableIgr = getArgument(arguments, "luna_neutrino_disable_igr");
-  if (LAUNCHER_OPTIONS.returnPath[0] != '\0' &&
+  const char *returnPath = lunaIgrReturnPath();
+  if (returnPath[0] != '\0' &&
       (disableIgr == NULL || disableIgr->isDisabled))
-    appendArgument(arguments, newArgument(igrArgument, LAUNCHER_OPTIONS.returnPath));
+    appendArgument(arguments, newArgument(igrArgument, returnPath));
   // Use quickboot to reduce load times (except for HDL mode because it requires hdlfs module)
   if (target->device->mode != MODE_HDL)
     appendArgument(arguments, newArgument("qb", ""));

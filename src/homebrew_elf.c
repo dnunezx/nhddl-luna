@@ -12,21 +12,34 @@ static int overlaps(uint32_t a, uint32_t sizeA, uint32_t b, uint32_t sizeB) {
   return sizeA && sizeB && a < b + sizeB && b < a + sizeA;
 }
 
+int lunaHomebrewElfHeaderValid(const void *data, size_t size) {
+  const unsigned char *p = data;
+  return p && size >= LUNA_HOMEBREW_ELF_HEADER_SIZE && !memcmp(p, "\177ELF", 4) &&
+      p[4] == 1 && p[5] == 1 && p[6] == 1 && read16(p + 16) == 2 &&
+      read16(p + 18) == 8 && read32(p + 20) == 1 &&
+      read16(p + 40) == LUNA_HOMEBREW_ELF_HEADER_SIZE;
+}
+
+int lunaHomebrewElfProgramTableFits(const void *data, size_t fileSize) {
+  const unsigned char *p = data;
+  uint32_t headers = read32(p + 28), count = read16(p + 44);
+  return count && count <= 128 && read16(p + 42) == 32 &&
+      headers >= LUNA_HOMEBREW_ELF_HEADER_SIZE && headers <= fileSize &&
+      count <= (fileSize - headers) / 32;
+}
+
 const char *lunaHomebrewCheck(const void *data, size_t size, uint32_t staging,
                              uint32_t memorySize, LunaHomebrewElf *output) {
   const unsigned char *p = data;
-  if (!p || !output || size < 52 || memcmp(p, "\177ELF", 4) ||
-      p[4] != 1 || p[5] != 1 || p[6] != 1 || read16(p + 16) != 2 ||
-      read16(p + 18) != 8 || read32(p + 20) != 1 || read16(p + 40) != 52)
+  if (!output || !lunaHomebrewElfHeaderValid(p, size))
     return "Not a supported PS2 ELF executable.";
   if (memorySize > 0x02000000U || memorySize <= 0x00100000U ||
       size > LUNA_HOMEBREW_FILE_MAX || staging < 0x00100000U ||
       staging >= memorySize || size > memorySize - staging)
     return "The ELF staging buffer is outside available memory.";
-  uint32_t headers = read32(p + 28), count = read16(p + 44);
-  if (!count || count > 128 || read16(p + 42) != 32 ||
-      headers < 52 || headers > size || count > (size - headers) / 32)
+  if (!lunaHomebrewElfProgramTableFits(p, size))
     return "The ELF program headers are invalid.";
+  uint32_t headers = read32(p + 28), count = read16(p + 44);
   LunaHomebrewElf result = {0};
   result.entry = read32(p + 24);
   int executable = 0;

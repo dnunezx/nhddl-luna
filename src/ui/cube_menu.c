@@ -107,8 +107,14 @@ static void cubeInit(CubeMenu *m,uint32_t now,int selected,float fps) {
   for(int i=0;i<CUBE_COUNT;i++) {m->lightTarget[i]=i==selected%CUBE_COUNT;m->lightDuration[i]=150;}
   cubeSpin(m);
 }
+static int cubeScrollFirst(int first,int visible,int selected) {
+  if(selected<first)return selected;
+  if(selected>=first+visible)return selected-visible+1;
+  return first;
+}
 static void cubeSelect(CubeMenu *m,int selected) {
   if(m->closing)return;
+  if(m->listStep>0)m->firstRow=cubeScrollFirst(m->firstRow,m->itemCount,selected);
   m->selected=selected;
   m->rowFrom=m->row;m->moveAge=0;
   m->scrollFrom=m->scroll;
@@ -118,20 +124,14 @@ static void cubeSelect(CubeMenu *m,int selected) {
     m->lightAge[i]=0;m->lightDuration[i]=m->lightTarget[i]?150:200;
   }
 }
-static void cubeMove(CubeMenu *m,int dir) {
-  cubeSelect(m,(m->selected+dir+m->itemCount)%m->itemCount);
-}
-static int cubeScrollFirst(int first,int visible,int selected) {
-  if(selected<first)return selected;
-  if(selected>=first+visible)return selected-visible+1;
-  return first;
+static void cubeMove(CubeMenu *m,int count,int dir) {
+  cubeSelect(m,(m->selected+dir+count)%count);
 }
 static void cubeScrollMove(CubeMenu *m,int count,int offset) {
   int next=m->selected+offset;
   if(next<0)next=0;
   if(next>=count)next=count-1;
   if(next==m->selected||m->closing)return;
-  m->firstRow=cubeScrollFirst(m->firstRow,m->itemCount,next);
   cubeSelect(m,next);
 }
 static void cubeClose(CubeMenu *m,int entering) {
@@ -274,7 +274,8 @@ static void cubeHubClose(void) {
 int uiCubeHubLoop(int *selected,const char *status,const LunaCubeHub *hub) {
   static CubeMenu menu;
   if(!hub||!hub->labels||hub->count<1||(!hub->scrollable&&hub->count>CUBE_COUNT))return -1;
-  if(hub->scrollable&&hub->submenuCount)return -1;
+  // Standalone lists use held repeats and page jumps. Category hubs keep wrapping.
+  const int scrollShortcuts=hub->scrollable&&!hub->submenuCount;
   uiCubePanelGlassClose();
   int initial=*selected;
   if(initial<0||initial>=hub->count)initial=0;
@@ -307,7 +308,7 @@ int uiCubeHubLoop(int *selected,const char *status,const LunaCubeHub *hub) {
     int sceneReady=cubeDraw(&menu,status,confirm,hub,submenu);
     gsKit_queue_exec(gsGlobal);gsKit_finish();gsKit_sync_flip(gsGlobal);usleep(1000);
     int held=pollInput(),input=held&~previous;previous=held;
-    if(hub->scrollable&&!menu.closing) {
+    if(scrollShortcuts&&!menu.closing) {
       int directions=held&(PAD_UP|PAD_DOWN);uint32_t now=uiNowMs();
       if(directions!=repeatHeld){repeatHeld=directions;repeatAt=now+350;}
       else if(directions&&(int32_t)(now-repeatAt)>=0){input|=directions;repeatAt=now+100;}
@@ -339,12 +340,12 @@ int uiCubeHubLoop(int *selected,const char *status,const LunaCubeHub *hub) {
       else if(input&PAD_CROSS) {destination=menu.selected;cubeClose(&menu,1);}
     } else if(input&(PAD_CIRCLE|PAD_TRIANGLE|PAD_START)) {
       destination=-1;cubeClose(&menu,0);
-    } else if(hub->scrollable&&(input&(PAD_UP|PAD_LEFT|PAD_L1|PAD_L2)))
+    } else if(scrollShortcuts&&(input&(PAD_UP|PAD_LEFT|PAD_L1|PAD_L2)))
       cubeScrollMove(&menu,hub->count,input&PAD_L2?-menu.itemCount:-1);
-    else if(hub->scrollable&&(input&(PAD_DOWN|PAD_RIGHT|PAD_R1|PAD_R2)))
+    else if(scrollShortcuts&&(input&(PAD_DOWN|PAD_RIGHT|PAD_R1|PAD_R2)))
       cubeScrollMove(&menu,hub->count,input&PAD_R2?menu.itemCount:1);
-    else if(input&(PAD_UP|PAD_LEFT|PAD_L1))cubeMove(&menu,-1);
-    else if(input&(PAD_DOWN|PAD_RIGHT|PAD_R1))cubeMove(&menu,1);
+    else if(input&(PAD_UP|PAD_LEFT|PAD_L1))cubeMove(&menu,hub->count,-1);
+    else if(input&(PAD_DOWN|PAD_RIGHT|PAD_R1))cubeMove(&menu,hub->count,1);
     else if(input&PAD_CROSS) {
       if(menu.selected==hub->confirmRow)confirm=1;
       else if(menu.selected<hub->submenuCount&&hub->submenus&&
@@ -360,14 +361,15 @@ int uiCubeHubLoop(int *selected,const char *status,const LunaCubeHub *hub) {
 }
 
 int uiCubeSettingsLoop(int *selected,const char *status,
-                       const LunaCubeSubmenu submenus[5]) {
+                       const LunaCubeSubmenu submenus[6]) {
   static const char *const labels[]={"Memory Cards","Storage",
-    "Language","Display","Defaults","Exit LUNA","Power Off"};
+    "Language","Display","Defaults","PS2 IGR Return","Exit LUNA","Power Off"};
   static const int actions[]={LUNA_CUBE_VMC,LUNA_CUBE_STORAGE,LUNA_CUBE_LANGUAGE,
-      LUNA_CUBE_DISPLAY,LUNA_CUBE_DEFAULTS,LUNA_CUBE_EXIT,LUNA_CUBE_SHUTDOWN};
-  const LunaCubeHub hub={.title="System Configuration",.labels=labels,.count=7,
-    .submenus=submenus,.submenuCount=5,.confirmRow=6,.confirmText="Power off the console?",
-    .gameOptionsLogo=1};
+      LUNA_CUBE_DISPLAY,LUNA_CUBE_DEFAULTS,LUNA_CUBE_IGR_RETURN,
+      LUNA_CUBE_EXIT,LUNA_CUBE_SHUTDOWN};
+  const LunaCubeHub hub={.title="System Configuration",.labels=labels,.count=8,
+    .submenus=submenus,.submenuCount=6,.confirmRow=7,.confirmText="Power off the console?",
+    .gameOptionsLogo=1,.scrollable=1};
   int row=uiCubeHubLoop(selected,status,&hub);
   return row<0?LUNA_CUBE_BACK:actions[row];
 }

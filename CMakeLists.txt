@@ -37,6 +37,7 @@ set(SOURCES
     src/main.c
     src/common.c
     src/apps.c
+    src/igr_return.c
     src/runtime_locks.c
     src/options.c
     src/display.c
