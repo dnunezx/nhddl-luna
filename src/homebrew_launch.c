@@ -17,14 +17,16 @@
 
 typedef struct {
   LunaHomebrewElf elf;
-  uint32_t source, argv[2];
+  uint32_t source, argv[3],argc;
   char path[PATH_MAX + 1];
+  char argument[129];
 } HomebrewControl;
 // The existing resident argument workspace survives replacement of application RAM.
 static HomebrewControl *control;
 extern void luna_homebrew_transfer(HomebrewControl *) __attribute__((noreturn));
 _Static_assert(offsetof(HomebrewControl, source) == 524, "homebrew source offset");
 _Static_assert(offsetof(HomebrewControl, argv) == 528, "homebrew argv offset");
+_Static_assert(offsetof(HomebrewControl, argc) == 540, "homebrew argc offset");
 static void *stagedFile;
 
 void lunaHomebrewDiscard(void) {
@@ -33,10 +35,15 @@ void lunaHomebrewDiscard(void) {
 }
 
 const char *lunaHomebrewPrepare(const char *path, LunaHomebrewProgress progress, void *context) {
+  return lunaHomebrewPrepareWithArgument(path,NULL,progress,context);
+}
+const char *lunaHomebrewPrepareWithArgument(const char *path,const char *argument,
+                                          LunaHomebrewProgress progress,void *context) {
   lunaHomebrewDiscard();
   control = lunaElfLaunchWorkspace(sizeof(*control));
   if (!control) return "Not enough memory to prepare this application.";
   if (!path || !*path || strlen(path) > PATH_MAX) return "The current path is too long.";
+  if(argument && strlen(argument)>=sizeof(control->argument))return "Launch arguments are too large. Reduce selected cheats or custom arguments.";
   FILE *file = fopen(path, "rb");
   if (!file) return "Could not open the selected ELF.";
   const char *error = NULL;
@@ -67,7 +74,10 @@ const char *lunaHomebrewPrepare(const char *path, LunaHomebrewProgress progress,
   control->source = (uint32_t)(uintptr_t)stagedFile;
   snprintf(control->path, sizeof(control->path), "%s", path);
   control->argv[0] = (uint32_t)(uintptr_t)control->path;
-  control->argv[1] = 0;
+  snprintf(control->argument,sizeof(control->argument),"%s",argument?argument:"");
+  control->argc=control->argument[0]?2:1;
+  control->argv[1]=control->argument[0]?(uint32_t)(uintptr_t)control->argument:0;
+  control->argv[2]=0;
   return NULL;
 }
 

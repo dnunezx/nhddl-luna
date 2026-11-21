@@ -7,6 +7,7 @@
 #include "options.h"
 #include "storage.h"
 #include "psxcore_hash.h"
+#include "ui/language.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,7 +39,7 @@ static const char *firmwareCheck(const char *path,unsigned index) {
     }
     return error;
 }
-static int titleError(char *out,size_t size,const char *message) {snprintf(out,size,"%s",message);return -1;}
+static int titleError(char *out,size_t size,const char *message) {snprintf(out,size,"%s",lunaText(message));return -1;}
 int lunaPsxPrepareTitleCards(Target *target,const LunaPsxVmcSettings *selection,
     int createCards,int codeValidation,int hdtvFix,int startDisc,char *error,size_t size,int (*progress)(uint64_t,uint64_t)) {
     if(!target || target->platform!=TARGET_PS1 || !target->device ||
@@ -82,12 +83,12 @@ int lunaPsxPrepareTitleCards(Target *target,const LunaPsxVmcSettings *selection,
         settings=*selection;
     }
     char id[12];reason=lunaPsxDiscInfo(path,id);
-    if(reason){snprintf(error,size,"Cannot prepare PS1 disc: %s",reason);return -1;}
+    if(reason){snprintf(error,size,lunaText("Cannot prepare PS1 disc: %s"),lunaText(reason));return -1;}
     char asset[192];const char *names[]={"POPS.ELF","IOPRP252.IMG"};
     for(unsigned i=0;i<2;++i) {
         snprintf(asset,sizeof(asset),"%.6s/POPS/%s",path,names[i]);
         reason=firmwareCheck(asset,i);
-        if(reason){snprintf(error,size,"%s: %s",reason,asset);return -1;}
+        if(reason){snprintf(error,size,"%s: %s",lunaText(reason),asset);return -1;}
     }
     NpFileDiscSet discSet={0};
     if(target->discs) {
@@ -98,7 +99,7 @@ int lunaPsxPrepareTitleCards(Target *target,const LunaPsxVmcSettings *selection,
     reason=lunaPsxVmcPrepare(&settings,createCards);
     if(reason) {
         if(!strcmp(reason,"Memory cards have not been created yet.")) {
-            snprintf(error,size,"This pair needs PS1 memory cards.\nPress Square to create missing cards and launch.\nPress Triangle to return.");return 1;
+            snprintf(error,size,"%s",lunaText("This pair needs PS1 memory cards.\nPress Square to create missing cards and launch.\nPress Triangle to return."));return 1;
         }
         return titleError(error,size,reason);
     }
@@ -151,7 +152,7 @@ int lunaPsxPrepareTitleCards(Target *target,const LunaPsxVmcSettings *selection,
         args[count++]="--save-device";args[count++]=saveDevice;
     }
     reason=lunaPsxPrepare(bootstrap,count,args);
-    if(reason){snprintf(error,size,"Cannot prepare PSXCore: %s",reason);return -1;}
+    if(reason){snprintf(error,size,lunaText("Cannot prepare PSXCore: %s"),lunaText(reason));return -1;}
     (void)updateLastLaunchedTitle(target->device,target->fullPath);
     return 0;
 }

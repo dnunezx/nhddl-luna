@@ -10,10 +10,24 @@ static const char *appSaveError(int error) {
   return error==-EEXIST?"This app is already in Apps.":error==-ENOSPC?"The Apps list is full.":
       "Could not save Apps. Check the launcher drive.";
 }
+static int loadAppShortcuts(LunaApps *apps) {
+  int error=lunaAppsLoad(apps);
+  if(error || apps->hasConfig)return error;
+  BrowserRoot *roots=calloc(BROWSER_MAX_ROOTS,sizeof(*roots));if(!roots)return -ENOMEM;
+  int count=collectRoots(roots);
+  for(int i=0;i<count;i++) {
+    char path[PATH_MAX+1];
+    if(joinPath(path,sizeof(path),roots[i].path,"APPS") && lunaAppsScan(apps,path,0)<0){error=-ENOMEM;break;}
+    if(!strncmp(roots[i].path,"mc",2) && lunaAppsScan(apps,roots[i].path,1)<0){error=-ENOMEM;break;}
+  }
+  free(roots);
+  if(error)memset(apps,0,sizeof(*apps));
+  return error;
+}
 static void addAppShortcut(const char *path,char *status,size_t size) {
   LunaApps *apps=calloc(1,sizeof(*apps));
   if(!apps){snprintf(status,size,"%s",lunaText("Not enough memory."));return;}
-  int error=lunaAppsLoad(apps);
+  int error=loadAppShortcuts(apps);
   if(error){snprintf(status,size,"%s",lunaText("Could not read Apps. Check the launcher drive."));free(apps);return;}
   char name[LUNA_APP_NAME+1];lunaAppSuggestName(path,name,sizeof(name));
   if(editFileName(lunaText("App name"),name,sizeof(name),LUNA_APP_NAME)) {
@@ -177,7 +191,7 @@ static int appHubInput(void *context,int input) {
 static void uiAppsLoop(void) {
   AppsMenu *menu=calloc(1,sizeof(*menu));if(!menu)return;
   menu->apps=calloc(1,sizeof(*menu->apps));if(!menu->apps){free(menu);return;}
-  menu->checked=-1;menu->loadError=lunaAppsLoad(menu->apps);
+  menu->checked=-1;menu->loadError=loadAppShortcuts(menu->apps);
   if(menu->loadError)snprintf(menu->status,sizeof(menu->status),"%s",lunaText("Could not read Apps. Check the launcher drive."));
   for(;;) {
     const char *labels[LUNA_APP_LIMIT];
@@ -194,7 +208,7 @@ static void uiAppsLoop(void) {
       if(!menu->loadError && appPickFile(path,sizeof(path))) {
         int priorCount=menu->apps->count;
         addAppShortcut(path,menu->status,sizeof(menu->status));
-        menu->loadError=lunaAppsLoad(menu->apps);
+        menu->loadError=loadAppShortcuts(menu->apps);
         if(menu->apps->count>priorCount)menu->selected=menu->apps->count-1;
       }
     } else if(menu->action==APP_ACTION_OPTIONS)appOptions(menu);
@@ -206,7 +220,7 @@ static void uiAppsLoop(void) {
             PROMPT_TWO(ICON_CROSS,lunaText("Launch"),ICON_CIRCLE,lunaText("Cancel")));
         if(waitForInput(PAD_CROSS|PAD_CIRCLE)&PAD_CROSS) {
           FileOpenProgress progress={.path=path,.application=1};
-          const char *error=lunaHomebrewPrepare(path,drawFileOpenProgress,&progress);
+          const char *error=lunaHomebrewPrepareWithArgument(path,menu->apps->items[row].argument,drawFileOpenProgress,&progress);
           if(error)snprintf(menu->status,sizeof(menu->status),"%s",lunaText(error));
           else {uiCubePanelGlassClose();free(menu->apps);free(menu);lunaHomebrewExecute();}
         }

@@ -83,7 +83,7 @@ luna_homebrew_transfer:
     nop
     lw $a0,0($s0)
     lw $a1,4($s0)
-    li $a2,1
+    lw $a2,540($s0)
     addiu $a3,$s0,528
     li $v1,7 /* ExecPS2(entry, gp, argc, argv) */
     syscall

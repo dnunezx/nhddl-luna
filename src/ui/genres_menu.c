@@ -209,7 +209,7 @@ static void draw(GenreMenu *m) {
     if(alpha<=.01f || depth<64)continue;
     float scale=500*psnowGenreProjectionScale(&m->model)/depth;
     float cx=320+p.x*scale,cy=240-p.y*scale;
-    const char *label=lunaText(lunaGenreName(m->genres[i]));
+    const char *label=genreLabel(m->genres[i]);
     /* Original front-facing labels retain their projected anchors. Fit only
      * viewport edges and the library footer to the active output/font. */
     uint64_t color=i==m->model.selected?GS_SETREG_RGBA(255,255,0,128):FontMainColor;

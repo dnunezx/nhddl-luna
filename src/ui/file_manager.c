@@ -779,7 +779,7 @@ static int editFileName(const char *title, char *name, size_t capacity,
 
 static void formatBytes(uint64_t bytes, char *text, size_t size) {
   if (bytes >= 1048576)
-    snprintf(text, size, "%llu.%02llu MiB (%llu bytes)",
+    snprintf(text, size, lunaText("%llu.%02llu MiB (%llu bytes)"),
              (unsigned long long)(bytes / 1048576),
              (unsigned long long)((bytes % 1048576) * 100 / 1048576),
              (unsigned long long)bytes);
@@ -1533,7 +1533,7 @@ static void showCopyProgress(CopyProgress *progress, const char *name,
            (unsigned long long)((progress->totalBytes + 1048575) / 1048576),
            (unsigned long long)(speedTenths / 10),
            (unsigned long long)(speedTenths % 10));
-  snprintf(footer, sizeof(footer), "ETA %llu:%02llu  %s",
+  snprintf(footer, sizeof(footer), lunaText("ETA %llu:%02llu  %s"),
            (unsigned long long)(secondsLeft / 60),
            (unsigned long long)(secondsLeft % 60), name);
   drawFileManagerFrame(progress->roots, progress->rootCount, progress->browser,
