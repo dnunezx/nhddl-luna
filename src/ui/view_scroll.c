@@ -1604,8 +1604,9 @@ static void drawBiosSystemConfiguration(uint32_t frameNowMs) {
 static int optionsBackgroundDrawn;
 
 static void drawLibraryBackground(uint32_t frameNowMs, int orbit) {
-  frameNowMs=lunaAnimationNow(LUNA_ANIM_CLOCK_BACKGROUND,frameNowMs);
+  // Game Options redraws the saved library view over a live wallpaper.
   if (optionsBackgroundDrawn) return;
+  frameNowMs=lunaAnimationNow(LUNA_ANIM_CLOCK_BACKGROUND,frameNowMs);
 #ifdef LUNA_CAMERA_ANIMATIONS
   lunaCameraSceneBeforeBackground();
 #endif

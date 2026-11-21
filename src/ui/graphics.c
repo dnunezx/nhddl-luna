@@ -1251,7 +1251,7 @@ failed:
 }
 
 static int loadPNGTextureRGBAInternal(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
-                                      const char *path, int upload,
+                                      const char *path, int upload, int fitVram,
                                       const volatile int *cancelled) {
   if (cancelled != NULL && *cancelled)
     return -1;
@@ -1283,7 +1283,7 @@ static int loadPNGTextureRGBAInternal(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
   result = gsKit_texture_png_mem(gsGlobal, texture, buffer, fileSize, 0, 0);
   if (result == 0 &&
       ((cancelled != NULL && *cancelled) ||
-       fitTextureToVram(gsGlobal, texture) < 0 ||
+       (fitVram && fitTextureToVram(gsGlobal, texture) < 0) ||
        (upload && !bindTextureSafe(gsGlobal, texture)))) {
     free(texture->Mem);
     texture->Mem = NULL;
@@ -1294,14 +1294,18 @@ static int loadPNGTextureRGBAInternal(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
 }
 
 int loadPNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path) {
-  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 1, NULL);
+  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 1, 1, NULL);
 }
 
 int decodePNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path) {
-  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 0, NULL);
+  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 0, 1, NULL);
+}
+
+int decodePNGTextureForQuickPlay(GSTEXTURE *texture, const char *path) {
+  return loadPNGTextureRGBAInternal(NULL, texture, path, 0, 0, NULL);
 }
 
 int decodeCollectionPNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
                                    const char *path, const volatile int *cancelled) {
-  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 0, cancelled);
+  return loadPNGTextureRGBAInternal(gsGlobal, texture, path, 0, 1, cancelled);
 }

@@ -3,6 +3,7 @@
 #include "opl_ata.h"
 #include "opl_ata_abi.h"
 #include "opl_devices.h"
+#include "quick_play.h"
 #include "igr_return.h"
 #include "opl_logo.h"
 #include "opl_vmc.h"
@@ -603,6 +604,7 @@ int launchOplTitle(Target *target, ArgumentList *arguments, const char *cheatPay
 
   // Commit the handoff only after all checks that can fall back to Neutrino.
   // Preserve LUNA's libkernel region above OPL_CLEAR_END during installation.
+  (void)quickPlayExport(target);
   ambientStop();
   // All runtime files are in RAM, including those read from the boot card.
   config->_CompatMask |= mmceMountVMC(target->id, !(compat & OPL_COMPAT_DISABLE_IGR)) << OPL_COMPAT_MMCE_SHIFT;

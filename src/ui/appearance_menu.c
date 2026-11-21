@@ -114,11 +114,11 @@ static const char *appearanceHubDescription(void *context,int row) {
     "Choose the glass tint and Start-menu ring color.","Tune Ambient Orbs, Neo, or Space Flight.",
     "Choose the interface font. Wide menu headings stay unchanged.","Play ambient music while browsing.",
     "Apply or reset a coordinated background, interface, ring and orb palette.",
-    "Choose Cinematic or Instant and customize every launcher animation."};
+    "Choose Cinematic or Instant and customize menu motion and effects."};
   return descriptions[row];
 }
 static int appearanceRowCount(AppearanceEditor *s) {
-  if(s->category==AP_ANIMATIONS)return s->animationEditor?LUNA_ANIM_COUNT+4:3;
+  if(s->category==AP_ANIMATIONS)return s->animationEditor?AP_ANIM_ROWS:3;
   if(s->category==AP_THEMES)return 2;
   if(s->category==AP_VIEWS)return UI_VIEW_COUNT+4;
   if(s->category==AP_COLORS)return 4;

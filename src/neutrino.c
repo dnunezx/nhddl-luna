@@ -5,6 +5,7 @@
 #include "neutrino.h"
 #include "opl_ata.h"
 #include "opl_devices.h"
+#include "quick_play.h"
 #include "igr_return.h"
 #include "ui/ambient.h"
 #include "options.h"
@@ -226,6 +227,7 @@ void launchTitleWithCheatProgress(Target *target, ArgumentList *arguments,
   if (progress != NULL)
     progress(LAUNCH_STAGE_STARTING, userdata);
 
+  (void)quickPlayExport(target);
   // The launcher is about to replace its own memory with Neutrino.
   ambientStop();
   launchELF(argCount, argv);

@@ -361,14 +361,14 @@ int uiCubeHubLoop(int *selected,const char *status,const LunaCubeHub *hub) {
 }
 
 int uiCubeSettingsLoop(int *selected,const char *status,
-                       const LunaCubeSubmenu submenus[6]) {
+                       const LunaCubeSubmenu submenus[7]) {
   static const char *const labels[]={"Memory Cards","Storage",
-    "Language","Display","Defaults","PS2 IGR Return","Exit LUNA","Power Off"};
+    "Language","Display","Defaults","ROCKET Quick Play","PS2 IGR Return","Exit LUNA","Power Off"};
   static const int actions[]={LUNA_CUBE_VMC,LUNA_CUBE_STORAGE,LUNA_CUBE_LANGUAGE,
-      LUNA_CUBE_DISPLAY,LUNA_CUBE_DEFAULTS,LUNA_CUBE_IGR_RETURN,
+      LUNA_CUBE_DISPLAY,LUNA_CUBE_DEFAULTS,LUNA_CUBE_QUICK_PLAY,LUNA_CUBE_IGR_RETURN,
       LUNA_CUBE_EXIT,LUNA_CUBE_SHUTDOWN};
-  const LunaCubeHub hub={.title="System Configuration",.labels=labels,.count=8,
-    .submenus=submenus,.submenuCount=6,.confirmRow=7,.confirmText="Power off the console?",
+  const LunaCubeHub hub={.title="System Configuration",.labels=labels,.count=9,
+    .submenus=submenus,.submenuCount=7,.confirmRow=8,.confirmText="Power off the console?",
     .gameOptionsLogo=1,.scrollable=1};
   int row=uiCubeHubLoop(selected,status,&hub);
   return row<0?LUNA_CUBE_BACK:actions[row];

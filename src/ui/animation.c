@@ -2,7 +2,8 @@
 #include <string.h>
 
 #define CINEMATIC_PROFILE {{4,4,4,4,4,4,4,4,4,4,4},2,2,1}
-#define INSTANT_PROFILE {{1,1,1,1,1,1,1,1,1,1,1},3,3,1}
+#define INSTANT_PROFILE {{1,1,1,1,1,1,LUNA_ANIMATION_ORIGINAL,1, \
+                          LUNA_ANIMATION_ORIGINAL,1,LUNA_ANIMATION_ORIGINAL},2,3,1}
 static const LunaAnimations defaults = {0,{CINEMATIC_PROFILE,INSTANT_PROFILE}};
 static LunaAnimations active = {0,{CINEMATIC_PROFILE,INSTANT_PROFILE}};
 static const unsigned percentages[] = {0,25,50,75,100,150,200};
@@ -14,7 +15,10 @@ void lunaAnimationResetProfile(LunaAnimations *settings,unsigned profile) {
 }
 static const LunaAnimationProfile *profile(void) { return &active.profiles[active.mode]; }
 unsigned lunaAnimationPercent(LunaAnimation animation) {
-  if((unsigned)animation>=LUNA_ANIM_COUNT)return 100;
+  // Older Appearance records still contain overrides for these timings.
+  if ((unsigned)animation >= LUNA_ANIM_COUNT || animation == LUNA_ANIM_LIBRARY_MOVE ||
+      animation == LUNA_ANIM_ARTWORK || animation == LUNA_ANIM_STARTUP)
+    return 100;
   return percentages[profile()->timing[animation]];
 }
 int lunaAnimationInstant(LunaAnimation animation) { return !lunaAnimationPercent(animation); }
@@ -36,12 +40,10 @@ float lunaAnimationStep(LunaAnimation animation,float elapsed,float endpoint) {
   return percent?elapsed*100/percent:endpoint;
 }
 uint32_t lunaAnimationNow(LunaAnimationClock clock,uint32_t now) {
-  if((unsigned)clock>=LUNA_ANIM_CLOCK_COUNT)return now;
+  if (clock == LUNA_ANIM_CLOCK_BACKGROUND || (unsigned)clock >= LUNA_ANIM_CLOCK_COUNT)
+    return now;
   unsigned rate=100;
-  if(clock==LUNA_ANIM_CLOCK_BACKGROUND) {
-    static const unsigned rates[]={0,50,100,25};
-    rate=rates[profile()->background];
-  } else if(clock==LUNA_ANIM_CLOCK_EFFECT)rate=profile()->effects==3?25:profile()->effects?100:0;
+  if(clock==LUNA_ANIM_CLOCK_EFFECT)rate=profile()->effects==3?25:profile()->effects?100:0;
   else {
     unsigned duration=lunaAnimationPercent(LUNA_ANIM_ARTWORK);
     rate=duration?10000/duration:0;

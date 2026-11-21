@@ -71,6 +71,6 @@ void drawAmbientOrbsSystemConfig(uint64_t clockMs, uint32_t now,
 // Its orb sprites use the bright LUNA appearance.
 void resetAmbientOrbsSplash(uint32_t now);
 void drawAmbientOrbsSplash(int centerX, int centerY, int radiusX,
-                           int radiusY, uint32_t now, int trailZ);
+                           int radiusY, uint32_t formationElapsed, int trailZ);
 
 #endif

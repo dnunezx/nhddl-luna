@@ -32,6 +32,7 @@ int loadPNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path)
 
 // Decodes a PNG into EE memory without uploading it to GS VRAM.
 int decodePNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture, const char *path);
+int decodePNGTextureForQuickPlay(GSTEXTURE *texture, const char *path);
 // Collections can abandon obsolete work between file-read and whole-image stages.
 int decodeCollectionPNGTextureRGBA(GSGLOBAL *gsGlobal, GSTEXTURE *texture,
                                    const char *path, const volatile int *cancelled);

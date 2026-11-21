@@ -1722,11 +1722,8 @@ void drawAmbientOrbsSystemConfig(uint64_t clockMs, uint32_t now,
 }
 
 void drawAmbientOrbsSplash(int centerX, int centerY, int radiusX,
-                           int radiusY, uint32_t now, int trailZ) {
-  uint32_t elapsedMs = glassElapsedMs(now);
-  if(lunaAnimationInstant(LUNA_ANIM_STARTUP))elapsedMs=splashStartMs;
-  else if(elapsedMs>=splashStartMs)elapsedMs=splashStartMs+
-      lunaAnimationElapsed(LUNA_ANIM_STARTUP,elapsedMs-splashStartMs);
+                           int radiusY, uint32_t formationElapsed, int trailZ) {
+  const uint32_t elapsedMs = splashStartMs + formationElapsed;
   drawAmbientOrbs(centerX, centerY, radiusX, radiusY, elapsedMs,
                    elapsedMs, elapsedMs, 1, 1, 100, trailZ, 2);
 }

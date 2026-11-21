@@ -38,6 +38,7 @@ set(SOURCES
     src/common.c
     src/apps.c
     src/igr_return.c
+    src/quick_play.c
     src/runtime_locks.c
     src/options.c
     src/display.c

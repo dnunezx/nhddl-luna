@@ -21,6 +21,7 @@
 #include "devices/devices.h"
 #include "devices/init.h"
 #include "storage.h"
+#include "quick_play.h"
 #include "ui/graphics.h"
 #include "ui/language.h"
 #include "ui/pad.h"
@@ -2825,6 +2826,56 @@ static void waitMenuButtonRelease(void) {
 
 typedef struct {
   LunaCubePageFocus focus;
+  const char *status;
+} QuickPlayEditor;
+
+static const char *quickPlayRowLabel(void *context, int row) {
+  (void)context;
+  (void)row;
+  return "Remember last PS2 game";
+}
+
+static const char *quickPlayRowValue(void *context, int row) {
+  (void)context;
+  (void)row;
+  return quickPlayEnabled() ? "On" : "Off";
+}
+
+static void quickPlaySubmenuBegin(void *context) {
+  QuickPlayEditor *editor = context;
+  editor->focus = (LunaCubePageFocus){.selected = -1};
+  editor->status = "ROCKET Quick Play uses the last PS2 game you launch.";
+}
+
+static void quickPlaySubmenuDraw(void *context, float opacity) {
+  QuickPlayEditor *editor = context;
+  const LunaCubePage page = {.title = "ROCKET Quick Play", .count = 1,
+    .label = quickPlayRowLabel, .value = quickPlayRowValue, .status = editor->status,
+    .libraryFooter = 1};
+  uiCubeSubmenuPageDraw(&page, 0, &editor->focus, opacity);
+  PromptBar footer = PROMPT_TWO(ICON_CROSS, lunaText("Change"), ICON_CIRCLE, lunaText("Back"));
+  uiCubeSubmenuFooterDraw(&footer, opacity);
+}
+
+static int quickPlaySubmenuInput(void *context, int input) {
+  QuickPlayEditor *editor = context;
+  if (input & (PAD_CIRCLE | PAD_TRIANGLE | PAD_START))
+    return LUNA_CUBE_SUBMENU_BACK;
+  if (input & PAD_CROSS) {
+    int result = quickPlaySetEnabled(!quickPlayEnabled());
+    if (result == -1)
+      editor->status = "Could not save the Quick Play setting.";
+    else if (result == -2)
+      editor->status = "Quick Play is off. Could not clear the last game record.";
+    else
+      editor->status = quickPlayEnabled() ? "Quick Play will remember the next PS2 game you launch." :
+                                          "Quick Play is off.";
+  }
+  return LUNA_CUBE_SUBMENU_STAY;
+}
+
+typedef struct {
+  LunaCubePageFocus focus;
   int selected;
   const char *status;
   const char *path;
@@ -2879,8 +2930,9 @@ static int uiSystemSettingsLoop(int hasLibrary, Target *target) {
   StorageEditor storage = {0};
   VmcEditor vmc = {0};
   LanguageEditor language = {0};
+  QuickPlayEditor quickPlay = {0};
   IgrReturnEditor igrReturn = {0};
-  const LunaCubeSubmenu submenus[6] = {
+  const LunaCubeSubmenu submenus[7] = {
     {.context=&vmc,.begin=vmcSubmenuBegin,.draw=vmcSubmenuDraw,
      .input=vmcSubmenuInput,.end=vmcSubmenuEnd},
     {.context=&storage,.begin=storageSubmenuBegin,.draw=storageSubmenuDraw,
@@ -2889,6 +2941,8 @@ static int uiSystemSettingsLoop(int hasLibrary, Target *target) {
      .input=languageSubmenuInput},
     uiDisplaySubmenu(),
     uiDefaultsSubmenu(target),
+    {.context=&quickPlay,.begin=quickPlaySubmenuBegin,.draw=quickPlaySubmenuDraw,
+     .input=quickPlaySubmenuInput},
     {.context=&igrReturn,.begin=igrReturnSubmenuBegin,.draw=igrReturnSubmenuDraw,
      .input=igrReturnSubmenuInput}
   };

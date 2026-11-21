@@ -10,12 +10,14 @@
 #include "igr_return.h"
 #include "neutrino.h"
 #include "options.h"
+#include "quick_play.h"
 #include "target.h"
 #include "storage.h"
 #include "ui/ui.h"
 #include "ui/language.h"
 #include "ui/ambient.h"
 #include "ui/art_cache.h"
+#include "ui/file_manager.h"
 #include "ui/view_state.h"
 #include <ctype.h>
 #include <debug.h>
@@ -122,7 +124,18 @@ int main(int argc, char *argv[]) {
   if (titles == NULL)
     goto fail;
 
-  if (titles->total == 0) {
+  int splashStopped = 0;
+  if (quickPlayIsBoot()) {
+    Target *target = quickPlayFindTarget(titles);
+    if (target) {
+      ArgumentList *arguments = loadLaunchArgumentLists(target);
+      if (arguments && !uiVmcCheckPs2(target, arguments)) {
+        stopUISplashThread();
+        splashStopped = 1;
+        launchTitle(target, arguments);
+      }
+      if (arguments) freeArgumentList(arguments);
+    }
   }
 
   // Let the audio worker preempt long cover decodes in the UI thread.
@@ -155,7 +168,8 @@ int main(int argc, char *argv[]) {
     uint32_t enabledViews = loadEnabledLibraryViews(audioTarget);
     if (!(enabledViews & (1U << startupView)))
       startupView = lunaNavNextView(startupView, enabledViews);
-    if (lunaNavIsCollection(startupView) && loadLastGameMode(audioTarget) == TARGET_ALL) {
+    if (!splashStopped && lunaNavIsCollection(startupView) &&
+        loadLastGameMode(audioTarget) == TARGET_ALL) {
       // Prepare the current cover and six upcoming games behind the splash.
       setCollectionArtForeground(1);
       preparedCollectionIdx = audioTarget->idx;
@@ -167,7 +181,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  stopUISplashThread();
+  if (!splashStopped) stopUISplashThread();
   for (;;) {
     res = uiLoop(titles, preparedCollectionIdx);
     if (res == LUNA_DISPLAY_UI_REFRESH) {
@@ -242,6 +256,7 @@ int argInit() {
   lunaAppsConfigure(cwdPath);
   lunaLanguageConfigure(cwdPath);
   lunaDisplayConfigure(cwdPath);
+  quickPlayConfigure(cwdPath, NULL);
   lunaIgrConfigure(cwdPath, commandLineIgrPath);
 
   // Search for neutrino.elf
@@ -257,6 +272,7 @@ int argInit() {
 
 // Initializes modules, NHDDL configuraton, Neutrino path and device map
 int init(char *elfPath) {
+  const char *bootPath = elfPath;
   int initialModules = 0;
   if (elfPath) {
     // Guess root device
@@ -291,6 +307,7 @@ int init(char *elfPath) {
   lunaAppsConfigure(elfPath);
   lunaLanguageConfigure(elfPath);
   lunaDisplayConfigure(elfPath);
+  quickPlayConfigure(elfPath, bootPath);
   lunaIgrConfigure(elfPath, commandLineIgrPath);
 
   // Search for neutrino.elf

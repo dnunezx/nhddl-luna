@@ -87,7 +87,7 @@ static int appearanceCubeInput(void *context,int input) {
       s->animationEditor=*row;
       *row=s->animationRows[s->animationEditor-1];s->pageFocus.selected=-1;
     }
-  } else if(s->category==AP_ANIMATIONS && s->animationEditor && *row==LUNA_ANIM_COUNT+3) {
+  } else if(s->category==AP_ANIMATIONS && s->animationEditor && *row==AP_ANIM_RESTORE) {
     if(input&PAD_CROSS)appearanceWorkspaceAdjust(s,*row,0);
   } else if(s->category==AP_THEMES&&*row==1) {
     if(input&PAD_CROSS)appearanceWorkspaceAdjust(s,*row,0);

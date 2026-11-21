@@ -53,7 +53,6 @@
 #define PSBBN_TIMER_TICKS_PER_MS 576ULL
 #define GRID_LEFT_SHOULDERS PAD_L2
 #define GRID_RIGHT_SHOULDERS PAD_R2
-#define SPLASH_MIN_VISIBLE_MS 3400
 #define LIBRARY_RETURN_FADE_MS 180
 #define CLASSIC_LIST_ENTRY_SLIDE_MS 360
 #define LIBRARY_VIEW_ENTRY_MS 320
@@ -741,7 +740,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
                                    : now - psbbnAnimationStart,
               lunaNavIsCollection(view)
                   ? lunaNavDurationFrames(psbbnAnimationDuration, collectionFps)
-                  : psbbnAnimationDuration,
+                  : lunaAnimationDuration(LUNA_ANIM_LIBRARY_MOVE, psbbnAnimationDuration),
               flowStartVelocity);
         psbbnOutgoingTitleIdx = psbbnAnimationTargetIdx;
         psbbnAnimationStartOffset = currentOffset + direction * 1000;
@@ -763,7 +762,7 @@ int uiLoop(TargetList *titles, int preparedCollectionIdx) {
         flowStartVelocity = lunaNavGlideCarry(psbbnAnimationStartOffset,
             lunaNavIsCollection(view)
                 ? lunaNavDurationFrames(psbbnAnimationDuration, collectionFps)
-                : psbbnAnimationDuration,
+                : lunaAnimationDuration(LUNA_ANIM_LIBRARY_MOVE, psbbnAnimationDuration),
             inheritedVelocity);
         flowManualGlide = !collectionScan.active && !scrollFast.active &&
                           !orbitRandomActive;
@@ -1874,10 +1873,10 @@ void uiSplashThread() {
 
     gsKit_TexManager_nextFrame(gsGlobal);
     gsKit_clear(gsGlobal, GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80));
-    const uint32_t now = lunaAnimationNow(LUNA_ANIM_CLOCK_BACKGROUND,uiNowMs());
+    const uint32_t elapsed = uiNowMs() - splashVisibleStartMs;
     drawAmbientOrbsSplash(gsGlobal->Width / 2, gsGlobal->Height * 48 / 100,
                           gsGlobal->Width * 31 / 100,
-                          gsGlobal->Height * 36 / 100, now, 1);
+                          gsGlobal->Height * 36 / 100, elapsed, 1);
 
     // Successful boot stays intentionally minimal. Only surface a fatal error
     // so a failed initialization cannot be mistaken for endless loading.
@@ -1898,11 +1897,7 @@ void uiSplashThread() {
 
 // Stops UI splash thread
 void stopUISplashThread() {
-  // A fast scan otherwise exits before the LUNA-to-cube animation is visible.
-  while ((uint32_t)(uiNowMs() - splashVisibleStartMs) < lunaAnimationDuration(LUNA_ANIM_STARTUP,SPLASH_MIN_VISIBLE_MS))
-    usleep(16000);
   SignalSema(logBuffer.doneSema);
-  SignalSema(logBuffer.newStringSema);
   WaitSema(logBuffer.drawnSema);
   DeleteSema(logBuffer.drawnSema);
 }
