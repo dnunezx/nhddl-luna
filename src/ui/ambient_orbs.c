@@ -34,6 +34,7 @@
 #define ORB_SIZE_PULSE_MS 2400
 #define ORB_SELECTION_EVENT_COUNT 12
 static uint32_t glassStartMs;
+static uint32_t backgroundStartMs;
 static uint32_t orbitStartMs;
 static uint32_t splashStartMs;
 static int ambientOrbsBackgroundStyle;
@@ -127,6 +128,8 @@ static void projectCrystalPoint(GlassPoint *point, float centerX, float centerY,
 
 void resetAmbientOrbs(uint32_t startMs) {
   glassStartMs = startMs;
+  // Library rendering passes background-clock time to the orb draw functions.
+  backgroundStartMs = lunaAnimationNow(LUNA_ANIM_CLOCK_BACKGROUND, startMs);
   systemConfigClockReady = 0;
   orbitStartMs = 0;
   splashStartMs = 0;
@@ -160,7 +163,7 @@ void setAmbientOrbsTheme(AmbientOrbsTheme theme, uint32_t now) {
         ((hour < 24 ? hour : 0) * 3600U +
          (minute < 60 ? minute : 0) * 60U +
          (second < 60 ? second : 0)) * 1000U;
-    originalClockAnchorMs = now;
+    originalClockAnchorMs = lunaAnimationNow(LUNA_ANIM_CLOCK_BACKGROUND, now);
     originalScatterPhase = stamp & 0xFFFFU;
   }
 }
@@ -328,8 +331,12 @@ static uint64_t orbLightColor(int red, int green, int blue, int alpha,
   return GS_SETREG_RGBA(red, green, blue, alpha);
 }
 
+static uint32_t orbBackgroundElapsed(uint32_t now) {
+  return lunaAnimationNow(LUNA_ANIM_CLOCK_BACKGROUND, now) - backgroundStartMs;
+}
+
 void resetAmbientOrbsOrbit(uint32_t now) {
-  orbitStartMs = now - glassStartMs;
+  orbitStartMs = orbBackgroundElapsed(now);
 }
 
 void resetAmbientOrbsSplash(uint32_t now) {
@@ -375,7 +382,7 @@ static void orbSelectionChanged(int selectedTitleIdx, uint32_t elapsedMs) {
 }
 
 void observeAmbientOrbsSelection(int selectedTitleIdx, uint32_t now) {
-  orbSelectionChanged(selectedTitleIdx, glassElapsedMs(now));
+  orbSelectionChanged(selectedTitleIdx, orbBackgroundElapsed(now));
 }
 
 static float orbSelectionPulse(uint32_t elapsedMs) {
@@ -471,6 +478,7 @@ typedef struct {
   uint32_t random;
   uint32_t startMs;
   uint32_t epochMs;
+  uint32_t shapeMask;
   OrbShape from;
   OrbShape to;
   OrbShape previousFrom;
@@ -526,8 +534,10 @@ static OrbFormation *orbFormationAt(uint32_t elapsedMs, int formationMode) {
                          relativeMs / ORB_SPLASH_FORMATION_PERIOD_MS :
                          (relativeMs / pairMs) * 2U +
                          (relativeMs % pairMs >= shapeMs ? 1U : 0U);
+  const uint32_t shapeMask = formationMode == 2 ? 0 : enabledOrbShapes;
   if (!formation->initialized || formation->startMs != glassStartMs ||
-      formation->epochMs != epochMs || cycle < formation->cycle) {
+      formation->epochMs != epochMs || formation->shapeMask != shapeMask ||
+      cycle < formation->cycle) {
     formation->cycle = 0;
     formation->phaseStartMs = epochMs;
     formation->morphMs = 0;
@@ -537,6 +547,7 @@ static OrbFormation *orbFormationAt(uint32_t elapsedMs, int formationMode) {
                         ((uint32_t)formationMode * 0x9E3779B9U);
     formation->startMs = glassStartMs;
     formation->epochMs = epochMs;
+    formation->shapeMask = shapeMask;
     formation->from = formationMode == 2 ? ORB_SHAPE_LUNA :
                       formationMode == 1 ? nextEnabledOrbitShape(ORB_SHAPE_PLAYTIME) :
                       pickEnabledOrbShape(enabledOrbShapes, ORB_SHAPE_PLAYTIME, 0);
@@ -1474,7 +1485,7 @@ static void drawAmbientOrbs(int centerX, int centerY, int radiusX, int radiusY,
   orbBackgroundColorsActive = formationMode == 0;
   if (formationMode != 2 && ambientOrbsTheme == ORBS_THEME_PS2_ORIGINAL) {
     drawOriginalOrbs(centerX, centerY, radiusX, radiusY,
-                     glassStartMs + elapsedMs, trailZ, 0, NULL);
+                     backgroundStartMs + elapsedMs, trailZ, 0, NULL);
     return;
   }
   OrbFormation *formation = orbFormationAt(formationMs, formationMode);
@@ -1656,7 +1667,7 @@ int drawAmbientOrbsBackground(uint32_t now) {
     return 0;
   const int width = gsGlobal->Width;
   const int height = gsGlobal->Height;
-  const uint32_t elapsedMs = glassElapsedMs(now);
+  const uint32_t elapsedMs = now - backgroundStartMs;
   const uint64_t black = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0x80);
   gsKit_prim_quad_gouraud(gsGlobal, 0, 0, width, 0, 0, height,
                           width, height, 0, black, black, black, black);
@@ -1668,7 +1679,7 @@ int drawAmbientOrbsBackground(uint32_t now) {
 
 void drawAmbientOrbsOrbit(int centerX, int centerY, int radiusX,
                           int radiusY, uint32_t now, int trailZ) {
-  const uint32_t elapsedMs = glassElapsedMs(now);
+  const uint32_t elapsedMs = now - backgroundStartMs;
   drawAmbientOrbs(centerX, centerY, radiusX, radiusY, elapsedMs,
                    elapsedMs, elapsedMs, 1, 1, 100, trailZ, 1);
 }

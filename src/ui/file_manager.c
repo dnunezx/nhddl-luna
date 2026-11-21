@@ -10,6 +10,7 @@
 #include "ui/text_file.h"
 #include "homebrew_launch.h"
 #include "apps.h"
+#include "ui/animation.h"
 #include "vmc_create.h"
 #include "vmc_storage.h"
 #include "ui/game_options.h"
