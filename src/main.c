@@ -240,7 +240,7 @@ int initDevices() {
 // Does a quick init for options given in argv
 int argInit() {
   int res;
-  char cwdPath[PATH_MAX + 1];
+  char cwdPath[PATH_MAX + 1] = "";
 
   if ((res = initModules(LAUNCHER_OPTIONS.mode)) != 0)
     return res;

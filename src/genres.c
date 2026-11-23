@@ -8,8 +8,6 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
-#define NEWLIB_PORT_AWARE
-#include <fileXio_rpc.h>
 
 static const char *const defaults[LUNA_GENRE_DEFAULTS] = {
   "Action", "Adventure", "RPG", "Racing", "Fighting", "Sports",
@@ -37,12 +35,6 @@ static const char *genreKey(const Target *target, char key[64]) {
   int offset=getRelativePathIdx(target->fullPath);
   return target->fullPath+(offset<0 ? 0 : offset);
 }
-static int missing(const char *path) {
-  iox_stat_t info;
-  int result=fileXioGetStat(path,&info);
-  if (result==-ENOENT) return 1;
-  return !strncmp(path,"mass",4) && result<0 && (result==-4 || result==-5);
-}
 static uint32_t checksum(uint32_t hash,const char *data,size_t bytes) {
   while(bytes--) hash=(hash^(unsigned char)*data++)*16777619U;
   return hash;
@@ -60,7 +52,7 @@ static int validName(const char *name) {
 static int readRecords(const char *path,Record **out) {
   *out=NULL;
   FILE *file=fopen(path,"rb");
-  if(!file)return missing(path)?-ENOENT:-EIO;
+  if(!file)return configFileMissing(path)?-ENOENT:-EIO;
   if(fseek(file,0,SEEK_END)) { fclose(file);return -EIO; }
   long length=ftell(file);
   if(length<(long)sizeof(signature)-1 || length>8*1024*1024 || fseek(file,0,SEEK_SET)) {

@@ -113,6 +113,7 @@ int _findISO(DIR *directory, TargetList *result, struct DeviceMapEntry *device,
     cwdLen++;
   }
 
+  const int atRoot = curRecursionLevel == 1;
   curRecursionLevel++;
 
   int scanResult = 0;
@@ -131,7 +132,8 @@ int _findISO(DIR *directory, TargetList *result, struct DeviceMapEntry *device,
     }
 
     // Ignore .files and directories
-    if (entry->d_name[0] == '.')
+    if (entry->d_name[0] == '.' ||
+        (atRoot && !strcasecmp(entry->d_name, BASE_CONFIG_PATH + 1)))
       continue;
 
     // Some network/removable drivers do not provide d_type.

@@ -90,7 +90,7 @@ int storageRequiredConflict(const StorageSettings *settings) {
          ((settings->enabled & MODE_MMCE) && (requiredModes & MODE_MX4SIO));
 }
 
-static int readSettings(const char *path, StorageSettings *saved) {
+static int readSettings(const char *path, StorageSettings *saved, int useSavedSources) {
   FILE *file = fopen(path, "rb");
   if (!file) return 0;
   memset(saved, 0, sizeof(*saved));
@@ -115,7 +115,7 @@ static int readSettings(const char *path, StorageSettings *saved) {
   int bad = ferror(file);
   fclose(file);
   return !bad && !invalid && version && haveMask && storageValidSettings(saved) &&
-         !storageRequiredConflict(saved);
+         (!useSavedSources || !storageRequiredConflict(saved));
 }
 
 static int writeSettings(const char *path, const StorageSettings *settings) {
@@ -129,7 +129,7 @@ static int writeSettings(const char *path, const StorageSettings *settings) {
 }
 
 void storageConfigure(const char *directory, ModeType defaults, ModeType required,
-                      int useSaved) {
+                      int useSavedSources) {
   requiredModes = required;
   STORAGE_SETTINGS.mmceGameID = 0; // Old preference files also default to Off.
   STORAGE_SETTINGS.enabled = defaults & STORAGE_SUPPORTED;
@@ -144,12 +144,16 @@ void storageConfigure(const char *directory, ModeType defaults, ModeType require
                      directory[strlen(directory) - 1] == '/' ? "" : "/");
     if (n < 0 || (size_t)n >= sizeof(settingsPath)) settingsPath[0] = '\0';
   }
-  if (!useSaved || !settingsPath[0]) return;
+  if (!settingsPath[0]) return;
   StorageSettings saved = {0};
   char backup[PATH_MAX + 8];
   snprintf(backup, sizeof(backup), "%s.bak", settingsPath);
-  if (readSettings(settingsPath, &saved) || readSettings(backup, &saved))
-    STORAGE_SETTINGS = saved;
+  if (readSettings(settingsPath, &saved, useSavedSources) ||
+      readSettings(backup, &saved, useSavedSources)) {
+    // Command-line storage overrides leave the independent card preference in effect.
+    if (useSavedSources) STORAGE_SETTINGS = saved;
+    else STORAGE_SETTINGS.mmceGameID = saved.mmceGameID;
+  }
   snprintf(LAUNCHER_OPTIONS.udpfsIp, sizeof(LAUNCHER_OPTIONS.udpfsIp), "%s", STORAGE_SETTINGS.ip);
 }
 
@@ -167,6 +171,8 @@ int storageSave(const StorageSettings *settings) {
   int result = commitConfigFile(temp, settingsPath);
   if (result) return result; // Keep the backup for missing or partial primaries.
   remove(backup);
+  // A failed library refresh must not undo a successfully saved card preference.
+  STORAGE_SETTINGS.mmceGameID = settings->mmceGameID;
   return 0;
 }
 

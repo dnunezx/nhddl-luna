@@ -449,17 +449,6 @@ int saveGameCoreOpl(Target *target, int opl) {
   return commitConfigFile(tempPath, path);
 }
 
-// BDM exposes raw FatFs missing-file/path results rather than POSIX errno.
-static int gameOptionsFileMissing(const char *path) {
-  if (!strncmp(path, "mass", 4) && path[4] >= '0' && path[4] <= '9' && path[5] == ':') {
-    iox_stat_t info;
-    int result = fileXioGetStat(path, &info);
-    return result == -4 || result == -5;
-  }
-  struct stat info;
-  return stat(path, &info) < 0 && errno == ENOENT;
-}
-
 static uint32_t gameOptionsChecksum(uint32_t hash, const char *bytes, size_t length) {
   for (size_t i = 0; i < length; i++)
     hash = (hash ^ (unsigned char)bytes[i]) * 16777619U;
@@ -545,7 +534,7 @@ int getTitleLaunchArguments(ArgumentList *result, Target *target) {
       return -ENAMETOOLONG;
     if (gameOptionsBackupValid(backup))
       return loadArgumentList(result, device, backup);
-    if (gameOptionsFileMissing(targetPath))
+    if (configFileMissing(targetPath))
       continue; // An incomplete first backup must not hide legacy/default settings.
     return loadArgumentList(result, device, targetPath);
   }
@@ -567,7 +556,7 @@ int getTitleLaunchArguments(ArgumentList *result, Target *target) {
 static int writeTitleArgumentsFile(Target *target, ArgumentList *options,
                                     const char *path, int recovery) {
   // Recreate this destination to avoid stale trailing bytes on BDM.
-  if (remove(path) && !gameOptionsFileMissing(path)) return -EIO;
+  if (remove(path) && !configFileMissing(path)) return -EIO;
   int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
   if (fd < 0) return -EIO;
   // Write each argument into the file
@@ -658,17 +647,17 @@ int updateTitleLaunchArguments(Target *target, ArgumentList *options) {
   result = getTitleLaunchArguments(previous, target);
   if (!result && !gameOptionsBackupValid(backup)) {
     result = writeTitleArgumentsFile(target, previous, backupStage, 1);
-    if (!result && remove(backup) && !gameOptionsFileMissing(backup)) result = -EIO;
+    if (!result && remove(backup) && !configFileMissing(backup)) result = -EIO;
     if (!result) result = commitConfigFile(backupStage, backup);
     if (!result && !gameOptionsBackupValid(backup)) result = -EIO;
   }
   freeArgumentList(previous);
   if (result) return result;
-  if (remove(path) && !gameOptionsFileMissing(path)) return -EIO;
+  if (remove(path) && !configFileMissing(path)) return -EIO;
   result = commitConfigFile(stage, path);
   if (result) return result;
   // Removing the recovery file publishes the new choice to readers.
-  return remove(backup) ? -EIO : 0;
+  return remove(backup) && !configFileMissing(backup) ? -EIO : 0;
 }
 
 // Parses options file into ArgumentList

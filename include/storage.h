@@ -25,7 +25,7 @@ const char *storageSourceName(int index);
 int storageValidIP(const char *ip);
 int storageValidSettings(const StorageSettings *settings);
 void storageConfigure(const char *directory, ModeType defaults, ModeType required,
-                      int useSaved);
+                      int useSavedSources);
 int storageSave(const StorageSettings *settings);
 int storageNeedsRestart(const StorageSettings *settings);
 int storageRequest(const StorageSettings *settings, ModeType scan);
