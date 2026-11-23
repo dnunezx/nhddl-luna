@@ -66,16 +66,21 @@ int buildLegacyConfigFilePath(char *targetPath, size_t targetSize, const char *t
 
 static int mmcePathMissing(const char *path) {
   const char *name = strrchr(path, '/');
-  if (!name || !name[1] || name - path >= PATH_MAX)
+  if (!name || !name[1])
     return 0;
   char parent[PATH_MAX];
   size_t length = (size_t)(name - path);
+  int atRoot = length && name[-1] == ':';
+  if (length + atRoot >= sizeof(parent))
+    return 0;
   memcpy(parent, path, length);
+  // The raw fileXio call needs a slash to address the MMCE root directory.
+  if (atRoot) parent[length++] = '/';
   parent[length] = '\0';
 
   int directory = fileXioDopen(parent);
   if (directory < 0)
-    return directory == -ENOENT || (directory == -1 && mmcePathMissing(parent));
+    return !atRoot && (directory == -ENOENT || (directory == -1 && mmcePathMissing(parent)));
   iox_dirent_t entry;
   int result;
   while ((result = fileXioDread(directory, &entry)) > 0) {
